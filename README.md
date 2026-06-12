@@ -29,7 +29,7 @@ The long-term goal is simple:
 
 > Make Pi feel like a first-class native macOS development environment.
 
-Piñata is currently at the **initial V0.1 scaffold** stage. The app launches as a Tauri/Vue shell with the Adeberry design system, custom macOS titlebar, Workspaces area, main workspace, and Context area. Pi RPC, sessions, terminal, files, diffs, and ecosystem views are intentionally still ahead.
+Piñata is currently in the **V0.1 native shell + first Pi connection** stage. The app launches as a Tauri/Vue shell with the Adeberry design system, custom macOS titlebar, Workspaces area, main workspace, Context area, and an initial Pi JSON-RPC bridge for opening a workspace, restoring its Pi session, and streaming a basic chat timeline.
 
 ---
 
@@ -53,7 +53,7 @@ Piñata is **not** intended to be a thin CLI wrapper. The target integration is 
 
 ## Current status
 
-Current milestone: **V0.1 scaffold**
+Current milestone: **V0.1 native shell + first Pi connection**
 
 Implemented now:
 
@@ -63,20 +63,26 @@ Implemented now:
 - macOS-first window configuration
 - custom titlebar with native macOS traffic lights
 - Adeberry theme tokens extracted from the design source
-- local Syne and JetBrains Mono font files
+- local Inter Light font files, with Inter Bold for emphasis
 - CSS Modules for component-level styling
-- Workspaces side area
-- Main empty workspace
-- Context side area
+- Workspaces side area with persisted workspace list
+- Main workspace with basic Pi chat timeline and composer
+- Context side area with read-only workspace/Pi/session/model details
 - animated side-area open/close behavior
 - provisional Tauri icons generated from the transparent compass logo
+- Piñata state/config files under `~/.pinata/`
+- Pi executable discovery with optional `~/.pinata/config.json` override
+- Rust-owned workspace picker flow
+- one active Pi RPC process for the active workspace
+- exact Pi session-file persistence per workspace
+- basic timeline hydration via Pi RPC `get_messages`
+- basic text streaming via Pi RPC events
+- minimal extension UI request handling
 
 Not implemented yet:
 
-- Pi process detection/spawning
-- Pi JSON-RPC transport
-- chat streaming
-- sessions/resume/fork
+- multiple workspaces/tabs running concurrently
+- session fork/clone/switcher UI
 - terminal/PTTY integration
 - file tree
 - Git diff/review
@@ -93,8 +99,7 @@ Piñata uses a restrained native desktop aesthetic:
 
 - dark Adeberry graphite base
 - semantic design tokens, not palette-leaky names
-- Syne for UI/display text
-- JetBrains Mono for code/metadata
+- Inter Light for UI, code, and metadata
 - minimal UI until functionality exists
 - no fake terminal/session/workspace content in the scaffold
 
@@ -159,7 +164,7 @@ Avoid names like:
 | Language | TypeScript |
 | Package manager | pnpm |
 | Styling | CSS Modules + global design tokens |
-| Fonts | Local Syne + JetBrains Mono |
+| Fonts | Local Inter Light + Bold |
 | Future terminal | native PTY from Rust + xterm.js |
 | Future Pi transport | JSON-RPC over stdio |
 | Future Git integration | Rust/git2 |
