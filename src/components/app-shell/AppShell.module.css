@@ -1,0 +1,39 @@
+.shell {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	height: 100%;
+	overflow: hidden;
+	color: var(--color-text-primary);
+	background: var(--color-background);
+}
+
+.workspace {
+	display: grid;
+	grid-template-columns: var(--workspaces-width) minmax(
+			var(--workspace-min-width),
+			1fr
+		) 0;
+	width: 100%;
+	min-height: 0;
+	flex: 1;
+	transition: grid-template-columns 180ms ease;
+}
+
+.workspacesHidden {
+	grid-template-columns: 0 minmax(var(--workspace-min-width), 1fr) 0;
+}
+
+.contextVisible {
+	grid-template-columns: var(--workspaces-width) minmax(
+			var(--workspace-min-width),
+			1fr
+		) var(--context-width);
+}
+
+.workspacesHidden.contextVisible {
+	grid-template-columns: 0 minmax(var(--workspace-min-width), 1fr) var(
+			--context-width
+		);
+}

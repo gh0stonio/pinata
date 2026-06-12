@@ -1,0 +1,102 @@
+.titleBar {
+	display: grid;
+	grid-template-columns: var(--titlebar-side-width) minmax(0, 1fr) var(
+			--titlebar-side-width
+		);
+	align-items: center;
+	gap: 10px;
+	width: 100%;
+	height: var(--titlebar-height);
+	padding: 0 14px;
+	color: var(--color-text-secondary);
+	background: var(--color-titlebar-background);
+	-webkit-backdrop-filter: blur(22px) saturate(1.4);
+	backdrop-filter: blur(22px) saturate(1.4);
+	border-bottom: 1px solid var(--color-border-primary);
+	user-select: none;
+	-webkit-user-select: none;
+	app-region: drag;
+	-webkit-app-region: drag;
+}
+
+.leftGroup,
+.rightGroup {
+	display: flex;
+	align-items: center;
+	flex-shrink: 0;
+	app-region: drag;
+	-webkit-app-region: drag;
+}
+
+.leftGroup {
+	gap: 8px;
+}
+
+.rightGroup {
+	justify-content: flex-end;
+	gap: 6px;
+}
+
+.trafficLightReserve {
+	width: var(--traffic-light-reserve-width);
+	height: 100%;
+	flex-shrink: 0;
+	app-region: drag;
+	-webkit-app-region: drag;
+}
+
+.tButton {
+	display: grid;
+	place-items: center;
+	width: 28px;
+	height: 28px;
+	padding: 0;
+	color: var(--color-text-tertiary);
+	background: transparent;
+	border: 0;
+	border-radius: 7px;
+	cursor: default;
+	transition:
+		background 150ms ease,
+		color 150ms ease;
+	app-region: no-drag;
+	-webkit-app-region: no-drag;
+}
+
+.tButton svg {
+	stroke: currentColor;
+	stroke-width: 1.6;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+.tButton:hover:not(:disabled) {
+	color: var(--color-text-secondary);
+	background: var(--color-surface-hover);
+}
+
+.active,
+.active:hover:not(:disabled) {
+	color: var(--color-accent-primary);
+	background: var(--color-accent-subtle);
+}
+
+.context {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	app-region: drag;
+	-webkit-app-region: drag;
+}
+
+.brandTitle {
+	color: var(--color-text-secondary);
+	font-family: var(--font-display);
+	font-size: 13px;
+	font-weight: 800;
+	letter-spacing: -0.02em;
+	line-height: 1;
+}

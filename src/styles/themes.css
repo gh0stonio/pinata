@@ -1,0 +1,65 @@
+:root {
+	--font-display: "Syne", system-ui, sans-serif;
+	--font-ui: "Syne", system-ui, sans-serif;
+	--font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+	--radius-sm: 6px;
+	--radius-md: 9px;
+	--radius-lg: 13px;
+	--radius-xl: 18px;
+
+	--titlebar-height: 46px;
+	--titlebar-side-width: 190px;
+	--traffic-light-reserve-width: 78px;
+	--workspaces-width: 230px;
+	--context-width: 300px;
+	--workspace-min-width: 0;
+}
+
+/* Adeberry — neutral graphite with warm/cool status colors from the design source. */
+[data-theme="adeberry"] {
+	--color-background: #1d2022;
+	--color-background-subtle: #181b1d;
+
+	--color-surface-primary: #24282a;
+	--color-surface-hover: #2e3234;
+	--color-surface-elevated: #34383b;
+	--color-surface-muted: #45494c;
+
+	--color-border-primary: #34393b;
+	--color-border-subtle: #2a2f31;
+
+	--color-text-primary: #e8eaeb;
+	--color-text-secondary: #c6cacc;
+	--color-text-tertiary: #888d90;
+	--color-text-placeholder: #5a5f62;
+
+	--color-titlebar-background: #262a2c;
+	--color-side-background: #262a2c;
+	--color-overlay-scrim: rgba(0, 0, 0, 0.6);
+
+	--color-glass-background: rgba(38, 42, 44, 0.72);
+	--color-glass-edge: rgba(232, 234, 235, 0.06);
+
+	--color-accent-primary: #e8eaeb;
+	--color-accent-muted: #c6cacc;
+	--color-accent-subtle: rgba(232, 234, 235, 0.12);
+	--color-selection-background: rgba(232, 234, 235, 0.28);
+
+	--color-status-info: #79b0c0;
+	--color-status-success: #86c79c;
+	--color-status-warning: #e0c878;
+	--color-status-danger: #e08a8a;
+	--color-status-attention: #e0a060;
+	--color-status-special: #a99ce0;
+
+	--color-code-background: #191b1d;
+	--color-diff-add-background: rgba(110, 178, 140, 0.15);
+	--color-diff-add-text: #86c79c;
+	--color-diff-delete-background: rgba(224, 108, 108, 0.14);
+	--color-diff-delete-text: #e08a8a;
+
+	--shadow-card:
+		0 1px 0 rgba(255, 255, 255, 0.03), 0 8px 24px -12px rgba(0, 0, 0, 0.62);
+	--shadow-popover: 0 20px 56px -16px rgba(0, 0, 0, 0.78);
+}

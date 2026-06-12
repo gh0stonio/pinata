@@ -1,0 +1,11 @@
+[data-density="compact"] {
+	--density: 0.85;
+}
+
+[data-density="regular"] {
+	--density: 1;
+}
+
+[data-density="comfy"] {
+	--density: 1.15;
+}
