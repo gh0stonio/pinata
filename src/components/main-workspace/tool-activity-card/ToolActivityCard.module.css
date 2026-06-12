@@ -1,0 +1,165 @@
+.card {
+	--tool-color: var(--color-status-info);
+
+	position: relative;
+	width: 100%;
+	overflow: hidden;
+	flex-shrink: 0;
+	color: var(--color-text-secondary);
+	background: color-mix(
+		in srgb,
+		var(--color-surface-hover) 86%,
+		var(--color-background)
+	);
+	border: 1px solid var(--color-border-primary);
+	border-radius: 10px;
+}
+
+.card[data-tool="write"],
+.card[data-tool="read"] {
+	--tool-color: var(--color-status-success);
+}
+
+.card[data-tool="edit"] {
+	--tool-color: var(--color-status-warning);
+}
+
+.card[data-tool="mcp"],
+.card[data-tool="tool"] {
+	--tool-color: var(--color-accent-primary);
+}
+
+.card[data-status="error"] {
+	--tool-color: var(--color-status-danger);
+
+	border-color: rgba(224, 138, 138, 0.24);
+}
+
+.header {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	width: 100%;
+	min-width: 0;
+	padding: 8px 11px;
+	color: inherit;
+	background: transparent;
+	border: 0;
+	appearance: none;
+	text-align: left;
+	cursor: default;
+}
+
+.header:not(:disabled) {
+	cursor: pointer;
+}
+
+.header:disabled {
+	color: inherit;
+	cursor: default;
+	opacity: 1;
+}
+
+.icon {
+	display: grid;
+	place-items: center;
+	width: 19px;
+	height: 19px;
+	flex-shrink: 0;
+	color: var(--tool-color);
+	background: color-mix(in srgb, var(--tool-color) 12%, transparent);
+	border-radius: 5px;
+}
+
+.icon svg,
+.stateIcon,
+.chevronIcon {
+	stroke: currentColor;
+	stroke-width: 1.8;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+.card[data-status="streaming"] .icon {
+	animation: toolPulse 1.35s ease-in-out infinite;
+}
+
+.label {
+	flex-shrink: 0;
+	color: var(--tool-color);
+	font-family: var(--font-mono);
+	font-size: 12px;
+	font-weight: 800;
+	line-height: 1;
+}
+
+.title {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	flex: 1;
+	color: var(--color-text-secondary);
+	font-family: var(--font-mono);
+	font-size: 11.25px;
+	line-height: 1.25;
+}
+
+.stateIcon,
+.chevronIcon {
+	flex-shrink: 0;
+}
+
+.stateIcon {
+	color: var(--tool-color);
+}
+
+.card[data-status="error"] .stateIcon {
+	color: var(--color-status-danger);
+}
+
+.spinnerIcon {
+	animation: spin 850ms linear infinite;
+}
+
+.chevronIcon {
+	color: var(--color-text-placeholder);
+	transition: transform 150ms ease;
+}
+
+.card[data-open="true"] .chevronIcon {
+	transform: rotate(180deg);
+}
+
+.body {
+	min-width: 0;
+	margin: 0;
+	padding: 11px 13px 12px;
+	overflow-x: auto;
+	color: var(--color-text-tertiary);
+	background: var(--color-code-background);
+	border-top: 1px solid var(--color-border-subtle);
+	font-family: var(--font-mono);
+	font-size: 12px;
+	line-height: 1.65;
+	white-space: pre;
+}
+
+@keyframes spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+@keyframes toolPulse {
+	0%,
+	100% {
+		opacity: 0.5;
+		transform: scale(0.96);
+	}
+
+	50% {
+		opacity: 1;
+		transform: scale(1.04);
+	}
+}

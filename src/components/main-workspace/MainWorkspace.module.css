@@ -1,4 +1,10 @@
 .main {
+	--workspace-content-side-gutter: clamp(
+		22px,
+		calc((100vw - 720px) * 0.24),
+		150px
+	);
+
 	display: grid;
 	grid-template-rows: 42px minmax(0, 1fr);
 	min-width: 0;
@@ -8,40 +14,90 @@
 }
 
 .tabBar {
+	display: flex;
+	align-items: center;
 	min-width: 0;
+	padding: 0 16px;
 	background: var(--color-background);
 	border-bottom: 1px solid var(--color-border-subtle);
 }
 
-.workspace {
-	display: grid;
+.tabMeta {
+	display: inline-flex;
+	align-items: center;
 	min-width: 0;
-	min-height: 0;
-	place-items: center;
-	padding: calc(28px * var(--density));
-}
-
-.emptyState {
-	display: grid;
-	justify-items: center;
-	width: min(560px, 100%);
-	text-align: center;
-}
-
-.emptyState h1 {
-	margin: 0;
-	color: var(--color-text-primary);
-	font-family: var(--font-ui);
-	font-size: clamp(24px, 3vw, 34px);
-	font-weight: 700;
-	letter-spacing: -0.035em;
-	line-height: 1.1;
-}
-
-.emptyState p {
-	margin: 12px 0 0;
+	gap: 8px;
 	color: var(--color-text-tertiary);
 	font-family: var(--font-mono);
-	font-size: 12px;
-	line-height: 1.5;
+	font-size: 10.5px;
+	line-height: 1;
+}
+
+.statusDot {
+	width: 7px;
+	height: 7px;
+	border-radius: 999px;
+	background: var(--color-text-placeholder);
+}
+
+.statusDot[data-status="ready"] {
+	background: var(--color-status-success);
+}
+
+.statusDot[data-status="streaming"],
+.statusDot[data-status="locatingPi"],
+.statusDot[data-status="startingPi"],
+.statusDot[data-status="restoringSession"],
+.statusDot[data-status="hydratingTimeline"] {
+	background: var(--color-status-warning);
+}
+
+.statusDot[data-status="error"] {
+	background: var(--color-status-danger);
+}
+
+.workspace {
+	display: grid;
+	grid-template-rows: minmax(0, 1fr) auto;
+	min-width: 0;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.composerWrap {
+	display: grid;
+	gap: 8px;
+	padding: calc(6px * var(--density)) var(--workspace-content-side-gutter)
+		calc(22px * var(--density));
+	background: linear-gradient(
+		180deg,
+		rgba(29, 32, 34, 0),
+		var(--color-background) 28%
+	);
+}
+
+.notice,
+.errorSummary {
+	width: 100%;
+	margin: 0;
+	color: var(--color-text-tertiary);
+	font-family: var(--font-mono);
+	line-height: 1.45;
+}
+
+.notice {
+	font-size: 10px;
+}
+
+.errorSummary {
+	font-size: 11px;
+	display: grid;
+	gap: 4px;
+	color: var(--color-status-danger);
+}
+
+.errorSummary span {
+	color: var(--color-text-tertiary);
+	white-space: pre-wrap;
+	word-break: break-word;
 }

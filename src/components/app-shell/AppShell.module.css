@@ -18,6 +18,7 @@
 	width: 100%;
 	min-height: 0;
 	flex: 1;
+	cursor: default;
 	transition: grid-template-columns 180ms ease;
 }
 
@@ -36,4 +37,272 @@
 	grid-template-columns: 0 minmax(var(--workspace-min-width), 1fr) var(
 			--context-width
 		);
+}
+
+.sideContent,
+.contextContent {
+	display: grid;
+	align-content: start;
+	gap: 12px;
+	min-width: 0;
+	min-height: 0;
+	height: 100%;
+	overflow-y: auto;
+	padding: 14px;
+	cursor: default;
+}
+
+.openButton {
+	height: 34px;
+	padding: 0 12px;
+	color: var(--color-background);
+	background: var(--color-accent-primary);
+	border-radius: var(--radius-md);
+	font-family: var(--font-mono);
+	font-size: 10px;
+	font-weight: 800;
+	cursor: pointer;
+}
+
+.openButton:disabled {
+	cursor: default;
+	opacity: 0.45;
+}
+
+.sideHint,
+.emptyText {
+	margin: 0;
+	color: var(--color-text-tertiary);
+	font-size: 12px;
+	line-height: 1.45;
+}
+
+.workspaceList {
+	display: grid;
+	gap: 6px;
+	min-width: 0;
+}
+
+.workspaceItem {
+	display: grid;
+	gap: 4px;
+	min-width: 0;
+	padding: 10px;
+	text-align: left;
+	color: var(--color-text-tertiary);
+	background: transparent;
+	border: 1px solid transparent;
+	border-radius: var(--radius-md);
+	cursor: default;
+}
+
+.workspaceItem:not(:disabled):not(.workspaceItemActive) {
+	cursor: pointer;
+}
+
+.workspaceItem:hover:not(:disabled) {
+	background: var(--color-surface-hover);
+}
+
+.workspaceItem:disabled {
+	cursor: default;
+	opacity: 0.48;
+}
+
+.workspaceItemActive,
+.workspaceItemActive:hover:not(:disabled) {
+	color: var(--color-text-primary);
+	background: var(--color-accent-subtle);
+	border-color: var(--color-glass-edge);
+	cursor: default;
+}
+
+.workspaceName,
+.workspacePath {
+	display: block;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.workspaceName {
+	font-size: 13px;
+	font-weight: 700;
+}
+
+.workspacePath {
+	font-family: var(--font-mono);
+	font-size: 10px;
+	line-height: 1.35;
+}
+
+.contextSection {
+	display: grid;
+	gap: 8px;
+	min-width: 0;
+	padding-bottom: 12px;
+	border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.contextSection h2,
+.contextSection p,
+.contextSection dl,
+.contextSection dd,
+.contextSection pre {
+	margin: 0;
+}
+
+.contextSection h2 {
+	color: var(--color-text-tertiary);
+	font-family: var(--font-mono);
+	font-size: 11px;
+	font-weight: 800;
+	line-height: 1;
+	text-transform: uppercase;
+}
+
+.contextSection dl {
+	display: grid;
+	gap: 8px;
+}
+
+.contextSection dl > div {
+	display: grid;
+	gap: 3px;
+	min-width: 0;
+}
+
+.contextSection dt {
+	color: var(--color-text-placeholder);
+	font-family: var(--font-mono);
+	font-size: 10px;
+	font-weight: 700;
+	text-transform: uppercase;
+}
+
+.contextSection dd,
+.contextSection p,
+.contextSection pre {
+	min-width: 0;
+	color: var(--color-text-secondary);
+	font-size: 12px;
+	line-height: 1.45;
+	word-break: break-word;
+}
+
+.contextSection dd,
+.contextSection pre {
+	font-family: var(--font-mono);
+	font-size: 10.5px;
+}
+
+.contextSection pre {
+	max-height: 180px;
+	overflow: auto;
+	padding: 8px;
+	background: var(--color-code-background);
+	border-radius: var(--radius-sm);
+	white-space: pre-wrap;
+}
+
+.errorContext h2,
+.errorContext p {
+	color: var(--color-status-danger);
+}
+
+.modalScrim {
+	position: absolute;
+	inset: var(--titlebar-height) 0 0;
+	display: grid;
+	place-items: center;
+	padding: 24px;
+	background: var(--color-overlay-scrim);
+}
+
+.modal {
+	display: grid;
+	gap: 16px;
+	width: min(520px, 100%);
+	padding: 18px;
+	background: var(--color-surface-primary);
+	border: 1px solid var(--color-border-primary);
+	border-radius: var(--radius-xl);
+}
+
+.modalHeader {
+	display: grid;
+	gap: 8px;
+}
+
+.modalHeader h2,
+.modalHeader p {
+	margin: 0;
+}
+
+.modalHeader h2 {
+	color: var(--color-text-primary);
+	font-size: 18px;
+}
+
+.modalHeader p {
+	color: var(--color-text-tertiary);
+	font-size: 13px;
+	line-height: 1.45;
+}
+
+.optionList {
+	display: grid;
+	gap: 8px;
+}
+
+.optionButton,
+.modalPrimary,
+.modalSecondary {
+	height: 34px;
+	padding: 0 12px;
+	border-radius: var(--radius-md);
+	font-family: var(--font-mono);
+	font-size: 11px;
+	font-weight: 800;
+	cursor: pointer;
+}
+
+.optionButton,
+.modalSecondary {
+	color: var(--color-text-secondary);
+	background: var(--color-surface-hover);
+}
+
+.modalPrimary {
+	color: var(--color-background);
+	background: var(--color-accent-primary);
+}
+
+.modalInput,
+.modalTextarea {
+	width: 100%;
+	min-width: 0;
+	padding: 10px;
+	color: var(--color-text-primary);
+	background: var(--color-code-background);
+	border: 1px solid var(--color-border-primary);
+	border-radius: var(--radius-md);
+	outline: 0;
+}
+
+.optionButton:disabled,
+.modalPrimary:disabled,
+.modalSecondary:disabled {
+	cursor: default;
+}
+
+.modalTextarea {
+	resize: none;
+}
+
+.modalActions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
 }

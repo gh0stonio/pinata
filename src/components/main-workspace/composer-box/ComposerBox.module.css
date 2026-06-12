@@ -1,0 +1,102 @@
+.composer {
+	display: flex;
+	flex-direction: column;
+	gap: 9px;
+	width: 100%;
+	margin: 0;
+	padding: 12px 12px 9px;
+	background: var(--color-surface-primary);
+	border: 1px solid var(--color-border-primary);
+	border-radius: 14px;
+}
+
+.input {
+	width: 100%;
+	min-width: 0;
+	min-height: 20px;
+	max-height: 15em;
+	resize: none;
+	padding: 0;
+	overflow-y: hidden;
+	color: var(--color-text-primary);
+	background: transparent;
+	border: 0;
+	outline: 0;
+	font-size: 13px;
+	line-height: 1.5;
+}
+
+.input::placeholder {
+	color: var(--color-text-placeholder);
+}
+
+.input:disabled {
+	color: var(--color-text-tertiary);
+	cursor: default;
+}
+
+.actions {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.composerMeta {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--color-text-tertiary);
+	font-family: var(--font-mono);
+	font-size: 11px;
+	font-weight: 600;
+}
+
+.actionGroup {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	margin-left: auto;
+}
+
+.primaryButton,
+.secondaryButton {
+	display: grid;
+	place-items: center;
+	height: 29px;
+	border-radius: 9px;
+	font-family: var(--font-mono);
+	font-size: 11px;
+	font-weight: 700;
+	cursor: pointer;
+	transition:
+		background 150ms ease,
+		color 150ms ease,
+		opacity 150ms ease;
+}
+
+.primaryButton {
+	width: 29px;
+	padding: 0;
+	color: var(--color-background);
+	background: var(--color-accent-primary);
+}
+
+.primaryButton svg {
+	stroke: currentColor;
+	stroke-width: 2;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+.secondaryButton {
+	padding: 0 11px;
+	color: var(--color-text-secondary);
+	background: var(--color-surface-hover);
+}
+
+.primaryButton:disabled,
+.secondaryButton:disabled {
+	cursor: default;
+	opacity: 0.45;
+}

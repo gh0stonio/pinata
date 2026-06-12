@@ -19,6 +19,10 @@ const props = withDefaults(
     :aria-label="title"
   >
     <header :class="styles.header">{{ title }}</header>
-    <p :class="styles.empty">{{ empty }}</p>
+    <div :class="styles.body">
+      <slot>
+        <p :class="styles.empty">{{ empty }}</p>
+      </slot>
+    </div>
   </aside>
 </template>

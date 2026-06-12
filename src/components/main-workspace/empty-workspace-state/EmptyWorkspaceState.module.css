@@ -1,0 +1,24 @@
+.emptyState {
+	display: grid;
+	justify-items: center;
+	width: min(560px, 100%);
+	margin: min(18vh, 140px) auto 0;
+	text-align: center;
+}
+
+.emptyState h1 {
+	margin: 0;
+	color: var(--color-text-primary);
+	font-family: var(--font-ui);
+	font-size: clamp(23px, 2.7vw, 32px);
+	font-weight: 700;
+	line-height: 1.1;
+}
+
+.emptyState p {
+	margin: 12px 0 0;
+	color: var(--color-text-tertiary);
+	font-family: var(--font-mono);
+	font-size: 12px;
+	line-height: 1.5;
+}

@@ -1,0 +1,28 @@
+.timelineItem {
+	width: 100%;
+	margin: 0;
+}
+
+.userItem {
+	display: flex;
+	justify-content: flex-end;
+}
+
+.assistantItem {
+	display: flex;
+	flex-direction: column;
+	gap: 11px;
+}
+
+.activityItem {
+	display: flex;
+	justify-content: flex-start;
+}
+
+.streamingItem {
+	--timeline-item-state: streaming;
+}
+
+.errorItem {
+	--timeline-item-state: error;
+}
