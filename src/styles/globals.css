@@ -4,6 +4,8 @@
 
 * {
 	box-sizing: border-box;
+	scrollbar-color: #3b3f41 transparent;
+	scrollbar-width: thin;
 }
 
 html,
@@ -21,8 +23,10 @@ body {
 	overflow: hidden;
 	color: var(--color-text-primary, #e8eaeb);
 	background: var(--color-background, #1d2022);
+	cursor: default;
 	font-family: var(--font-ui);
-	font-size: 14px;
+	font-size: 13.5px;
+	font-weight: 300;
 	font-synthesis: none;
 	line-height: 1.4;
 	text-rendering: optimizeLegibility;
@@ -40,11 +44,47 @@ select {
 
 button {
 	border: 0;
+	cursor: default;
+}
+
+input,
+textarea {
+	cursor: text;
+}
+
+textarea {
+	resize: none;
+}
+
+button:disabled,
+input:disabled,
+textarea:disabled {
+	cursor: default;
 }
 
 img,
 svg {
 	display: block;
+}
+
+*::-webkit-scrollbar {
+	width: 8px;
+	height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+	background-color: #3b3f41;
+	background-clip: padding-box;
+	border: 2px solid transparent;
+	border-radius: 999px;
+}
+
+*::-webkit-scrollbar-corner {
+	background: transparent;
 }
 
 ::selection {

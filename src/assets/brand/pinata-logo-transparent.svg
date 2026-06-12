@@ -53,15 +53,15 @@
 
   <!-- π at North -->
   <text x="60" y="13"
-        font-family="JetBrains Mono, monospace"
+        font-family="Inter, sans-serif"
         font-size="10" font-weight="700"
         fill="#88C0D0" text-anchor="middle"
         filter="url(#glow-pi)">π</text>
 
   <!-- S/E/W cardinals -->
-  <text x="60"  y="109" font-family="JetBrains Mono, monospace" font-size="8" font-weight="500" fill="#4C6A8A" text-anchor="middle">S</text>
-  <text x="108" y="63"  font-family="JetBrains Mono, monospace" font-size="8" font-weight="500" fill="#4C6A8A" text-anchor="middle">E</text>
-  <text x="12"  y="63"  font-family="JetBrains Mono, monospace" font-size="8" font-weight="500" fill="#4C6A8A" text-anchor="middle">W</text>
+  <text x="60"  y="109" font-family="Inter, sans-serif" font-size="8" font-weight="500" fill="#4C6A8A" text-anchor="middle">S</text>
+  <text x="108" y="63"  font-family="Inter, sans-serif" font-size="8" font-weight="500" fill="#4C6A8A" text-anchor="middle">E</text>
+  <text x="12"  y="63"  font-family="Inter, sans-serif" font-size="8" font-weight="500" fill="#4C6A8A" text-anchor="middle">W</text>
 
   <!-- Center hub -->
   <circle cx="60" cy="60" r="5" fill="none" stroke="#434C5E" stroke-width="1.5"/>

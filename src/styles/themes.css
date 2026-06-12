@@ -1,7 +1,9 @@
 :root {
-	--font-display: "Syne", system-ui, sans-serif;
-	--font-ui: "Syne", system-ui, sans-serif;
-	--font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+	--font-display:
+		"Inter", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+	--font-ui: "Inter", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+	--font-mono:
+		"Inter", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
 
 	--radius-sm: 6px;
 	--radius-md: 9px;
@@ -54,12 +56,9 @@
 	--color-status-special: #a99ce0;
 
 	--color-code-background: #191b1d;
+	--color-code-accent: #8eeeff;
 	--color-diff-add-background: rgba(110, 178, 140, 0.15);
 	--color-diff-add-text: #86c79c;
 	--color-diff-delete-background: rgba(224, 108, 108, 0.14);
 	--color-diff-delete-text: #e08a8a;
-
-	--shadow-card:
-		0 1px 0 rgba(255, 255, 255, 0.03), 0 8px 24px -12px rgba(0, 0, 0, 0.62);
-	--shadow-popover: 0 20px 56px -16px rgba(0, 0, 0, 0.78);
 }
