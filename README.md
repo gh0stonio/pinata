@@ -39,6 +39,7 @@ Implemented:
 - Vue 3 + Vite + TypeScript
 - custom macOS title bar
 - left side panel, main content, right side panel
+- Settings view with theme and accent controls
 - Space Grotesk for UI, JetBrains Mono for code
 
 Not implemented yet:
@@ -48,7 +49,7 @@ Not implemented yet:
 - terminal spawn
 - tabs and split panes
 - files, review, and PR panels
-- settings
+- advanced settings
 
 ## Product Direction
 
@@ -92,7 +93,9 @@ Later layers add files, diffs, review, checks, and PR context around that same t
 ├── docs/design/Pinata.html
 ├── src/
 │   ├── assets/
-│   ├── components/
+│   ├── features/
+│   ├── icons/
+│   ├── shell/
 │   ├── styles/
 │   ├── App.vue
 │   └── main.ts
@@ -128,5 +131,5 @@ pnpm build
 2. Add plain terminal spawning.
 3. Add split pane handling.
 4. Fill the left side panel.
-5. Add settings.
+5. Add advanced settings.
 6. Add files/review/PR panels.
