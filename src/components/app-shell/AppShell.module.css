@@ -1,0 +1,39 @@
+.shell {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	height: 100%;
+	overflow: hidden;
+	color: var(--color-text-primary);
+	background: var(--color-background);
+}
+
+.body {
+	display: grid;
+	grid-template-columns: var(--left-side-panel-width) minmax(
+			var(--main-min-width),
+			1fr
+		) 0;
+	width: 100%;
+	min-height: 0;
+	flex: 1;
+	transition: grid-template-columns 180ms ease;
+}
+
+.leftSidePanelHidden {
+	grid-template-columns: 0 minmax(var(--main-min-width), 1fr) 0;
+}
+
+.rightSidePanelVisible {
+	grid-template-columns: var(--left-side-panel-width) minmax(
+			var(--main-min-width),
+			1fr
+		) var(--right-side-panel-width);
+}
+
+.leftSidePanelHidden.rightSidePanelVisible {
+	grid-template-columns: 0 minmax(var(--main-min-width), 1fr) var(
+			--right-side-panel-width
+		);
+}

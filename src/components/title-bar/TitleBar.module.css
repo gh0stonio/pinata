@@ -1,0 +1,191 @@
+.titleBar {
+	position: relative;
+	z-index: 2;
+	display: grid;
+	grid-template-columns: var(--titlebar-side-width) minmax(0, 1fr) var(
+			--titlebar-side-width
+		);
+	align-items: center;
+	gap: 10px;
+	width: 100%;
+	height: var(--titlebar-height);
+	padding: 0 14px;
+	color: var(--color-text-secondary);
+	background: var(--color-titlebar-background);
+	-webkit-backdrop-filter: blur(22px) saturate(1.4);
+	backdrop-filter: blur(22px) saturate(1.4);
+	border-bottom: 1px solid var(--color-border-primary);
+	user-select: none;
+	-webkit-user-select: none;
+	app-region: drag;
+	-webkit-app-region: drag;
+}
+
+.leftGroup,
+.rightGroup {
+	display: flex;
+	align-items: center;
+	flex-shrink: 0;
+	app-region: drag;
+	-webkit-app-region: drag;
+}
+
+.leftGroup {
+	gap: 8px;
+}
+
+.rightGroup {
+	justify-content: flex-end;
+	gap: 6px;
+}
+
+.trafficLightReserve {
+	width: var(--traffic-light-reserve-width);
+	height: 100%;
+	flex-shrink: 0;
+	app-region: drag;
+	-webkit-app-region: drag;
+}
+
+.fullscreen .trafficLightReserve {
+	display: none;
+}
+
+.tButton {
+	position: relative;
+	display: grid;
+	place-items: center;
+	width: 28px;
+	height: 28px;
+	padding: 0;
+	color: var(--color-text-tertiary);
+	background: transparent;
+	border: 0;
+	border-radius: 7px;
+	cursor: default;
+	transition:
+		background 150ms ease,
+		color 150ms ease;
+	app-region: no-drag;
+	-webkit-app-region: no-drag;
+}
+
+.tButton:focus-visible {
+	outline: 2px solid var(--color-accent-muted);
+	outline-offset: 2px;
+}
+
+.tButton svg {
+	stroke: currentColor;
+	stroke-width: 1.6;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+.tButton:hover:not(:disabled) {
+	color: var(--color-text-secondary);
+	background: var(--color-surface-hover);
+}
+
+.active,
+.active:hover:not(:disabled) {
+	color: var(--color-accent-primary);
+	background: var(--color-accent-subtle);
+}
+
+.tooltip {
+	--tooltip-x: -50%;
+
+	position: absolute;
+	top: calc(100% + 4px);
+	left: 50%;
+	z-index: 10;
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	width: max-content;
+	max-width: 170px;
+	padding: 5px 6px 5px 8px;
+	color: var(--color-text-secondary);
+	background: var(--color-surface-elevated);
+	border: 1px solid var(--color-border-primary);
+	border-radius: 7px;
+	box-shadow: 0 6px 16px rgb(0 0 0 / 0.22);
+	font-family: var(--font-ui);
+	font-size: 11px;
+	font-weight: 600;
+	line-height: 1;
+	opacity: 0;
+	pointer-events: none;
+	transform: translate(var(--tooltip-x), -2px);
+	transition:
+		opacity 120ms ease,
+		transform 120ms ease;
+}
+
+.leftTooltip {
+	--tooltip-x: 0;
+
+	left: 0;
+}
+
+.rightTooltip {
+	--tooltip-x: 0;
+
+	right: 0;
+	left: auto;
+}
+
+.tooltip kbd {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 24px;
+	height: 18px;
+	padding: 0 5px;
+	color: var(--color-text-secondary);
+	background: var(--color-surface-muted);
+	border: 0;
+	border-radius: 999px;
+	font-family: var(--font-ui);
+	font-size: 10px;
+	font-weight: 700;
+	line-height: 1;
+}
+
+.tButton:hover .tooltip,
+.tButton:focus-visible .tooltip {
+	opacity: 1;
+	transform: translate(var(--tooltip-x), 0);
+}
+
+.center {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	app-region: drag;
+	-webkit-app-region: drag;
+}
+
+.brandLogo {
+	width: 22px;
+	height: 22px;
+	flex: 0 0 auto;
+	object-fit: contain;
+	pointer-events: none;
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+.brandTitle {
+	color: var(--color-text-secondary);
+	font-family: var(--font-display);
+	font-size: 13px;
+	font-weight: 700;
+	letter-spacing: 0;
+	line-height: 1;
+}
