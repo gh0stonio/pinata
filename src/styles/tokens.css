@@ -1,0 +1,43 @@
+:root {
+	--font-display: "Space Grotesk", system-ui, sans-serif;
+	--font-ui: "Space Grotesk", system-ui, sans-serif;
+	--font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+	--radius-sm: 6px;
+	--radius-md: 9px;
+	--radius-lg: 13px;
+	--radius-xl: 18px;
+	--radius-pill: 999px;
+
+	--space-2xs: 2px;
+	--space-xs: 4px;
+	--space-sm: 6px;
+	--space-md: 8px;
+	--space-lg: 10px;
+	--space-xl: 12px;
+	--space-2xl: 14px;
+	--space-3xl: 18px;
+	--space-4xl: 22px;
+	--space-5xl: 28px;
+	--space-view-top: 55px;
+	--space-view-bottom: 72px;
+
+	--titlebar-height: 46px;
+	--titlebar-side-width: 190px;
+	--traffic-light-reserve-width: 78px;
+	--left-side-panel-width: 264px;
+	--right-side-panel-width: 300px;
+	--main-min-width: 0;
+
+	--color-swatch-coral: #f5847e;
+	--color-swatch-teal: #45c1b9;
+	--color-swatch-gold: #f6ce5a;
+	--color-swatch-magenta: #e86ca9;
+	--color-swatch-lime: #abd568;
+	--color-swatch-azure: #5e9af0;
+	--color-swatch-check-dark: #1a1f23;
+	--color-swatch-check-light: #ffffff;
+	--color-fallback-background: #1d2022;
+	--color-fallback-text: #e8eaeb;
+	--color-fallback-selection: rgba(232, 234, 235, 0.28);
+}

@@ -1,0 +1,326 @@
+.overlay {
+	position: absolute;
+	inset: 0;
+	z-index: 20;
+	display: grid;
+	grid-template-columns: var(--left-side-panel-width) minmax(0, 1fr);
+	color: var(--color-text-primary);
+	background: var(--color-background);
+}
+
+.rail {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-4xl);
+	min-width: 0;
+	padding: calc(var(--titlebar-height) + var(--space-md)) var(--space-2xl)
+		var(--space-3xl);
+	background: var(--color-side-background);
+	border-right: 1px solid var(--color-border-primary);
+}
+
+.back {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-md);
+	width: fit-content;
+	padding: var(--space-xs) var(--space-md);
+	color: var(--color-text-secondary);
+	background: transparent;
+	border-radius: var(--radius-sm);
+	font-size: 13px;
+	font-weight: 700;
+	line-height: 1.25;
+	cursor: pointer;
+}
+
+.back:hover {
+	color: var(--color-text-primary);
+	background: var(--color-control-hover);
+}
+
+.backIcon {
+	flex: 0 0 auto;
+}
+
+.nav {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-4xl);
+	min-width: 0;
+}
+
+.navGroup {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-xs);
+}
+
+.navLabel,
+.groupLabel {
+	margin: 0;
+	color: var(--color-text-tertiary);
+	font-family: var(--font-mono);
+	font-size: 11px;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	line-height: 1.2;
+	text-transform: uppercase;
+}
+
+.navItem {
+	display: flex;
+	align-items: center;
+	gap: var(--space-xl);
+	width: 100%;
+	height: 35px;
+	padding: 0 var(--space-lg);
+	color: var(--color-text-secondary);
+	background: transparent;
+	border-radius: var(--radius-md);
+	font-size: 13px;
+	font-weight: 600;
+	text-align: left;
+	cursor: pointer;
+}
+
+.navItem:hover,
+.navItem:focus-visible {
+	color: var(--color-text-primary);
+	background: var(--color-control-hover);
+}
+
+.navItemActive,
+.navItemActive:hover,
+.navItemActive:focus-visible {
+	color: var(--color-text-primary);
+	background: var(--color-control-selected);
+}
+
+.navItemActive {
+	font-weight: 800;
+}
+
+.navIcon {
+	flex: 0 0 auto;
+	color: currentColor;
+	opacity: 0.84;
+}
+
+.content {
+	min-width: 0;
+	overflow: auto;
+	padding: var(--space-view-top) var(--space-5xl) var(--space-view-bottom);
+}
+
+.inner {
+	width: min(760px, 100%);
+	margin: 0 auto;
+}
+
+.title {
+	margin: 0 0 var(--space-5xl);
+	color: var(--color-text-primary);
+	font-size: 26px;
+	font-weight: 800;
+	letter-spacing: 0;
+	line-height: 1.15;
+}
+
+.settingsGroup {
+	margin-top: var(--space-5xl);
+}
+
+.settingsGroup:first-of-type {
+	margin-top: 0;
+}
+
+.groupLabel {
+	margin-bottom: var(--space-lg);
+}
+
+.card {
+	overflow: hidden;
+	background: var(--color-surface-primary);
+	border: 1px solid var(--color-border-subtle);
+	border-radius: var(--radius-lg);
+}
+
+.row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	align-items: center;
+	gap: var(--space-3xl);
+	min-height: 72px;
+	padding: var(--space-2xl) var(--space-3xl);
+	border-top: 1px solid var(--color-border-subtle);
+}
+
+.rowFirst {
+	border-top: 0;
+}
+
+.shortcutRow {
+	min-height: 50px;
+	padding: var(--space-md) var(--space-3xl);
+}
+
+.rowCopy {
+	min-width: 0;
+}
+
+.rowCopy h2 {
+	margin: 0;
+	color: var(--color-text-primary);
+	font-size: 14px;
+	font-weight: 800;
+	letter-spacing: 0;
+	line-height: 1.25;
+}
+
+.rowCopy p {
+	margin: var(--space-xs) 0 0;
+	color: var(--color-text-tertiary);
+	font-size: 12px;
+	line-height: 1.45;
+}
+
+.segment {
+	display: inline-flex;
+	flex: 0 0 auto;
+	gap: var(--space-2xs);
+	padding: var(--space-2xs);
+	background: var(--color-surface-hover);
+	border: 1px solid var(--color-border-primary);
+	border-radius: var(--radius-md);
+}
+
+.segmentButton {
+	min-width: 56px;
+	height: 28px;
+	padding: 0 var(--space-xl);
+	color: var(--color-text-tertiary);
+	background: transparent;
+	border-radius: var(--radius-sm);
+	font-size: 12px;
+	font-weight: 800;
+	line-height: 1;
+	cursor: pointer;
+}
+
+.segmentButton:hover {
+	color: var(--color-text-primary);
+}
+
+.segmentButtonActive {
+	color: var(--color-text-primary);
+	background: var(--color-surface-primary);
+}
+
+.swatches {
+	display: flex;
+	flex: 0 0 auto;
+	align-items: center;
+	gap: var(--space-md);
+}
+
+.swatch {
+	position: relative;
+	width: 28px;
+	height: 28px;
+	background: var(--swatch-color);
+	border: 2px solid var(--color-surface-primary);
+	border-radius: var(--radius-pill);
+	box-shadow: 0 0 0 1px var(--color-border-primary);
+	color: var(--swatch-check);
+	cursor: pointer;
+}
+
+.swatch:hover {
+	box-shadow: 0 0 0 2px var(--color-border-primary);
+}
+
+.swatchSelected {
+	box-shadow:
+		0 0 0 2px var(--color-accent-primary),
+		0 0 0 5px var(--color-surface-primary);
+}
+
+.swatch[data-accent-option="coral"] {
+	--swatch-color: var(--color-swatch-coral);
+	--swatch-check: var(--color-swatch-check-dark);
+}
+
+.swatch[data-accent-option="teal"] {
+	--swatch-color: var(--color-swatch-teal);
+	--swatch-check: var(--color-swatch-check-dark);
+}
+
+.swatch[data-accent-option="gold"] {
+	--swatch-color: var(--color-swatch-gold);
+	--swatch-check: var(--color-swatch-check-dark);
+}
+
+.swatch[data-accent-option="magenta"] {
+	--swatch-color: var(--color-swatch-magenta);
+	--swatch-check: var(--color-swatch-check-dark);
+}
+
+.swatch[data-accent-option="lime"] {
+	--swatch-color: var(--color-swatch-lime);
+	--swatch-check: var(--color-swatch-check-dark);
+}
+
+.swatch[data-accent-option="azure"] {
+	--swatch-color: var(--color-swatch-azure);
+	--swatch-check: var(--color-swatch-check-light);
+}
+
+.swatch[data-accent-option="mono"] {
+	--swatch-color: var(--color-text-primary);
+	--swatch-check: var(--color-background);
+}
+
+.swatch span {
+	position: absolute;
+	inset: 0;
+	display: grid;
+	place-items: center;
+	font-size: 15px;
+	font-weight: 900;
+	line-height: 1;
+}
+
+.key {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 48px;
+	height: 24px;
+	padding: 0 var(--space-lg);
+	color: var(--color-key-text);
+	background: var(--color-key-background);
+	border-radius: var(--radius-pill);
+	font-family: var(--font-ui);
+	font-size: 12px;
+	font-weight: 800;
+	line-height: 1;
+	text-align: center;
+}
+
+@media (max-width: 760px) {
+	.overlay {
+		grid-template-columns: 220px minmax(0, 1fr);
+	}
+
+	.row {
+		grid-template-columns: minmax(0, 1fr);
+		align-items: start;
+	}
+
+	.segment,
+	.swatches,
+	.key {
+		justify-self: start;
+	}
+}

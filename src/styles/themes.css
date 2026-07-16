@@ -1,21 +1,3 @@
-:root {
-	--font-display: "Space Grotesk", system-ui, sans-serif;
-	--font-ui: "Space Grotesk", system-ui, sans-serif;
-	--font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
-
-	--radius-sm: 6px;
-	--radius-md: 9px;
-	--radius-lg: 13px;
-	--radius-xl: 18px;
-
-	--titlebar-height: 46px;
-	--titlebar-side-width: 190px;
-	--traffic-light-reserve-width: 78px;
-	--left-side-panel-width: 230px;
-	--right-side-panel-width: 300px;
-	--main-min-width: 0;
-}
-
 /* Piñata Dark: graphite app shell. */
 [data-theme="pinata-dark"] {
 	--color-background: #1a1c1e;
@@ -25,6 +7,11 @@
 	--color-surface-hover: #34393b;
 	--color-surface-elevated: #2f3335;
 	--color-surface-muted: #4a4f52;
+	--color-control-hover: #2f3335;
+	--color-control-selected: #34393b;
+	--color-key-background: #3f4548;
+	--color-key-text: #c2c7c9;
+	--color-tooltip-background: #2f3335;
 
 	--color-border-primary: #353a3c;
 	--color-border-subtle: #2a2f31;
@@ -60,7 +47,7 @@
 	--color-diff-delete-text: #e08a8a;
 
 	--shadow-card: none;
-	--shadow-popover: none;
+	--shadow-popover: 0 6px 16px rgb(0 0 0 / 0.22);
 }
 
 /* Piñata Light: paper app shell. */
@@ -72,6 +59,11 @@
 	--color-surface-hover: #e5e9ec;
 	--color-surface-elevated: #ffffff;
 	--color-surface-muted: #a7aeb5;
+	--color-control-hover: #dfe5e9;
+	--color-control-selected: #d3dbe1;
+	--color-key-background: #e5eaed;
+	--color-key-text: #39424a;
+	--color-tooltip-background: #eef1f3;
 
 	--color-border-primary: #ccd1d6;
 	--color-border-subtle: #dee3e7;
@@ -107,5 +99,68 @@
 	--color-diff-delete-text: #a05252;
 
 	--shadow-card: none;
-	--shadow-popover: none;
+	--shadow-popover: 0 8px 24px rgb(18 25 30 / 0.14);
+}
+
+[data-accent="coral"] {
+	--color-accent-primary: var(--color-swatch-coral);
+	--color-accent-muted: #ee6a63;
+	--color-accent-subtle: rgba(245, 132, 126, 0.16);
+	--color-selection-background: rgba(245, 132, 126, 0.32);
+}
+
+[data-accent="teal"] {
+	--color-accent-primary: var(--color-swatch-teal);
+	--color-accent-muted: #2fb2aa;
+	--color-accent-subtle: rgba(69, 193, 185, 0.16);
+	--color-selection-background: rgba(69, 193, 185, 0.32);
+}
+
+[data-accent="gold"] {
+	--color-accent-primary: var(--color-swatch-gold);
+	--color-accent-muted: #edbe38;
+	--color-accent-subtle: rgba(246, 206, 90, 0.16);
+	--color-selection-background: rgba(246, 206, 90, 0.32);
+}
+
+[data-theme="pinata-light"][data-accent="gold"] {
+	--color-accent-primary: #d89f00;
+	--color-accent-muted: #b87f00;
+	--color-accent-subtle: rgba(246, 206, 90, 0.24);
+	--color-selection-background: rgba(246, 206, 90, 0.34);
+}
+
+[data-accent="magenta"] {
+	--color-accent-primary: var(--color-swatch-magenta);
+	--color-accent-muted: #e15196;
+	--color-accent-subtle: rgba(232, 108, 169, 0.16);
+	--color-selection-background: rgba(232, 108, 169, 0.32);
+}
+
+[data-accent="lime"] {
+	--color-accent-primary: var(--color-swatch-lime);
+	--color-accent-muted: #9bcb4d;
+	--color-accent-subtle: rgba(171, 213, 104, 0.16);
+	--color-selection-background: rgba(171, 213, 104, 0.32);
+}
+
+[data-accent="azure"] {
+	--color-accent-primary: var(--color-swatch-azure);
+	--color-accent-muted: #4787ec;
+	--color-accent-subtle: rgba(94, 154, 240, 0.16);
+	--color-selection-background: rgba(94, 154, 240, 0.32);
+}
+
+[data-theme="pinata-dark"][data-accent="mono"] {
+	--color-accent-primary: #dfe3e5;
+	--color-accent-muted: #c2c7c9;
+	--color-accent-subtle: rgba(223, 227, 229, 0.13);
+	--color-selection-background: rgba(223, 227, 229, 0.28);
+}
+
+[data-theme="pinata-light"][data-accent="mono"] {
+	--color-accent-primary: #1a1f23;
+	--color-accent-muted: #39424a;
+	--color-accent-subtle: rgba(26, 31, 35, 0.1);
+	--color-selection-background: rgba(26, 31, 35, 0.2);
 }

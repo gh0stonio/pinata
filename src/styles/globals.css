@@ -1,4 +1,5 @@
 @import "./typography.css";
+@import "./tokens.css";
 @import "./themes.css";
 @import "./density.css";
 
@@ -14,13 +15,13 @@ body,
 	width: 100%;
 	height: 100%;
 	margin: 0;
-	background: #1d2022;
+	background: var(--color-background, var(--color-fallback-background));
 }
 
 body {
 	overflow: hidden;
-	color: var(--color-text-primary, #e8eaeb);
-	background: var(--color-background, #1d2022);
+	color: var(--color-text-primary, var(--color-fallback-text));
+	background: var(--color-background, var(--color-fallback-background));
 	font-family: var(--font-ui);
 	font-size: 14px;
 	font-synthesis: none;
@@ -48,6 +49,6 @@ svg {
 }
 
 ::selection {
-	color: var(--color-background, #1d2022);
-	background: var(--color-selection-background, rgba(232, 234, 235, 0.28));
+	color: var(--color-background, var(--color-fallback-background));
+	background: var(--color-selection-background, var(--color-fallback-selection));
 }
