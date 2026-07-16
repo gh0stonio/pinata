@@ -2,6 +2,7 @@
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import pinataLogo from '../../assets/brand/pinata-logo.png'
+import SidePanelIcon from '../../icons/SidePanelIcon.vue'
 import styles from './TitleBar.module.css'
 
 defineProps<{
@@ -72,11 +73,7 @@ onBeforeUnmount(() => {
         @mousedown.stop
         @click.stop="emit('toggle-left-side-panel')"
       >
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <rect x="3" y="4" width="18" height="16" rx="2" />
-          <line :x1="leftSidePanelVisible ? 9 : 15" y1="4" :x2="leftSidePanelVisible ? 9 : 15" y2="20" />
-          <path :d="leftSidePanelVisible ? 'M14 9l-2 3 2 3' : 'M10 9l2 3-2 3'" />
-        </svg>
+        <SidePanelIcon side="left" :open="leftSidePanelVisible" />
         <span :class="[styles.tooltip, styles.leftTooltip]">
           <span>{{ leftSidePanelVisible ? 'Collapse side panel' : 'Open side panel' }}</span>
           <kbd>⌘B</kbd>
@@ -98,11 +95,7 @@ onBeforeUnmount(() => {
         @mousedown.stop
         @click.stop="emit('toggle-right-side-panel')"
       >
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <rect x="3" y="4" width="18" height="16" rx="2" />
-          <line x1="15" y1="4" x2="15" y2="20" />
-          <path :d="rightSidePanelVisible ? 'M10 9l2 3-2 3' : 'M12 9l-2 3 2 3'" />
-        </svg>
+        <SidePanelIcon side="right" :open="rightSidePanelVisible" />
         <span :class="[styles.tooltip, styles.rightTooltip]">
           <span>{{ rightSidePanelVisible ? 'Collapse side panel' : 'Open side panel' }}</span>
           <kbd>⌘L</kbd>

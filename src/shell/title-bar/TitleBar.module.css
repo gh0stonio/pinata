@@ -6,10 +6,10 @@
 			--titlebar-side-width
 		);
 	align-items: center;
-	gap: 10px;
+	gap: var(--space-lg);
 	width: 100%;
 	height: var(--titlebar-height);
-	padding: 0 14px;
+	padding: 0 var(--space-2xl);
 	color: var(--color-text-secondary);
 	background: var(--color-titlebar-background);
 	-webkit-backdrop-filter: blur(22px) saturate(1.4);
@@ -31,12 +31,12 @@
 }
 
 .leftGroup {
-	gap: 8px;
+	gap: var(--space-md);
 }
 
 .rightGroup {
 	justify-content: flex-end;
-	gap: 6px;
+	gap: var(--space-sm);
 }
 
 .trafficLightReserve {
@@ -61,7 +61,7 @@
 	color: var(--color-text-tertiary);
 	background: transparent;
 	border: 0;
-	border-radius: 7px;
+	border-radius: var(--radius-sm);
 	cursor: default;
 	transition:
 		background 150ms ease,
@@ -72,7 +72,7 @@
 
 .tButton:focus-visible {
 	outline: 2px solid var(--color-accent-muted);
-	outline-offset: 2px;
+	outline-offset: var(--space-2xs);
 }
 
 .tButton svg {
@@ -84,7 +84,7 @@
 
 .tButton:hover:not(:disabled) {
 	color: var(--color-text-secondary);
-	background: var(--color-surface-hover);
+	background: var(--color-control-hover);
 }
 
 .active,
@@ -97,20 +97,20 @@
 	--tooltip-x: -50%;
 
 	position: absolute;
-	top: calc(100% + 4px);
+	top: calc(100% + var(--space-xs));
 	left: 50%;
 	z-index: 10;
 	display: inline-flex;
 	align-items: center;
-	gap: 5px;
+	gap: var(--space-xs);
 	width: max-content;
 	max-width: 170px;
-	padding: 5px 6px 5px 8px;
+	padding: var(--space-xs) var(--space-sm) var(--space-xs) var(--space-md);
 	color: var(--color-text-secondary);
-	background: var(--color-surface-elevated);
+	background: var(--color-tooltip-background);
 	border: 1px solid var(--color-border-primary);
-	border-radius: 7px;
-	box-shadow: 0 6px 16px rgb(0 0 0 / 0.22);
+	border-radius: var(--radius-sm);
+	box-shadow: var(--shadow-popover);
 	font-family: var(--font-ui);
 	font-size: 11px;
 	font-weight: 600;
@@ -142,11 +142,11 @@
 	justify-content: center;
 	min-width: 24px;
 	height: 18px;
-	padding: 0 5px;
-	color: var(--color-text-secondary);
-	background: var(--color-surface-muted);
+	padding: 0 var(--space-sm);
+	color: var(--color-key-text);
+	background: var(--color-key-background);
 	border: 0;
-	border-radius: 999px;
+	border-radius: var(--radius-pill);
 	font-family: var(--font-ui);
 	font-size: 10px;
 	font-weight: 700;
@@ -163,7 +163,7 @@
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	gap: 8px;
+	gap: var(--space-md);
 	min-width: 0;
 	overflow: hidden;
 	white-space: nowrap;
