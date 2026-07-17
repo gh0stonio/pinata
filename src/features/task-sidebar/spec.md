@@ -7,6 +7,11 @@ Based on v0 spec 03 and `reference/src/term-sidebar.jsx`.
 ## Current scope
 
 - Brand header, task count, task rows, repo rows, and repo hover metadata.
+- New Task button and creation modal for registered repos.
+- Creating a task persists task/repo records, selects the new task, expands it, and selects its
+  first repo.
+- Task edit reuses the creation modal to update name, repositories, and base branches.
+- Task deletion is available from the edit modal danger zone.
 - Selection and expanded tasks persist through app state.
 - Each task row is one button. Clicking any hovered part toggles expand/collapse only. Repo
   selection changes only from repo rows.
@@ -19,7 +24,10 @@ Based on v0 spec 03 and `reference/src/term-sidebar.jsx`.
 
 ## Deferred
 
-- New Task dialog.
-- Task edit popover.
+- Archive task flow: task removal should become archive-first, not destructive delete. Archived
+  tasks leave the active sidebar, appear in a Settings archive list, can be restored from there, and
+  can be permanently deleted only from the archive view.
+- Real git worktree creation during task creation.
+- Terminal spawn after task creation.
 - Drag reorder.
 - Diff counters, PR glyphs, checks donut.

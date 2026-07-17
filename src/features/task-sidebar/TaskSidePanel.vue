@@ -2,7 +2,8 @@
 import { computed, ref } from 'vue'
 import pinataLogo from '../../assets/brand/pinata-logo.png'
 import ChevronDownIcon from '../../icons/ChevronDownIcon.vue'
-import LayersIcon from '../../icons/LayersIcon.vue'
+import PencilIcon from '../../icons/PencilIcon.vue'
+import PlusIcon from '../../icons/PlusIcon.vue'
 import {
   effectiveRepoWorktreeBasePath,
   findRegisteredRepo,
@@ -18,6 +19,8 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
+  'edit-task': [task: Task]
+  'open-new-task': []
   'select-task-repo': [task: Task, taskRepo: TaskRepo]
   'toggle-task': [task: Task]
 }>()
@@ -88,10 +91,15 @@ function taskRepoPath(taskRepo: TaskRepo) {
       <span :class="styles.wordmark">Piñata</span>
     </header>
 
+    <div :class="styles.primaryAction">
+      <button type="button" :class="styles.newTaskButton" @click="emit('open-new-task')">
+        <PlusIcon />
+        New task
+      </button>
+    </div>
+
     <div :class="styles.labelRow">
-      <LayersIcon />
       <span :class="styles.label">Tasks</span>
-      <span :class="styles.count">{{ appState.tasks.length }}</span>
     </div>
 
     <div :class="styles.scroller">
@@ -99,24 +107,35 @@ function taskRepoPath(taskRepo: TaskRepo) {
 
       <ul v-else :class="styles.taskList" aria-label="Tasks">
         <li v-for="task in appState.tasks" :key="task.id" :class="styles.taskItem">
-          <button
-            type="button"
-            :class="styles.taskRow"
-            :aria-expanded="isTaskExpanded(task.id)"
-            :aria-label="isTaskExpanded(task.id) ? `Collapse ${task.name}` : `Expand ${task.name}`"
-            @click="emit('toggle-task', task)"
-          >
-            <span
-              :class="[styles.chevron, isTaskExpanded(task.id) && styles.chevronOpen]"
-              aria-hidden="true"
+          <div :class="styles.taskRow">
+            <button
+              type="button"
+              :class="styles.taskToggle"
+              :aria-expanded="isTaskExpanded(task.id)"
+              :aria-label="isTaskExpanded(task.id) ? `Collapse ${task.name}` : `Expand ${task.name}`"
+              @click="emit('toggle-task', task)"
             >
-              <ChevronDownIcon />
-            </span>
+              <span
+                :class="[styles.chevron, isTaskExpanded(task.id) && styles.chevronOpen]"
+                aria-hidden="true"
+              >
+                <ChevronDownIcon />
+              </span>
 
-            <span :class="styles.taskButton">
-              <span :class="styles.taskName">{{ task.name }}</span>
-            </span>
-          </button>
+              <span :class="styles.taskButton">
+                <span :class="styles.taskName">{{ task.name }}</span>
+              </span>
+            </button>
+
+            <button
+              type="button"
+              :class="styles.taskAction"
+              :aria-label="`Edit ${task.name}`"
+              @click="emit('edit-task', task)"
+            >
+              <PencilIcon />
+            </button>
+          </div>
 
           <ul v-if="isTaskExpanded(task.id)" :class="styles.repoList" aria-label="Task repos">
             <li v-for="taskRepoItem in task.repos" :key="taskRepoItem.id" :class="styles.repoItem">
@@ -141,9 +160,6 @@ function taskRepoPath(taskRepo: TaskRepo) {
     </div>
 
     <div v-if="hoveredTaskRepo" :class="styles.hoverCard" :style="hoverStyle" role="tooltip">
-      <div :class="styles.hoverHeader">
-        <span>{{ taskRepoName(hoveredTaskRepo) }}</span>
-      </div>
       <dl :class="styles.metaList">
         <div>
           <dt>Branch</dt>

@@ -45,11 +45,12 @@ Implemented:
 - main surface reflects the selected repo until terminal spawn lands
 - Settings view with theme, accent, shortcuts, and Git & PR repo registration
 - Rust git inspection for local repository registration
+- task creation, editing, and deletion UI using registered repos
 - Space Grotesk for UI, JetBrains Mono for code
 
 Not implemented yet:
 
-- task creation flow
+- task editing
 - worktree creation
 - terminal spawn
 - tabs and split panes
@@ -132,9 +133,8 @@ pnpm build
 
 ## Next Work
 
-1. Add task creation using registered repos.
+1. Add worktree creation for task repos.
 2. Add plain terminal spawning for the selected task repo.
 3. Add tab and split pane handling.
-4. Add worktree creation.
-5. Add files/review/PR panels.
-6. Add advanced settings.
+4. Add files/review/PR panels.
+5. Add advanced settings.

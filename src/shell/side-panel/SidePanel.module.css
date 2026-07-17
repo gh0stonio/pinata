@@ -5,7 +5,7 @@
 	min-height: 0;
 	overflow: hidden;
 	background: var(--color-side-background);
-	transition: border-color 180ms ease;
+	transition: border-color 250ms ease;
 }
 
 .left {
@@ -46,6 +46,17 @@
 	flex-direction: column;
 	min-width: 0;
 	min-height: 0;
+}
+
+.header,
+.content {
+	opacity: 1;
+	transition: opacity 250ms ease;
+}
+
+.hidden .header,
+.hidden .content {
+	opacity: 0;
 }
 
 .empty {

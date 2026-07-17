@@ -3,20 +3,33 @@
 	z-index: 1;
 	display: flex;
 	flex-direction: column;
-	width: var(--left-side-panel-width);
 	min-width: 0;
 	min-height: 0;
-	overflow: visible;
+	overflow: hidden;
 	background: var(--color-side-background);
 	border-right: 1px solid var(--color-border-primary);
-	transition: border-color 180ms ease;
+	transition: border-color 250ms ease;
 }
 
 .hidden {
-	width: 0;
-	overflow: hidden;
 	pointer-events: none;
 	border-right-color: transparent;
+}
+
+.brand,
+.primaryAction,
+.labelRow,
+.scroller {
+	width: var(--left-side-panel-width);
+	opacity: 1;
+	transition: opacity 250ms ease;
+}
+
+.hidden .brand,
+.hidden .primaryAction,
+.hidden .labelRow,
+.hidden .scroller {
+	opacity: 0;
 }
 
 .brand {
@@ -27,8 +40,8 @@
 }
 
 .brandLogo {
-	width: 24px;
-	height: 24px;
+	width: 22px;
+	height: 22px;
 	flex: 0 0 auto;
 	object-fit: contain;
 }
@@ -37,9 +50,47 @@
 	min-width: 0;
 	color: var(--color-text-primary);
 	font-family: var(--font-display);
-	font-size: var(--font-size-title);
+	font-size: 15.5px;
 	font-weight: 700;
 	line-height: 1;
+}
+
+.primaryAction {
+	padding: 0 var(--space-xl) var(--space-4xl);
+}
+
+.newTaskButton {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: var(--space-md);
+	width: 100%;
+	height: 34px;
+	color: var(--color-text-primary);
+	background: var(--color-accent-subtle);
+	border: 1px solid color-mix(in srgb, var(--color-accent-primary) 32%, transparent);
+	border-radius: var(--radius-md);
+	font-size: 12.5px;
+	font-weight: 600;
+	line-height: 1;
+	cursor: pointer;
+	transition:
+		background 150ms ease,
+		border-color 150ms ease;
+}
+
+.newTaskButton svg {
+	color: var(--color-accent-primary);
+}
+
+.newTaskButton:hover {
+	background: color-mix(in srgb, var(--color-accent-primary) 24%, transparent);
+	border-color: color-mix(in srgb, var(--color-accent-primary) 42%, transparent);
+}
+
+.newTaskButton:focus-visible {
+	outline: 2px solid var(--color-accent-muted);
+	outline-offset: var(--space-2xs);
 }
 
 .labelRow {
@@ -47,23 +98,16 @@
 	align-items: center;
 	gap: var(--space-sm);
 	padding: var(--space-2xs) var(--space-xl) var(--space-sm);
+	padding-left: calc(var(--space-xl) + var(--space-lg));
 	color: var(--color-text-tertiary);
 }
 
 .label {
 	font-family: var(--font-mono);
-	font-size: var(--font-size-meta);
-	font-weight: 700;
-	letter-spacing: 0.08em;
-	text-transform: uppercase;
-}
-
-.count {
-	margin-left: auto;
-	color: var(--color-text-placeholder);
-	font-family: var(--font-mono);
-	font-size: var(--font-size-label);
+	font-size: 10px;
 	font-weight: 600;
+	letter-spacing: 0.15em;
+	text-transform: uppercase;
 }
 
 .scroller {
@@ -102,17 +146,13 @@
 .taskRow {
 	display: flex;
 	align-items: center;
-	gap: var(--space-sm);
 	width: 100%;
+	height: 32px;
 	min-width: 0;
-	padding: var(--space-sm) var(--space-sm) var(--space-sm) 0;
-	border: 0;
+	padding: 0 var(--space-lg);
 	border-radius: var(--radius-sm);
 	background: transparent;
 	color: inherit;
-	font: inherit;
-	text-align: left;
-	cursor: pointer;
 	transition: background 150ms ease;
 }
 
@@ -120,6 +160,8 @@
 	background: var(--color-control-hover);
 }
 
+.taskToggle,
+.taskAction,
 .repoButton {
 	border: 0;
 	color: inherit;
@@ -127,7 +169,47 @@
 	cursor: pointer;
 }
 
-.taskRow:focus-visible,
+.taskToggle {
+	display: flex;
+	align-items: center;
+	gap: var(--space-sm);
+	min-width: 0;
+	height: 100%;
+	flex: 1 1 auto;
+	padding: 0;
+	background: transparent;
+	text-align: left;
+}
+
+.taskAction {
+	display: grid;
+	width: 14px;
+	height: 14px;
+	flex: 0 0 14px;
+	margin-left: var(--space-md);
+	place-items: center;
+	padding: 0;
+	color: var(--color-text-placeholder);
+	background: transparent;
+	opacity: 0;
+	pointer-events: none;
+	transition:
+		color 150ms ease,
+		opacity 150ms ease;
+}
+
+.taskRow:hover .taskAction,
+.taskAction:focus-visible {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+.taskAction:hover {
+	color: var(--color-text-primary);
+}
+
+.taskToggle:focus-visible,
+.taskAction:focus-visible,
 .repoButton:focus-visible {
 	outline: 2px solid var(--color-accent-muted);
 	outline-offset: var(--space-2xs);
@@ -176,14 +258,13 @@
 .taskName {
 	color: var(--color-text-secondary);
 	font-family: var(--font-mono);
-	font-size: var(--font-size-heading);
+	font-size: 12.5px;
 	font-weight: 600;
 }
 
 .repoList {
 	gap: 3px;
 	margin: var(--space-2xs) 0 var(--space-sm);
-	padding-left: var(--space-lg);
 }
 
 .repoItem {
@@ -196,8 +277,9 @@
 	grid-template-columns: minmax(0, 1fr);
 	align-items: center;
 	width: 100%;
+	height: 32px;
 	min-width: 0;
-	padding: 5px var(--space-md);
+	padding: 0 var(--space-md) 0 30px;
 	border-radius: var(--radius-sm);
 	background: transparent;
 	text-align: left;
@@ -226,7 +308,7 @@
 .repoName {
 	color: var(--color-text-secondary);
 	font-family: var(--font-mono);
-	font-size: var(--font-size-body);
+	font-size: 12.5px;
 	font-weight: 500;
 }
 
@@ -246,18 +328,6 @@
 	border-radius: var(--radius-lg);
 	box-shadow: var(--shadow-popover);
 	pointer-events: none;
-}
-
-.hoverHeader {
-	display: flex;
-	align-items: center;
-	gap: var(--space-md);
-	padding: var(--space-xl) var(--space-2xl);
-	border-bottom: 1px solid var(--color-border-subtle);
-	color: var(--color-text-primary);
-	font-family: var(--font-mono);
-	font-size: var(--font-size-heading);
-	font-weight: 700;
 }
 
 .metaList {
@@ -283,7 +353,7 @@
 .metaList dt {
 	color: var(--color-text-placeholder);
 	font-family: var(--font-mono);
-	font-size: var(--font-size-label);
+	font-size: 9px;
 	font-weight: 800;
 	letter-spacing: 0.08em;
 	text-transform: uppercase;
@@ -294,6 +364,6 @@
 	overflow-wrap: anywhere;
 	color: var(--color-text-secondary);
 	font-family: var(--font-mono);
-	font-size: var(--font-size-body);
+	font-size: 11px;
 	line-height: 1.35;
 }

@@ -54,6 +54,16 @@ export type TaskRepo = {
   worktreePath?: string
 }
 
+export type NewTaskRepoInput = {
+  registeredRepoId: string
+  baseBranch: string
+}
+
+export type NewTaskInput = {
+  name: string
+  repos: NewTaskRepoInput[]
+}
+
 export type AppSelection = {
   taskId: string | null
   taskRepoIdByTaskId: Record<string, string | null>
@@ -103,4 +113,62 @@ export function effectiveRepoWorktreeBasePath(
   repo: Pick<RegisteredRepo, 'name' | 'worktreeBasePath'>,
 ) {
   return repo.worktreeBasePath?.trim() || defaultRepoWorktreePath(defaults, repo.name)
+}
+
+export function slugifyTaskName(name: string) {
+  return name
+    .trim()
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+export function taskBranchForName(name: string) {
+  const slug = slugifyTaskName(name)
+
+  return slug ? `feat/${slug}` : 'feat/...'
+}
+
+export function createTask(input: NewTaskInput): Task {
+  const name = input.name.trim()
+  const slug = slugifyTaskName(name) || 'task'
+  const branch = `feat/${slug}`
+
+  return {
+    id: `task-${slug}-${crypto.randomUUID()}`,
+    name,
+    color: '#8f989d',
+    repos: input.repos.map((repo) => ({
+      id: `task-repo-${crypto.randomUUID()}`,
+      registeredRepoId: repo.registeredRepoId,
+      baseBranch: repo.baseBranch,
+      branch,
+    })),
+  }
+}
+
+export function updateTask(task: Task, input: NewTaskInput): Task {
+  const name = input.name.trim()
+  const slug = slugifyTaskName(name) || 'task'
+  const branch = `feat/${slug}`
+
+  return {
+    ...task,
+    name,
+    repos: input.repos.map((repo) => {
+      const existingRepo = task.repos.find(
+        (taskRepo) => taskRepo.registeredRepoId === repo.registeredRepoId,
+      )
+
+      return {
+        id: existingRepo?.id ?? `task-repo-${crypto.randomUUID()}`,
+        registeredRepoId: repo.registeredRepoId,
+        baseBranch: repo.baseBranch,
+        branch,
+        worktreePath: existingRepo?.worktreePath,
+      }
+    }),
+  }
 }
