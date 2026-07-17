@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import pinataLogo from '../../assets/brand/pinata-logo.png'
 import SidePanelIcon from '../../icons/SidePanelIcon.vue'
 import styles from './TitleBar.module.css'
 
@@ -81,10 +80,7 @@ onBeforeUnmount(() => {
       </button>
     </div>
 
-    <div :class="styles.center" data-tauri-drag-region>
-      <img :class="styles.brandLogo" :src="pinataLogo" alt="" draggable="false" data-tauri-drag-region />
-      <span :class="styles.brandTitle">Piñata</span>
-    </div>
+    <div :class="styles.center" data-tauri-drag-region />
 
     <div :class="styles.rightGroup" data-tauri-drag-region>
       <button

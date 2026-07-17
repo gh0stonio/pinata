@@ -28,10 +28,11 @@ it.
 
 ## Current scaffold scope
 
-Today the shell owns `AppShell`, `TitleBar`, `SidePanel`, and `MainSurface`. It renders the
-three-column frame, left/right panel toggles, empty side panels, the empty center state, and the
-native settings menu bridge. Task/repo switchers, resizers, pane trees, and right-panel feature
-content are future work from the sections below.
+Today the shell owns `AppShell`, `TitleBar`, `SidePanel`, `MainSurface`, and the task side panel
+host. It renders the three-column frame, left/right panel toggles, app branding in the left task
+side panel, persisted task/repo selection, and the native settings menu bridge. The title bar center
+stays empty until breadcrumb switchers ship. Resizers, pane trees, and right-panel feature content
+are future work from the sections below.
 
 ## Layout regions
 
@@ -87,11 +88,10 @@ others).
 
 ## Selection state (in `App`)
 
-- `activeWs` - current task id. `activeRepoByWs[wsId]` - current repo per task. `activeTabByRepo
-  [repoId]` - current tab per repo. `expandedWs` - which tasks are expanded in the sidebar.
-- Selecting a task expands it and restores its last repo; selecting a repo sets it active within
-  its task; selecting a tab sets it active within its repo. Selection is **remembered per level**
-  so switching away and back returns you where you were.
+- `selection.taskId` - current task id. `selection.taskRepoIdByTaskId[taskId]` - current task repo
+  per task. `selection.expandedTaskIds` - which tasks are expanded in the left side panel.
+- Clicking a task row toggles expand/collapse only. Clicking a repo row selects that repo and its
+  task. Future tab selection should be remembered per repo once terminals land.
 
 ## Overlays (z-order, all mounted by `App`)
 

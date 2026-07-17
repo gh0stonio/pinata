@@ -1,0 +1,163 @@
+<script setup lang="ts">
+import { computed, ref } from 'vue'
+import pinataLogo from '../../assets/brand/pinata-logo.png'
+import ChevronDownIcon from '../../icons/ChevronDownIcon.vue'
+import LayersIcon from '../../icons/LayersIcon.vue'
+import {
+  effectiveRepoWorktreeBasePath,
+  findRegisteredRepo,
+  type AppState,
+  type Task,
+  type TaskRepo,
+} from '../app-state/app-state'
+import styles from './TaskSidePanel.module.css'
+
+const props = defineProps<{
+  appState: AppState
+  visible: boolean
+}>()
+
+const emit = defineEmits<{
+  'select-task-repo': [task: Task, taskRepo: TaskRepo]
+  'toggle-task': [task: Task]
+}>()
+
+const hoveredTaskRepo = ref<TaskRepo | null>(null)
+const hoverTop = ref(0)
+const hoverLeft = ref(0)
+
+const hoverStyle = computed(() => ({
+  top: `${hoverTop.value}px`,
+  left: `${hoverLeft.value}px`,
+}))
+
+function showRepoHover(taskRepo: TaskRepo, event: MouseEvent) {
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+
+  hoveredTaskRepo.value = taskRepo
+  hoverTop.value = Math.max(8, Math.min(rect.top, window.innerHeight - 210))
+  hoverLeft.value = Math.max(8, Math.min(rect.right + 4, window.innerWidth - 280))
+}
+
+function hideRepoHover() {
+  hoveredTaskRepo.value = null
+}
+
+function isTaskExpanded(taskId: string) {
+  return props.appState.selection.expandedTaskIds.includes(taskId)
+}
+
+function isTaskSelected(taskId: string) {
+  return props.appState.selection.taskId === taskId
+}
+
+function isTaskRepoSelected(task: Task, taskRepo: TaskRepo) {
+  return isTaskSelected(task.id) && props.appState.selection.taskRepoIdByTaskId[task.id] === taskRepo.id
+}
+
+function registeredRepoFor(taskRepo: TaskRepo) {
+  return findRegisteredRepo(props.appState, taskRepo.registeredRepoId)
+}
+
+function taskRepoName(taskRepo: TaskRepo) {
+  return registeredRepoFor(taskRepo)?.name ?? 'Unknown repo'
+}
+
+function taskRepoPath(taskRepo: TaskRepo) {
+  const registeredRepo = registeredRepoFor(taskRepo)
+
+  if (!registeredRepo) {
+    return taskRepo.worktreePath ?? 'Not set'
+  }
+
+  return (
+    taskRepo.worktreePath ??
+    effectiveRepoWorktreeBasePath(props.appState.repositoryDefaults, registeredRepo)
+  )
+}
+</script>
+
+<template>
+  <aside
+    :class="[styles.sidebar, !visible && styles.hidden]"
+    :aria-hidden="!visible"
+    aria-label="Tasks"
+  >
+    <header :class="styles.brand">
+      <img :class="styles.brandLogo" :src="pinataLogo" alt="" draggable="false" />
+      <span :class="styles.wordmark">Piñata</span>
+    </header>
+
+    <div :class="styles.labelRow">
+      <LayersIcon />
+      <span :class="styles.label">Tasks</span>
+      <span :class="styles.count">{{ appState.tasks.length }}</span>
+    </div>
+
+    <div :class="styles.scroller">
+      <p v-if="!appState.tasks.length" :class="styles.empty">Nothing here yet.</p>
+
+      <ul v-else :class="styles.taskList" aria-label="Tasks">
+        <li v-for="task in appState.tasks" :key="task.id" :class="styles.taskItem">
+          <button
+            type="button"
+            :class="styles.taskRow"
+            :aria-expanded="isTaskExpanded(task.id)"
+            :aria-label="isTaskExpanded(task.id) ? `Collapse ${task.name}` : `Expand ${task.name}`"
+            @click="emit('toggle-task', task)"
+          >
+            <span
+              :class="[styles.chevron, isTaskExpanded(task.id) && styles.chevronOpen]"
+              aria-hidden="true"
+            >
+              <ChevronDownIcon />
+            </span>
+
+            <span :class="styles.taskButton">
+              <span :class="styles.taskName">{{ task.name }}</span>
+            </span>
+          </button>
+
+          <ul v-if="isTaskExpanded(task.id)" :class="styles.repoList" aria-label="Task repos">
+            <li v-for="taskRepoItem in task.repos" :key="taskRepoItem.id" :class="styles.repoItem">
+              <button
+                type="button"
+                :class="[
+                  styles.repoButton,
+                  isTaskRepoSelected(task, taskRepoItem) && styles.repoButtonActive,
+                ]"
+                @mouseenter="showRepoHover(taskRepoItem, $event)"
+                @mouseleave="hideRepoHover"
+                @click="emit('select-task-repo', task, taskRepoItem)"
+              >
+                <span :class="styles.repoMain">
+                  <span :class="styles.repoName">{{ taskRepoName(taskRepoItem) }}</span>
+                </span>
+              </button>
+            </li>
+          </ul>
+        </li>
+      </ul>
+    </div>
+
+    <div v-if="hoveredTaskRepo" :class="styles.hoverCard" :style="hoverStyle" role="tooltip">
+      <div :class="styles.hoverHeader">
+        <span>{{ taskRepoName(hoveredTaskRepo) }}</span>
+      </div>
+      <dl :class="styles.metaList">
+        <div>
+          <dt>Branch</dt>
+          <dd>{{ hoveredTaskRepo.branch }}</dd>
+        </div>
+        <div>
+          <dt>Base</dt>
+          <dd>{{ hoveredTaskRepo.baseBranch }}</dd>
+        </div>
+        <div>
+          <dt>Worktree</dt>
+          <dd>{{ taskRepoPath(hoveredTaskRepo) }}</dd>
+        </div>
+      </dl>
+    </div>
+  </aside>
+</template>

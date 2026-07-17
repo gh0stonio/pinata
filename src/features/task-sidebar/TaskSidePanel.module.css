@@ -1,0 +1,299 @@
+.sidebar {
+	position: relative;
+	z-index: 1;
+	display: flex;
+	flex-direction: column;
+	width: var(--left-side-panel-width);
+	min-width: 0;
+	min-height: 0;
+	overflow: visible;
+	background: var(--color-side-background);
+	border-right: 1px solid var(--color-border-primary);
+	transition: border-color 180ms ease;
+}
+
+.hidden {
+	width: 0;
+	overflow: hidden;
+	pointer-events: none;
+	border-right-color: transparent;
+}
+
+.brand {
+	display: flex;
+	align-items: center;
+	gap: var(--space-lg);
+	padding: var(--space-4xl) var(--space-xl) var(--space-3xl);
+}
+
+.brandLogo {
+	width: 22px;
+	height: 22px;
+	flex: 0 0 auto;
+	object-fit: contain;
+}
+
+.wordmark {
+	min-width: 0;
+	color: var(--color-text-primary);
+	font-family: var(--font-display);
+	font-size: 15.5px;
+	font-weight: 700;
+	line-height: 1;
+}
+
+.labelRow {
+	display: flex;
+	align-items: center;
+	gap: var(--space-sm);
+	padding: var(--space-2xs) var(--space-xl) var(--space-sm);
+	color: var(--color-text-tertiary);
+}
+
+.label {
+	font-family: var(--font-mono);
+	font-size: 10px;
+	font-weight: 600;
+	letter-spacing: 0.15em;
+	text-transform: uppercase;
+}
+
+.count {
+	margin-left: auto;
+	color: var(--color-text-placeholder);
+	font-family: var(--font-mono);
+	font-size: 9.5px;
+	font-weight: 600;
+}
+
+.scroller {
+	flex: 1;
+	min-height: 0;
+	overflow-x: visible;
+	overflow-y: auto;
+	padding: 0 var(--space-xl) var(--space-md);
+}
+
+.empty {
+	margin: var(--space-3xl) 0 0;
+	color: var(--color-text-tertiary);
+	font-size: 13px;
+	line-height: 1.5;
+}
+
+.taskList,
+.repoList {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.taskList {
+	gap: var(--space-sm);
+}
+
+.taskItem {
+	min-width: 0;
+}
+
+.taskRow {
+	display: flex;
+	align-items: center;
+	gap: var(--space-sm);
+	width: 100%;
+	min-width: 0;
+	padding: var(--space-sm) var(--space-sm) var(--space-sm) 0;
+	border: 0;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+	transition: background 150ms ease;
+}
+
+.taskRow:hover {
+	background: var(--color-control-hover);
+}
+
+.repoButton {
+	border: 0;
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
+}
+
+.taskRow:focus-visible,
+.repoButton:focus-visible {
+	outline: 2px solid var(--color-accent-muted);
+	outline-offset: var(--space-2xs);
+}
+
+.chevron {
+	display: grid;
+	width: 12px;
+	height: 12px;
+	flex: 0 0 12px;
+	place-items: center;
+	padding: 0;
+	background: transparent;
+	color: var(--color-text-placeholder);
+	transform: rotate(-90deg);
+	transition:
+		color 150ms ease,
+		transform 150ms ease;
+}
+
+.chevron:hover {
+	color: var(--color-text-secondary);
+}
+
+.chevronOpen {
+	transform: rotate(0deg);
+}
+
+.taskButton {
+	display: flex;
+	align-items: center;
+	min-width: 0;
+	padding: 0;
+	background: transparent;
+	text-align: left;
+}
+
+.taskName,
+.repoName {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.taskName {
+	color: var(--color-text-secondary);
+	font-family: var(--font-mono);
+	font-size: 12.5px;
+	font-weight: 600;
+}
+
+.repoList {
+	gap: 3px;
+	margin: var(--space-2xs) 0 var(--space-sm);
+	padding-left: var(--space-lg);
+}
+
+.repoItem {
+	position: relative;
+	min-width: 0;
+}
+
+.repoButton {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	align-items: center;
+	width: 100%;
+	min-width: 0;
+	padding: 5px var(--space-md);
+	border-radius: var(--radius-sm);
+	background: transparent;
+	text-align: left;
+	transition: background 150ms ease;
+}
+
+.repoButton:hover {
+	background: var(--color-control-hover);
+}
+
+.repoButtonActive {
+	background: var(--color-accent-subtle);
+}
+
+.repoButtonActive:hover {
+	background: var(--color-accent-subtle);
+}
+
+.repoMain {
+	display: flex;
+	align-items: baseline;
+	gap: var(--space-sm);
+	min-width: 0;
+}
+
+.repoName {
+	color: var(--color-text-secondary);
+	font-family: var(--font-mono);
+	font-size: 12px;
+	font-weight: 500;
+}
+
+.repoButtonActive .repoName {
+	color: var(--color-text-primary);
+	font-weight: 700;
+}
+
+.hoverCard {
+	position: fixed;
+	z-index: 20;
+	width: 268px;
+	overflow: hidden;
+	color: var(--color-text-secondary);
+	background: var(--color-surface-elevated);
+	border: 1px solid var(--color-border-primary);
+	border-radius: var(--radius-lg);
+	box-shadow: var(--shadow-popover);
+	pointer-events: none;
+}
+
+.hoverHeader {
+	display: flex;
+	align-items: center;
+	gap: var(--space-md);
+	padding: var(--space-xl) var(--space-2xl);
+	border-bottom: 1px solid var(--color-border-subtle);
+	color: var(--color-text-primary);
+	font-family: var(--font-mono);
+	font-size: 12px;
+	font-weight: 700;
+}
+
+.metaList {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-sm);
+	margin: 0;
+	padding: var(--space-xl) var(--space-2xl);
+}
+
+.metaList div {
+	display: grid;
+	grid-template-columns: 62px minmax(0, 1fr);
+	gap: var(--space-md);
+	align-items: baseline;
+}
+
+.metaList dt,
+.metaList dd {
+	margin: 0;
+}
+
+.metaList dt {
+	color: var(--color-text-placeholder);
+	font-family: var(--font-mono);
+	font-size: 9px;
+	font-weight: 800;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+}
+
+.metaList dd {
+	min-width: 0;
+	overflow-wrap: anywhere;
+	color: var(--color-text-secondary);
+	font-family: var(--font-mono);
+	font-size: 11px;
+	line-height: 1.35;
+}

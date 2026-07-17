@@ -3,7 +3,7 @@ import styles from './SidePanel.module.css'
 
 defineProps<{
   title: string
-  empty: string
+  empty?: string
   visible: boolean
   side: 'left' | 'right'
 }>()
@@ -17,7 +17,7 @@ defineProps<{
   >
     <header :class="styles.header">{{ title }}</header>
     <div :class="styles.content">
-      <p :class="styles.empty">{{ empty }}</p>
+      <p v-if="empty" :class="styles.empty">{{ empty }}</p>
       <slot />
     </div>
   </aside>

@@ -4,13 +4,23 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import MainSurface from '../main-surface/MainSurface.vue'
 import SidePanel from '../side-panel/SidePanel.vue'
 import TitleBar from '../title-bar/TitleBar.vue'
+import {
+  createEmptyAppState,
+  loadAppState,
+  saveAppState,
+  type AppState,
+  type Task,
+  type TaskRepo,
+} from '../../features/app-state/app-state'
 import SettingsView from '../../features/settings/SettingsView.vue'
+import TaskSidePanel from '../../features/task-sidebar/TaskSidePanel.vue'
 import { type AppSettings, loadSettings, saveSettings } from '../../features/settings/settings'
 import styles from './AppShell.module.css'
 
 const leftSidePanelVisible = ref(true)
 const rightSidePanelVisible = ref(false)
 const settingsVisible = ref(false)
+const appState = ref<AppState>(createEmptyAppState())
 const settings = ref<AppSettings>(loadSettings())
 let unlistenOpenSettings: UnlistenFn | undefined
 
@@ -33,6 +43,46 @@ function openSettings() {
 
 function closeSettings() {
   settingsVisible.value = false
+}
+
+function persistAppState(next: AppState) {
+  appState.value = next
+  void saveAppState(next).catch((error: unknown) => {
+    console.error('Failed to save app state', error)
+  })
+}
+
+function selectTaskRepo(task: Task, taskRepo: TaskRepo) {
+  persistAppState({
+    ...appState.value,
+    selection: {
+      ...appState.value.selection,
+      taskId: task.id,
+      taskRepoIdByTaskId: {
+        ...appState.value.selection.taskRepoIdByTaskId,
+        [task.id]: taskRepo.id,
+      },
+      expandedTaskIds: Array.from(new Set([...appState.value.selection.expandedTaskIds, task.id])),
+    },
+  })
+}
+
+function toggleTask(task: Task) {
+  const expandedTaskIds = new Set(appState.value.selection.expandedTaskIds)
+
+  if (expandedTaskIds.has(task.id)) {
+    expandedTaskIds.delete(task.id)
+  } else {
+    expandedTaskIds.add(task.id)
+  }
+
+  persistAppState({
+    ...appState.value,
+    selection: {
+      ...appState.value.selection,
+      expandedTaskIds: Array.from(expandedTaskIds),
+    },
+  })
 }
 
 function handleKeydown(event: KeyboardEvent) {
@@ -63,6 +113,13 @@ function handleKeydown(event: KeyboardEvent) {
 
 onMounted(() => {
   window.addEventListener('keydown', handleKeydown)
+  void loadAppState()
+    .then((state) => {
+      appState.value = state
+    })
+    .catch((error: unknown) => {
+      console.error('Failed to load app state', error)
+    })
   void listen('pinata://open-settings', openSettings).then((unlisten) => {
     unlistenOpenSettings = unlisten
   })
@@ -95,8 +152,13 @@ onBeforeUnmount(() => {
         rightSidePanelVisible && styles.rightSidePanelVisible,
       ]"
     >
-      <SidePanel title="Side panel" empty="Nothing here yet." side="left" :visible="leftSidePanelVisible" />
-      <MainSurface />
+      <TaskSidePanel
+        :app-state="appState"
+        :visible="leftSidePanelVisible"
+        @select-task-repo="selectTaskRepo"
+        @toggle-task="toggleTask"
+      />
+      <MainSurface :app-state="appState" />
       <SidePanel title="Side panel" empty="Nothing here yet." side="right" :visible="rightSidePanelVisible" />
     </div>
 
