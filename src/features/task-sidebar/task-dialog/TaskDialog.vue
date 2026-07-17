@@ -219,7 +219,12 @@ onMounted(() => {
           <h2 id="new-task-title">{{ isEditing ? 'Edit task' : 'New task' }}</h2>
           <p>{{ isEditing ? 'Update the name and repositories it spans.' : 'A name and the repositories it spans.' }}</p>
         </div>
-        <button type="button" :class="styles.iconButton" aria-label="Close task dialog" @click="emit('close')">
+        <button
+          type="button"
+          class="uiButton uiButtonIcon uiButtonNaked"
+          aria-label="Close task dialog"
+          @click="emit('close')"
+        >
           <XIcon />
         </button>
       </header>
@@ -249,7 +254,7 @@ onMounted(() => {
             <p id="task-repos-title">Repositories</p>
             <button
               type="button"
-              :class="styles.secondaryButton"
+              class="uiButton uiButtonSmall"
               :disabled="!canAddRepo"
               @click="addRepoRow"
             >
@@ -300,7 +305,7 @@ onMounted(() => {
 
               <button
                 type="button"
-                :class="styles.iconButton"
+                class="uiButton uiButtonIcon uiButtonNaked"
                 :disabled="rows.length <= 1"
                 aria-label="Remove repository"
                 @click="removeRepoRow(row.id)"
@@ -320,7 +325,11 @@ onMounted(() => {
                 <h2>Delete task</h2>
                 <p>Delete this task. Local repositories stay untouched.</p>
               </div>
-              <button type="button" :class="styles.dangerButton" @click="emit('delete', task)">
+              <button
+                type="button"
+                class="uiButton uiButtonSmall uiButtonDanger"
+                @click="emit('delete', task)"
+              >
                 <TrashIcon />
                 Delete
               </button>
@@ -329,8 +338,15 @@ onMounted(() => {
         </section>
 
         <footer :class="styles.footer">
-          <button type="button" :class="styles.ghostButton" @click="emit('close')">Cancel</button>
-          <button type="button" :class="styles.primaryButton" :disabled="!canSave" @click="saveTask">
+          <button type="button" class="uiButton uiButtonSmall" @click="emit('close')">
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="uiButton uiButtonSmall uiButtonPrimary"
+            :disabled="!canSave"
+            @click="saveTask"
+          >
             <GitBranchIcon />
             {{ isEditing ? 'Save changes' : 'Create task' }}
           </button>

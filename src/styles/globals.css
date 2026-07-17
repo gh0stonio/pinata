@@ -43,6 +43,136 @@ button {
 	border: 0;
 }
 
+.uiButton {
+	--ui-button-gap: var(--space-md);
+	--ui-button-height: 34px;
+	--ui-button-padding-x: var(--space-2xl);
+	--ui-button-radius: var(--radius-sm);
+	--ui-button-font-size: var(--font-size-body);
+	--ui-button-font-weight: 700;
+
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: var(--ui-button-gap);
+	height: var(--ui-button-height);
+	padding: 0 var(--ui-button-padding-x);
+	color: var(--color-text-secondary);
+	background: transparent;
+	border: 1px solid transparent;
+	border-radius: var(--ui-button-radius);
+	font: inherit;
+	font-size: var(--ui-button-font-size);
+	font-weight: var(--ui-button-font-weight);
+	line-height: 1;
+	white-space: nowrap;
+	cursor: pointer;
+	transition:
+		background 140ms ease,
+		border-color 140ms ease,
+		color 140ms ease;
+}
+
+.uiButton:hover {
+	color: var(--color-text-primary);
+	background: var(--color-control-hover);
+}
+
+.uiButton:focus-visible {
+	border-color: var(--color-accent-muted);
+	outline: none;
+}
+
+.uiButton:disabled {
+	cursor: default;
+	opacity: 0.52;
+}
+
+.uiButton:disabled:hover {
+	color: var(--color-text-secondary);
+	background: transparent;
+	border-color: transparent;
+}
+
+.uiButton > svg {
+	flex: 0 0 auto;
+}
+
+.uiButtonPrimary {
+	color: var(--color-accent-icon);
+	background: var(--color-accent-subtle);
+	border-color: var(--color-accent-border);
+}
+
+.uiButtonPrimary:hover {
+	color: var(--color-accent-icon);
+	background: var(--color-accent-hover);
+	border-color: var(--color-accent-muted);
+}
+
+.uiButtonPrimary:disabled {
+	opacity: 0.42;
+}
+
+.uiButtonPrimary:disabled:hover {
+	color: var(--color-accent-icon);
+	background: var(--color-accent-subtle);
+	border-color: var(--color-accent-border);
+}
+
+.uiButtonDanger {
+	color: var(--color-status-danger);
+	background: var(--color-status-danger-subtle);
+}
+
+.uiButtonDanger:hover {
+	color: var(--color-status-danger);
+	background: var(--color-status-danger-subtle);
+	border-color: var(--color-status-danger);
+}
+
+.uiButtonDanger:disabled,
+.uiButtonDanger:disabled:hover {
+	color: var(--color-status-danger);
+	background: var(--color-status-danger-subtle);
+	border-color: transparent;
+}
+
+.uiButtonNaked {
+	--ui-button-padding-x: 0;
+
+	color: var(--color-text-placeholder);
+	background: transparent;
+	border-color: transparent;
+}
+
+.uiButtonNaked:hover,
+.uiButtonNaked:focus-visible {
+	color: var(--color-text-primary);
+	background: transparent;
+	border-color: transparent;
+}
+
+.uiButtonNaked:disabled,
+.uiButtonNaked:disabled:hover {
+	color: var(--color-text-placeholder);
+	background: transparent;
+	border-color: transparent;
+	opacity: 0.42;
+}
+
+.uiButtonSmall {
+	--ui-button-gap: var(--space-sm);
+	--ui-button-height: 30px;
+	--ui-button-padding-x: var(--space-lg);
+}
+
+.uiButtonIcon {
+	width: var(--ui-button-height);
+	min-width: var(--ui-button-height);
+	padding: 0;
+}
+
 img,
 svg {
 	display: block;

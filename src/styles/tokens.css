@@ -38,11 +38,17 @@
 	--main-min-width: 0;
 
 	--color-swatch-coral: #ff746b;
+	--color-swatch-coral-muted: #ff574f;
 	--color-swatch-teal: #20d6c9;
+	--color-swatch-teal-muted: #00bfb2;
 	--color-swatch-gold: #ffd447;
+	--color-swatch-gold-muted: #f0b600;
 	--color-swatch-magenta: #ff62b4;
+	--color-swatch-magenta-muted: #ee3e9f;
 	--color-swatch-lime: #a7ea45;
+	--color-swatch-lime-muted: #8ed025;
 	--color-swatch-azure: #4d9dff;
+	--color-swatch-azure-muted: #277fea;
 	--color-swatch-check-dark: #1a1f23;
 	--color-swatch-check-light: #ffffff;
 	--color-fallback-background: #1d2022;

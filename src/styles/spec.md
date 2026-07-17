@@ -24,9 +24,15 @@ themes is codified in `APP.md` §6.1; this spec is the exact values + rules.)
 
 ## Current implementation scope
 
-`tokens.css` owns structural tokens: fonts, spacing, radii, fixed shell sizes, swatches, and
-fallbacks. `themes.css` owns theme colors, input fills, accent colors, and accent text colors.
-Component and feature CSS should consume tokens, not raw color or spacing values.
+`tokens.css` owns structural tokens: fonts, spacing, radii, fixed shell sizes, swatches, swatch
+muted companions, and fallbacks. `themes.css` owns theme colors, input fills, accent colors, and
+accent text colors. Component and feature CSS should consume tokens, not raw color or spacing
+values.
+
+`globals.css` owns shared low-level controls such as `.uiButton`, `.uiButtonPrimary`,
+`.uiButtonDanger`, `.uiButtonNaked`, `.uiButtonSmall`, and `.uiButtonIcon`; feature CSS should not
+create one-off button color systems. Feature classes may only add layout details such as width,
+position, or local radius.
 
 ## Principles
 - **Graphite + flat.** Neutral warm-gray (dark) / paper (light) surfaces. **No elevation shadows
@@ -96,6 +102,7 @@ deeper companion:
 - **Default: `coral`.** **Mono** is the theme-neutral "no fun" option (auto-inverts with the theme).
 - The onboarding top stripe uses the 6 chromatic accents; stripe + logo are the only full-color
   brand marks outside the chosen accent.
+- Swatch hover/selected borders use each accent's deeper companion, not a shared gray border.
 
 ### Application
 - Stored as the `accent` tweak. `App` resolves `accentById(t.accent)` and sets **inline vars on
@@ -149,3 +156,6 @@ follow the accent - **never remap the 16 ANSI hues.**
 - [ ] Terminal palette is `.pane`-scoped and higher-contrast; terminal renderer mapping holds for
       production (spec 05).
 - [ ] No em-dashes anywhere in CSS comments or content.
+- [ ] Button colors, hover, focus, and disabled states come from shared `.uiButton*` variants,
+      except for special controls such as nav rows, segmented controls, swatches, selectable list
+      rows, and titlebar chrome.

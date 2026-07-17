@@ -214,68 +214,6 @@ select.fieldInput {
 	text-align: center;
 }
 
-.secondaryButton,
-.ghostButton,
-.primaryButton,
-.iconButton {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	gap: var(--space-sm);
-	height: 30px;
-	padding: 0 var(--space-lg);
-	border-radius: var(--radius-sm);
-	font-size: var(--font-size-body);
-	font-weight: 800;
-	line-height: 1;
-	cursor: pointer;
-}
-
-.secondaryButton,
-.ghostButton,
-.iconButton {
-	color: var(--color-text-secondary);
-	background: var(--color-control-hover);
-}
-
-.secondaryButton:hover,
-.ghostButton:hover,
-.iconButton:hover {
-	color: var(--color-text-primary);
-	background: var(--color-control-selected);
-}
-
-.primaryButton {
-	color: var(--color-accent-text);
-	background: var(--color-accent-primary);
-}
-
-.secondaryButton:disabled,
-.primaryButton:disabled,
-.iconButton:disabled {
-	cursor: default;
-	opacity: 0.48;
-}
-
-.secondaryButton:disabled:hover,
-.iconButton:disabled:hover {
-	color: var(--color-text-secondary);
-	background: var(--color-control-hover);
-}
-
-.secondaryButton:focus-visible,
-.ghostButton:focus-visible,
-.primaryButton:focus-visible,
-.iconButton:focus-visible {
-	outline: 2px solid var(--color-accent-muted);
-	outline-offset: var(--space-2xs);
-}
-
-.iconButton {
-	width: 30px;
-	padding: 0;
-}
-
 .footer {
 	display: flex;
 	align-items: center;
@@ -331,34 +269,6 @@ select.fieldInput {
 	color: var(--color-text-tertiary);
 	font-size: 12px;
 	line-height: 1.45;
-}
-
-.dangerButton {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	gap: var(--space-sm);
-	height: 30px;
-	padding: 0 var(--space-lg);
-	color: var(--color-status-danger);
-	background: var(--color-status-danger-subtle);
-	border-radius: var(--radius-sm);
-	box-shadow: inset 0 0 0 1px transparent;
-	font-size: 12px;
-	font-weight: 800;
-	line-height: 1;
-	cursor: pointer;
-}
-
-.dangerButton:hover {
-	color: var(--color-status-danger);
-	background: var(--color-status-danger-subtle);
-	box-shadow: inset 0 0 0 1px var(--color-status-danger);
-}
-
-.dangerButton:focus-visible {
-	outline: 2px solid var(--color-accent-muted);
-	outline-offset: var(--space-2xs);
 }
 
 @media (max-width: 720px) {

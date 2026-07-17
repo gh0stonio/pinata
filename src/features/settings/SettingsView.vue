@@ -30,6 +30,7 @@ import {
   type Theme,
   themes,
 } from './settings'
+import AccentSwatchPicker from '../../components/accent-swatch-picker/AccentSwatchPicker.vue'
 import styles from './SettingsView.module.css'
 
 const props = defineProps<{
@@ -397,7 +398,7 @@ onBeforeUnmount(() => {
     <div :class="styles.dragRegion" data-tauri-drag-region @mousedown="startWindowDrag" />
 
     <aside :class="styles.rail">
-      <button type="button" :class="styles.back" @click="emit('close')">
+      <button type="button" class="uiButton" :class="styles.back" @click="emit('close')">
         <ArrowLeftIcon :class="styles.backIcon" />
         Back to app
       </button>
@@ -472,20 +473,11 @@ onBeforeUnmount(() => {
                   <h2>Accent color</h2>
                   <p>Highlights, active tabs and primary actions</p>
                 </div>
-                <div :class="styles.swatches" role="group" aria-label="Accent color">
-                  <button
-                    v-for="item in accents"
-                    :key="item.id"
-                    type="button"
-                    :class="[styles.swatch, item.id === accent && styles.swatchSelected]"
-                    :data-accent-option="item.id"
-                    :aria-label="item.name"
-                    :aria-pressed="item.id === accent"
-                    @click="emit('update-accent', item.id)"
-                  >
-                    <span v-if="item.id === accent" aria-hidden="true">✓</span>
-                  </button>
-                </div>
+                <AccentSwatchPicker
+                  :accent="accent"
+                  :items="accents"
+                  @select="(item) => emit('update-accent', item)"
+                />
               </div>
 
               <div :class="styles.row">
@@ -582,7 +574,8 @@ onBeforeUnmount(() => {
               <p id="repositories-title" :class="styles.groupLabel">Repositories</p>
               <button
                 type="button"
-                :class="styles.secondaryButton"
+                class="uiButton uiButtonSmall"
+                :class="styles.groupAction"
                 :aria-controls="registerFormId"
                 :aria-expanded="registering"
                 @click="openRegistering"
@@ -641,7 +634,7 @@ onBeforeUnmount(() => {
                 </div>
                 <button
                   type="button"
-                  :class="styles.iconButton"
+                  class="uiButton uiButtonIcon uiButtonNaked"
                   aria-label="Close repository registration"
                   @click="cancelRegistering"
                 >
@@ -674,7 +667,11 @@ onBeforeUnmount(() => {
                       @input="clearRegisterInspection"
                       @change="inspectRegisterPath()"
                     />
-                    <button type="button" :class="styles.inlineButton" @click="browseRepositoryPath">
+                    <button
+                      type="button"
+                      class="uiButton uiButtonSmall"
+                      @click="browseRepositoryPath"
+                    >
                       Browse
                     </button>
                     <span
@@ -730,7 +727,7 @@ onBeforeUnmount(() => {
                     />
                     <button
                       type="button"
-                      :class="styles.inlineButton"
+                      class="uiButton uiButtonSmall"
                       :disabled="!registerWorktreeBasePath"
                       @click="registerWorktreeBasePath = ''"
                     >
@@ -747,12 +744,12 @@ onBeforeUnmount(() => {
                 </label>
 
                 <div :class="styles.formActions">
-                  <button type="button" :class="styles.ghostButton" @click="cancelRegistering">
+                  <button type="button" class="uiButton uiButtonSmall" @click="cancelRegistering">
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    :class="styles.primaryButton"
+                    class="uiButton uiButtonSmall uiButtonPrimary"
                     :disabled="!canRegisterRepo"
                   >
                     <PlusIcon />
@@ -784,7 +781,7 @@ onBeforeUnmount(() => {
                 </div>
                 <button
                   type="button"
-                  :class="styles.iconButton"
+                  class="uiButton uiButtonIcon uiButtonNaked"
                   aria-label="Close repository settings"
                   @click="closeRepoConfig"
                 >
@@ -863,6 +860,7 @@ onBeforeUnmount(() => {
                       />
                       <button
                         type="button"
+                        class="uiButton uiButtonIcon uiButtonNaked"
                         :class="styles.inputIconButton"
                         :disabled="!selectedRepo.worktreeBasePath"
                         aria-label="Reset worktree override"
@@ -895,7 +893,7 @@ onBeforeUnmount(() => {
                       >
                         <button
                           type="button"
-                          :class="styles.dangerButton"
+                          class="uiButton uiButtonSmall uiButtonDanger"
                           :disabled="Boolean(repoRemovalReasons[selectedRepo.id])"
                           @click="removeRegisteredRepo(selectedRepo)"
                         >

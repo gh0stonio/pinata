@@ -92,7 +92,12 @@ function taskRepoPath(taskRepo: TaskRepo) {
     </header>
 
     <div :class="styles.primaryAction">
-      <button type="button" :class="styles.newTaskButton" @click="emit('open-new-task')">
+      <button
+        type="button"
+        class="uiButton uiButtonPrimary"
+        :class="styles.newTaskButton"
+        @click="emit('open-new-task')"
+      >
         <PlusIcon />
         New task
       </button>
@@ -129,6 +134,7 @@ function taskRepoPath(taskRepo: TaskRepo) {
 
             <button
               type="button"
+              class="uiButton uiButtonIcon uiButtonNaked"
               :class="styles.taskAction"
               :aria-label="`Edit ${task.name}`"
               @click="emit('edit-task', task)"

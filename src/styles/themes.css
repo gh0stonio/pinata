@@ -116,19 +116,19 @@
 
 [data-accent="coral"] {
 	--color-accent-primary: var(--color-swatch-coral);
-	--color-accent-muted: #ff574f;
+	--color-accent-muted: var(--color-swatch-coral-muted);
 	--color-accent-text: #36100d;
 }
 
 [data-accent="teal"] {
 	--color-accent-primary: var(--color-swatch-teal);
-	--color-accent-muted: #00bfb2;
+	--color-accent-muted: var(--color-swatch-teal-muted);
 	--color-accent-text: #02211f;
 }
 
 [data-accent="gold"] {
 	--color-accent-primary: var(--color-swatch-gold);
-	--color-accent-muted: #f0b600;
+	--color-accent-muted: var(--color-swatch-gold-muted);
 	--color-accent-text: #2f2300;
 }
 
@@ -140,19 +140,19 @@
 
 [data-accent="magenta"] {
 	--color-accent-primary: var(--color-swatch-magenta);
-	--color-accent-muted: #ee3e9f;
+	--color-accent-muted: var(--color-swatch-magenta-muted);
 	--color-accent-text: #351025;
 }
 
 [data-accent="lime"] {
 	--color-accent-primary: var(--color-swatch-lime);
-	--color-accent-muted: #8ed025;
+	--color-accent-muted: var(--color-swatch-lime-muted);
 	--color-accent-text: #162707;
 }
 
 [data-accent="azure"] {
 	--color-accent-primary: var(--color-swatch-azure);
-	--color-accent-muted: #277fea;
+	--color-accent-muted: var(--color-swatch-azure-muted);
 	--color-accent-text: #071f3d;
 }
 

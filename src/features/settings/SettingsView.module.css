@@ -6,6 +6,8 @@
 	--settings-font-meta: 10.5px;
 	--settings-font-label: 10px;
 	--settings-font-help: 8.5px;
+	--ui-button-font-size: var(--settings-font-body);
+	--ui-button-font-weight: 700;
 
 	position: absolute;
 	inset: 0;
@@ -41,24 +43,14 @@
 }
 
 .back {
-	display: inline-flex;
-	align-items: center;
-	gap: var(--space-md);
+	--ui-button-height: 32px;
+	--ui-button-padding-x: var(--space-lg);
+	--ui-button-font-size: var(--settings-font-heading);
+	--ui-button-font-weight: 700;
+
 	width: fit-content;
 	min-height: 32px;
-	padding: 0 var(--space-lg);
-	color: var(--color-text-secondary);
-	background: transparent;
-	border-radius: var(--radius-sm);
-	font-size: var(--settings-font-heading);
-	font-weight: 700;
 	line-height: 1.25;
-	cursor: pointer;
-}
-
-.back:hover {
-	color: var(--color-text-primary);
-	background: var(--color-control-hover);
 }
 
 .backIcon {
@@ -172,7 +164,7 @@
 	margin-bottom: 0;
 }
 
-.groupHeader .secondaryButton {
+.groupAction {
 	margin-left: auto;
 }
 
@@ -226,77 +218,9 @@
 	line-height: 1.45;
 }
 
-.secondaryButton,
-.ghostButton,
-.primaryButton,
-.inlineButton,
-.dangerButton,
-.iconButton {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	gap: var(--space-sm);
-	height: 30px;
-	padding: 0 var(--space-lg);
-	border-radius: var(--radius-sm);
-	font-size: var(--settings-font-body);
-	font-weight: 800;
-	line-height: 1;
-	cursor: pointer;
-}
-
-.secondaryButton,
-.ghostButton,
-.inlineButton {
-	color: var(--color-text-secondary);
-	background: var(--color-control-hover);
-}
-
-.secondaryButton:hover,
-.ghostButton:hover,
-.inlineButton:hover {
-	color: var(--color-text-primary);
-	background: var(--color-control-selected);
-}
-
-.secondaryButton:focus-visible,
-.ghostButton:focus-visible,
-.primaryButton:focus-visible,
-.inlineButton:focus-visible,
-.dangerButton:focus-visible,
-.iconButton:focus-visible,
 .repoHeader:focus-visible {
-	outline: 2px solid var(--color-accent-muted);
-	outline-offset: var(--space-2xs);
-}
-
-.primaryButton {
-	color: var(--color-accent-text);
-	background: var(--color-accent-primary);
-}
-
-.primaryButton:disabled,
-.inlineButton:disabled,
-.dangerButton:disabled {
-	cursor: default;
-	opacity: 0.48;
-}
-
-.inlineButton:disabled:hover {
-	color: var(--color-text-secondary);
-	background: var(--color-control-hover);
-}
-
-.dangerButton {
-	color: var(--color-status-danger);
-	background: var(--color-status-danger-subtle);
-	box-shadow: inset 0 0 0 1px transparent;
-}
-
-.dangerButton:hover:not(:disabled) {
-	color: var(--color-status-danger);
-	background: var(--color-status-danger-subtle);
-	box-shadow: inset 0 0 0 1px var(--color-status-danger);
+	border-color: var(--color-accent-muted);
+	outline: none;
 }
 
 .registerForm {
@@ -393,34 +317,17 @@ select.fieldInput {
 }
 
 .inputIconButton {
+	--ui-button-height: 24px;
+
 	position: absolute;
 	top: 50%;
 	right: var(--space-xs);
-	display: inline-grid;
-	width: 24px;
-	height: 24px;
-	place-items: center;
-	padding: 0;
-	color: var(--color-text-placeholder);
-	background: transparent;
-	border-radius: var(--radius-sm);
-	cursor: pointer;
 	transform: translateY(-50%);
-}
-
-.inputIconButton:hover:not(:disabled) {
-	color: var(--color-text-primary);
-	background: var(--color-control-hover);
 }
 
 .inputIconButton:disabled {
 	cursor: default;
 	opacity: 0;
-}
-
-.inputIconButton:focus-visible {
-	outline: 2px solid var(--color-accent-muted);
-	outline-offset: var(--space-2xs);
 }
 
 .rowControl {
@@ -433,10 +340,6 @@ select.fieldInput {
 .defaultInput {
 	width: 320px;
 	max-width: 100%;
-}
-
-.inlineButton {
-	flex: 0 0 auto;
 }
 
 .monoInput {
@@ -513,80 +416,6 @@ select.fieldInput {
 	background: var(--color-surface-primary);
 }
 
-.swatches {
-	display: flex;
-	flex: 0 0 auto;
-	align-items: center;
-	gap: var(--space-md);
-}
-
-.swatch {
-	position: relative;
-	width: 28px;
-	height: 28px;
-	background: var(--swatch-color);
-	border: 2px solid var(--color-surface-primary);
-	border-radius: var(--radius-pill);
-	box-shadow: 0 0 0 1px var(--color-border-primary);
-	color: var(--swatch-check);
-	cursor: pointer;
-}
-
-.swatch:hover {
-	box-shadow: 0 0 0 2px var(--color-border-primary);
-}
-
-.swatchSelected {
-	box-shadow:
-		0 0 0 2px var(--color-accent-primary),
-		0 0 0 5px var(--color-surface-primary);
-}
-
-.swatch[data-accent-option="coral"] {
-	--swatch-color: var(--color-swatch-coral);
-	--swatch-check: var(--color-swatch-check-dark);
-}
-
-.swatch[data-accent-option="teal"] {
-	--swatch-color: var(--color-swatch-teal);
-	--swatch-check: var(--color-swatch-check-dark);
-}
-
-.swatch[data-accent-option="gold"] {
-	--swatch-color: var(--color-swatch-gold);
-	--swatch-check: var(--color-swatch-check-dark);
-}
-
-.swatch[data-accent-option="magenta"] {
-	--swatch-color: var(--color-swatch-magenta);
-	--swatch-check: var(--color-swatch-check-dark);
-}
-
-.swatch[data-accent-option="lime"] {
-	--swatch-color: var(--color-swatch-lime);
-	--swatch-check: var(--color-swatch-check-dark);
-}
-
-.swatch[data-accent-option="azure"] {
-	--swatch-color: var(--color-swatch-azure);
-	--swatch-check: var(--color-swatch-check-light);
-}
-
-.swatch[data-accent-option="mono"] {
-	--swatch-color: var(--color-text-primary);
-	--swatch-check: var(--color-background);
-}
-
-.swatch span {
-	position: absolute;
-	inset: 0;
-	display: grid;
-	place-items: center;
-	font-size: var(--settings-font-heading);
-	font-weight: 900;
-	line-height: 1;
-}
-
 .key {
 	display: inline-flex;
 	align-items: center;
@@ -630,6 +459,7 @@ select.fieldInput {
 	padding: var(--space-md) var(--space-xl);
 	color: var(--color-text-secondary);
 	background: transparent;
+	border: 1px solid transparent;
 	text-align: left;
 	cursor: pointer;
 }
@@ -770,21 +600,6 @@ select.fieldInput {
 	border-radius: var(--radius-md);
 }
 
-.iconButton {
-	flex: 0 0 auto;
-	width: 28px;
-	height: 28px;
-	padding: 0;
-	color: var(--color-text-placeholder);
-	background: transparent;
-	border-radius: var(--radius-sm);
-}
-
-.iconButton:hover {
-	color: var(--color-text-primary);
-	background: var(--color-control-hover);
-}
-
 .configCopy {
 	flex: 1 1 auto;
 	min-width: 0;
@@ -883,8 +698,7 @@ select.fieldInput {
 
 .actionTooltipWrap:focus {
 	border-radius: var(--radius-sm);
-	outline: 2px solid var(--color-accent-muted);
-	outline-offset: var(--space-2xs);
+	outline: none;
 }
 
 .actionTooltip {
@@ -990,7 +804,6 @@ select.fieldInput {
 	}
 
 	.segment,
-	.swatches,
 	.key {
 		justify-self: start;
 	}

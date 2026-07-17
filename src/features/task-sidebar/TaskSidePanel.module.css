@@ -60,37 +60,11 @@
 }
 
 .newTaskButton {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	gap: var(--space-md);
+	--ui-button-radius: var(--radius-md);
+	--ui-button-font-size: 12.5px;
+	--ui-button-font-weight: 500;
+
 	width: 100%;
-	height: 34px;
-	color: var(--color-accent-icon);
-	background: var(--color-accent-subtle);
-	border: 1px solid var(--color-accent-border);
-	border-radius: var(--radius-md);
-	font-size: 12.5px;
-	font-weight: 600;
-	line-height: 1;
-	cursor: pointer;
-	transition:
-		background 150ms ease,
-		border-color 150ms ease;
-}
-
-.newTaskButton svg {
-	color: var(--color-accent-icon);
-}
-
-.newTaskButton:hover {
-	background: var(--color-accent-hover);
-	border-color: var(--color-accent-muted);
-}
-
-.newTaskButton:focus-visible {
-	outline: 2px solid var(--color-accent-muted);
-	outline-offset: var(--space-2xs);
 }
 
 .labelRow {
@@ -144,12 +118,14 @@
 }
 
 .taskRow {
-	display: flex;
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
 	align-items: center;
+	gap: var(--space-sm);
 	width: 100%;
 	height: 32px;
 	min-width: 0;
-	padding: 0 var(--space-lg);
+	padding: 0 var(--space-sm) 0 var(--space-lg);
 	border-radius: var(--radius-sm);
 	background: transparent;
 	color: inherit;
@@ -161,7 +137,6 @@
 }
 
 .taskToggle,
-.taskAction,
 .repoButton {
 	border: 0;
 	color: inherit;
@@ -175,22 +150,15 @@
 	gap: var(--space-sm);
 	min-width: 0;
 	height: 100%;
-	flex: 1 1 auto;
 	padding: 0;
 	background: transparent;
 	text-align: left;
 }
 
 .taskAction {
-	display: grid;
-	width: 14px;
-	height: 14px;
-	flex: 0 0 14px;
-	margin-left: var(--space-md);
-	place-items: center;
-	padding: 0;
-	color: var(--color-text-placeholder);
-	background: transparent;
+	--ui-button-height: 18px;
+
+	justify-self: end;
 	opacity: 0;
 	pointer-events: none;
 	transition:
@@ -204,15 +172,10 @@
 	pointer-events: auto;
 }
 
-.taskAction:hover {
-	color: var(--color-text-primary);
-}
-
 .taskToggle:focus-visible,
-.taskAction:focus-visible,
 .repoButton:focus-visible {
-	outline: 2px solid var(--color-accent-muted);
-	outline-offset: var(--space-2xs);
+	outline: none;
+	box-shadow: inset 0 0 0 1px var(--color-accent-muted);
 }
 
 .chevron {
