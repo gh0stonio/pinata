@@ -1,10 +1,12 @@
 export type Theme = 'pinata-dark' | 'pinata-light'
 export type Accent = 'coral' | 'teal' | 'gold' | 'magenta' | 'lime' | 'azure' | 'mono'
+export type AccentIntensity = 'transparent' | 'balanced' | 'vibrant'
 export type SettingsSection = 'appearance' | 'shortcuts' | 'git'
 
 export type AppSettings = {
   theme: Theme
   accent: Accent
+  accentIntensity: AccentIntensity
 }
 
 export const settingsKey = 'pinata.settings.v1'
@@ -24,6 +26,12 @@ export const accents: Array<{ id: Accent; name: string }> = [
   { id: 'mono', name: 'Mono' },
 ]
 
+export const accentIntensities: Array<{ id: AccentIntensity; name: string }> = [
+  { id: 'transparent', name: 'Transparent' },
+  { id: 'balanced', name: 'Balanced' },
+  { id: 'vibrant', name: 'Vibrant' },
+]
+
 export const shortcuts = [
   { keys: '⌘B', label: 'Toggle left side panel' },
   { keys: '⌘L', label: 'Toggle right side panel' },
@@ -33,6 +41,7 @@ export const shortcuts = [
 export const defaultSettings: AppSettings = {
   theme: 'pinata-dark',
   accent: 'coral',
+  accentIntensity: 'balanced',
 }
 
 function pickSetting<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
@@ -53,6 +62,11 @@ export function loadSettings(): AppSettings {
         stored.accent,
         accents.map((accent) => accent.id),
         defaultSettings.accent,
+      ),
+      accentIntensity: pickSetting(
+        stored.accentIntensity,
+        accentIntensities.map((intensity) => intensity.id),
+        defaultSettings.accentIntensity,
       ),
     }
   } catch {

@@ -80,20 +80,21 @@ its real backgrounds**. Keep the 4-step ramp as a real hierarchy. Retuning a gra
 
 ## Accent
 
-The 7 accents (`PINATA_ACCENTS`) - **pastel** brand colors, each with a legible `on` and a `deep`:
+The 7 accents (`PINATA_ACCENTS`) - **vivid** brand colors, each with a legible `on` and a
+deeper companion:
 
 | key | label | color | on | deep |
 |-----|-------|-------|-----|------|
-| `coral` | Coral | `#F5847E` | `#3a1513` | `#EE6A63` |
-| `teal` | Teal | `#45C1B9` | `#072220` | `#2FB2AA` |
-| `gold` | Gold | `#F6CE5A` | `#33280a` | `#EDBE38` |
-| `magenta` | Magenta | `#E86CA9` | `#351025` | `#E15196` |
-| `lime` | Lime | `#ABD568` | `#1b2a0c` | `#9BCB4D` |
-| `azure` | Azure | `#5E9AF0` | `#0f2340` | `#4787EC` |
+| `coral` | Coral | `#FF746B` | `#36100d` | `#FF574F` |
+| `teal` | Teal | `#20D6C9` | `#02211f` | `#00BFB2` |
+| `gold` | Gold | `#FFD447` | `#2f2300` | `#F0B600` |
+| `magenta` | Magenta | `#FF62B4` | `#351025` | `#EE3E9F` |
+| `lime` | Lime | `#A7EA45` | `#162707` | `#8ED025` |
+| `azure` | Azure | `#4D9DFF` | `#071f3d` | `#277FEA` |
 | `mono` | Mono | `var(--text)` | `var(--bg)` | `var(--text-dim)` |
 
 - **Default: `coral`.** **Mono** is the theme-neutral "no fun" option (auto-inverts with the theme).
-- The onboarding top stripe uses the 6 chromatic pastels; stripe + logo are the only full-color
+- The onboarding top stripe uses the 6 chromatic accents; stripe + logo are the only full-color
   brand marks outside the chosen accent.
 
 ### Application
@@ -102,16 +103,18 @@ The 7 accents (`PINATA_ACCENTS`) - **pastel** brand colors, each with a legible 
   theme and accent are orthogonal - any accent works on either theme.
 
 ### Where accent appears (and must not)
-Appears: active tab top-border, `.chip-btn.on` (20% tint + accent text), selection/active rings,
+Appears: active tab top-border, active chip tint + accent text, selection/active rings,
 terminal + input caret, text selection, toggle knobs, checkboxes, primary buttons
-(`--color-accent-primary` fill + `--color-accent-text`), New Task button tint (14%/32%), palette
+(`--color-accent-primary` fill + `--color-accent-text`), New Task button tint, palette
 selected-row icon, "view diff" chips.
 Must **not**: body text, surfaces, borders, semantic colors, the 16 ANSI terminal colors.
 
 ### Visibility (opacity, never hue)
-Tints are tuned so pastels/mono stay visible: New Task 14% (24% hover), active chip 20%, active
-terminal block ring 38%, "view diff"/save chips 16%. Too faint on some accent → **raise opacity,
-never change color.**
+Tints are exposed as tokens: `--color-accent-subtle`, `--color-accent-hover`,
+`--color-accent-border`, `--color-accent-icon`, and `--color-selection-background`.
+`accentIntensity` selects transparent, balanced, or vibrant token strengths through
+`data-accent-intensity`. Too faint on some accent → **raise token strength, never change component
+CSS.**
 
 ## Terminal palette (`.pane`-scoped; production = terminal renderer theme)
 Higher-contrast, close to a default terminal palette, scoped to `.pane`:
@@ -140,8 +143,9 @@ follow the accent - **never remap the 16 ANSI hues.**
       color).
 - [ ] All text/bg pairs meet WCAG AA in both themes; ghost→text is a visible hierarchy.
 - [ ] No drop shadows anywhere; separation is fills/borders/color.
-- [ ] Accent applied inline on the root, recolors only accent moments; all 7 (incl. Mono) work on
-      both themes; body/surfaces/semantics/ANSI never take the accent.
+- [ ] Accent applied on the root, recolors only accent moments; all 7 (incl. Mono) work on both
+      themes; intensity is controlled by `data-accent-intensity`; body/surfaces/semantics/ANSI
+      never take the accent.
 - [ ] Terminal palette is `.pane`-scoped and higher-contrast; terminal renderer mapping holds for
       production (spec 05).
 - [ ] No em-dashes anywhere in CSS comments or content.

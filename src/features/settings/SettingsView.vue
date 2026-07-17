@@ -22,6 +22,8 @@ import {
 } from '../app-state/app-state'
 import {
   type Accent,
+  type AccentIntensity,
+  accentIntensities,
   accents,
   type SettingsSection,
   shortcuts,
@@ -33,6 +35,7 @@ import styles from './SettingsView.module.css'
 const props = defineProps<{
   theme: Theme
   accent: Accent
+  accentIntensity: AccentIntensity
   appState: AppState
 }>()
 
@@ -40,6 +43,7 @@ const emit = defineEmits<{
   close: []
   'update-theme': [theme: Theme]
   'update-accent': [accent: Accent]
+  'update-accent-intensity': [accentIntensity: AccentIntensity]
   'update-app-state': [appState: AppState]
 }>()
 
@@ -58,6 +62,7 @@ const repoWorktreeErrors = reactive<Record<string, string>>({})
 const registerFormId = 'repo-register-form'
 const registerPathInputId = 'repo-register-path'
 const appWindow = getCurrentWindow()
+const accentIntensityDisabled = computed(() => props.accent === 'mono')
 
 const globalWorktreeBasePath = computed(() => props.appState.repositoryDefaults.worktreeBasePath)
 const selectedRepo = computed(
@@ -479,6 +484,40 @@ onBeforeUnmount(() => {
                     @click="emit('update-accent', item.id)"
                   >
                     <span v-if="item.id === accent" aria-hidden="true">✓</span>
+                  </button>
+                </div>
+              </div>
+
+              <div :class="styles.row">
+                <div :class="styles.rowCopy">
+                  <h2>Accent intensity</h2>
+                  <p>
+                    {{
+                      accentIntensityDisabled
+                        ? 'Mono keeps a fixed neutral accent'
+                        : 'How loud accent surfaces should feel across the app'
+                    }}
+                  </p>
+                </div>
+                <div
+                  :class="[styles.segment, accentIntensityDisabled && styles.segmentDisabled]"
+                  role="group"
+                  aria-label="Accent intensity"
+                  :aria-disabled="accentIntensityDisabled"
+                >
+                  <button
+                    v-for="item in accentIntensities"
+                    :key="item.id"
+                    type="button"
+                    :class="[
+                      styles.segmentButton,
+                      item.id === accentIntensity && styles.segmentButtonActive,
+                    ]"
+                    :disabled="accentIntensityDisabled"
+                    :aria-pressed="item.id === accentIntensity"
+                    @click="emit('update-accent-intensity', item.id)"
+                  >
+                    {{ item.name }}
                   </button>
                 </div>
               </div>

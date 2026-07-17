@@ -29,25 +29,28 @@
 	--color-glass-background: rgba(38, 42, 44, 0.72);
 	--color-glass-edge: rgba(232, 234, 235, 0.06);
 
-	--color-accent-primary: #f5847e;
-	--color-accent-muted: #ee6a63;
-	--color-accent-subtle: rgba(245, 132, 126, 0.16);
-	--color-accent-text: #3a1513;
-	--color-selection-background: rgba(245, 132, 126, 0.32);
+	--color-accent-primary: var(--color-swatch-coral);
+	--color-accent-muted: #ff574f;
+	--color-accent-subtle: color-mix(in srgb, var(--color-accent-primary) 42%, transparent);
+	--color-accent-hover: color-mix(in srgb, var(--color-accent-primary) 52%, transparent);
+	--color-accent-border: color-mix(in srgb, var(--color-accent-primary) 70%, transparent);
+	--color-accent-icon: var(--color-accent-primary);
+	--color-accent-text: #36100d;
+	--color-selection-background: color-mix(in srgb, var(--color-accent-primary) 50%, transparent);
 
 	--color-status-info: #86b8c7;
 	--color-status-success: #9cd389;
 	--color-status-warning: #e0c06a;
-	--color-status-danger: #e08a8a;
-	--color-status-danger-subtle: rgba(224, 138, 138, 0.18);
+	--color-status-danger: #ff6f82;
+	--color-status-danger-subtle: rgba(255, 87, 112, 0.18);
 	--color-status-attention: #d9a06a;
 	--color-status-special: #b9a6e0;
 
 	--color-code-background: #1a1c1e;
 	--color-diff-add-background: rgba(156, 211, 137, 0.14);
 	--color-diff-add-text: #9cd389;
-	--color-diff-delete-background: rgba(224, 138, 138, 0.13);
-	--color-diff-delete-text: #e08a8a;
+	--color-diff-delete-background: rgba(255, 87, 112, 0.13);
+	--color-diff-delete-text: #ff6f82;
 
 	--shadow-card: none;
 	--shadow-popover: 0 6px 16px rgb(0 0 0 / 0.22);
@@ -84,25 +87,28 @@
 	--color-glass-background: rgba(255, 255, 255, 0.72);
 	--color-glass-edge: rgba(26, 31, 35, 0.06);
 
-	--color-accent-primary: #ee6a63;
-	--color-accent-muted: #c84f48;
-	--color-accent-subtle: rgba(238, 106, 99, 0.16);
-	--color-accent-text: #3a1513;
-	--color-selection-background: rgba(238, 106, 99, 0.28);
+	--color-accent-primary: var(--color-swatch-coral);
+	--color-accent-muted: #e24d45;
+	--color-accent-subtle: color-mix(in srgb, var(--color-accent-primary) 30%, transparent);
+	--color-accent-hover: color-mix(in srgb, var(--color-accent-primary) 40%, transparent);
+	--color-accent-border: color-mix(in srgb, var(--color-accent-primary) 58%, transparent);
+	--color-accent-icon: var(--color-accent-primary);
+	--color-accent-text: #36100d;
+	--color-selection-background: color-mix(in srgb, var(--color-accent-primary) 44%, transparent);
 
 	--color-status-info: #2a7284;
 	--color-status-success: #2f7643;
 	--color-status-warning: #856421;
-	--color-status-danger: #a05252;
-	--color-status-danger-subtle: rgba(160, 82, 82, 0.18);
+	--color-status-danger: #c53045;
+	--color-status-danger-subtle: rgba(197, 48, 69, 0.16);
 	--color-status-attention: #905e2b;
 	--color-status-special: #7557b9;
 
 	--color-code-background: #ffffff;
 	--color-diff-add-background: rgba(47, 118, 67, 0.16);
 	--color-diff-add-text: #2f7643;
-	--color-diff-delete-background: rgba(160, 82, 82, 0.17);
-	--color-diff-delete-text: #a05252;
+	--color-diff-delete-background: rgba(197, 48, 69, 0.15);
+	--color-diff-delete-text: #c53045;
 
 	--shadow-card: none;
 	--shadow-popover: 0 8px 24px rgb(18 25 30 / 0.14);
@@ -110,64 +116,97 @@
 
 [data-accent="coral"] {
 	--color-accent-primary: var(--color-swatch-coral);
-	--color-accent-muted: #ee6a63;
-	--color-accent-subtle: rgba(245, 132, 126, 0.16);
-	--color-accent-text: #3a1513;
-	--color-selection-background: rgba(245, 132, 126, 0.32);
+	--color-accent-muted: #ff574f;
+	--color-accent-text: #36100d;
 }
 
 [data-accent="teal"] {
 	--color-accent-primary: var(--color-swatch-teal);
-	--color-accent-muted: #2fb2aa;
-	--color-accent-subtle: rgba(69, 193, 185, 0.16);
-	--color-accent-text: #072220;
-	--color-selection-background: rgba(69, 193, 185, 0.32);
+	--color-accent-muted: #00bfb2;
+	--color-accent-text: #02211f;
 }
 
 [data-accent="gold"] {
 	--color-accent-primary: var(--color-swatch-gold);
-	--color-accent-muted: #edbe38;
-	--color-accent-subtle: rgba(246, 206, 90, 0.16);
-	--color-accent-text: #33280a;
-	--color-selection-background: rgba(246, 206, 90, 0.32);
+	--color-accent-muted: #f0b600;
+	--color-accent-text: #2f2300;
 }
 
 [data-theme="pinata-light"][data-accent="gold"] {
-	--color-accent-primary: #d89f00;
-	--color-accent-muted: #b87f00;
-	--color-accent-subtle: rgba(246, 206, 90, 0.24);
+	--color-accent-primary: #f2b700;
+	--color-accent-muted: #d79f00;
 	--color-accent-text: #1a1f23;
-	--color-selection-background: rgba(246, 206, 90, 0.34);
 }
 
 [data-accent="magenta"] {
 	--color-accent-primary: var(--color-swatch-magenta);
-	--color-accent-muted: #e15196;
-	--color-accent-subtle: rgba(232, 108, 169, 0.16);
+	--color-accent-muted: #ee3e9f;
 	--color-accent-text: #351025;
-	--color-selection-background: rgba(232, 108, 169, 0.32);
 }
 
 [data-accent="lime"] {
 	--color-accent-primary: var(--color-swatch-lime);
-	--color-accent-muted: #9bcb4d;
-	--color-accent-subtle: rgba(171, 213, 104, 0.16);
-	--color-accent-text: #1b2a0c;
-	--color-selection-background: rgba(171, 213, 104, 0.32);
+	--color-accent-muted: #8ed025;
+	--color-accent-text: #162707;
 }
 
 [data-accent="azure"] {
 	--color-accent-primary: var(--color-swatch-azure);
-	--color-accent-muted: #4787ec;
-	--color-accent-subtle: rgba(94, 154, 240, 0.16);
-	--color-accent-text: #0f2340;
-	--color-selection-background: rgba(94, 154, 240, 0.32);
+	--color-accent-muted: #277fea;
+	--color-accent-text: #071f3d;
+}
+
+[data-theme="pinata-dark"][data-accent-intensity="transparent"] {
+	--color-accent-subtle: color-mix(in srgb, var(--color-accent-primary) 18%, transparent);
+	--color-accent-hover: color-mix(in srgb, var(--color-accent-primary) 26%, transparent);
+	--color-accent-border: color-mix(in srgb, var(--color-accent-primary) 44%, transparent);
+	--color-selection-background: color-mix(in srgb, var(--color-accent-primary) 34%, transparent);
+}
+
+[data-theme="pinata-dark"][data-accent-intensity="balanced"] {
+	--color-accent-subtle: color-mix(in srgb, var(--color-accent-primary) 42%, transparent);
+	--color-accent-hover: color-mix(in srgb, var(--color-accent-primary) 52%, transparent);
+	--color-accent-border: color-mix(in srgb, var(--color-accent-primary) 70%, transparent);
+	--color-selection-background: color-mix(in srgb, var(--color-accent-primary) 50%, transparent);
+}
+
+[data-theme="pinata-dark"][data-accent-intensity="vibrant"] {
+	--color-accent-subtle: color-mix(in srgb, var(--color-accent-primary) 58%, transparent);
+	--color-accent-hover: color-mix(in srgb, var(--color-accent-primary) 66%, transparent);
+	--color-accent-border: color-mix(in srgb, var(--color-accent-primary) 80%, transparent);
+	--color-accent-icon: #ffffff;
+	--color-selection-background: color-mix(in srgb, var(--color-accent-primary) 58%, transparent);
+}
+
+[data-theme="pinata-light"][data-accent-intensity="transparent"] {
+	--color-accent-subtle: color-mix(in srgb, var(--color-accent-primary) 14%, transparent);
+	--color-accent-hover: color-mix(in srgb, var(--color-accent-primary) 22%, transparent);
+	--color-accent-border: color-mix(in srgb, var(--color-accent-primary) 36%, transparent);
+	--color-selection-background: color-mix(in srgb, var(--color-accent-primary) 30%, transparent);
+}
+
+[data-theme="pinata-light"][data-accent-intensity="balanced"] {
+	--color-accent-subtle: color-mix(in srgb, var(--color-accent-primary) 30%, transparent);
+	--color-accent-hover: color-mix(in srgb, var(--color-accent-primary) 40%, transparent);
+	--color-accent-border: color-mix(in srgb, var(--color-accent-primary) 58%, transparent);
+	--color-selection-background: color-mix(in srgb, var(--color-accent-primary) 44%, transparent);
+}
+
+[data-theme="pinata-light"][data-accent-intensity="vibrant"] {
+	--color-accent-subtle: color-mix(in srgb, var(--color-accent-primary) 44%, transparent);
+	--color-accent-hover: color-mix(in srgb, var(--color-accent-primary) 52%, transparent);
+	--color-accent-border: color-mix(in srgb, var(--color-accent-primary) 68%, transparent);
+	--color-accent-icon: #1a1f23;
+	--color-selection-background: color-mix(in srgb, var(--color-accent-primary) 50%, transparent);
 }
 
 [data-theme="pinata-dark"][data-accent="mono"] {
 	--color-accent-primary: #dfe3e5;
 	--color-accent-muted: #c2c7c9;
 	--color-accent-subtle: rgba(223, 227, 229, 0.13);
+	--color-accent-hover: rgba(223, 227, 229, 0.2);
+	--color-accent-border: rgba(223, 227, 229, 0.34);
+	--color-accent-icon: #dfe3e5;
 	--color-accent-text: #1a1c1e;
 	--color-selection-background: rgba(223, 227, 229, 0.28);
 }
@@ -176,6 +215,9 @@
 	--color-accent-primary: #1a1f23;
 	--color-accent-muted: #39424a;
 	--color-accent-subtle: rgba(26, 31, 35, 0.1);
+	--color-accent-hover: rgba(26, 31, 35, 0.16);
+	--color-accent-border: rgba(26, 31, 35, 0.28);
+	--color-accent-icon: #1a1f23;
 	--color-accent-text: #eef1f3;
 	--color-selection-background: rgba(26, 31, 35, 0.2);
 }

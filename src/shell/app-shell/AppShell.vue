@@ -240,6 +240,7 @@ onBeforeUnmount(() => {
     :class="styles.shell"
     :data-theme="settings.theme"
     :data-accent="settings.accent"
+    :data-accent-intensity="settings.accentIntensity"
     data-density="regular"
   >
     <TitleBar
@@ -272,10 +273,12 @@ onBeforeUnmount(() => {
       v-if="settingsVisible"
       :theme="settings.theme"
       :accent="settings.accent"
+      :accent-intensity="settings.accentIntensity"
       :app-state="appState"
       @close="closeSettings"
       @update-theme="(theme) => updateSettings({ theme })"
       @update-accent="(accent) => updateSettings({ accent })"
+      @update-accent-intensity="(accentIntensity) => updateSettings({ accentIntensity })"
       @update-app-state="persistAppState"
     />
 

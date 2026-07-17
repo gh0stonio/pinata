@@ -367,16 +367,14 @@ select.fieldInput {
 }
 
 .fieldInput:focus {
-	border-color: var(--color-accent-muted);
-	outline: 2px solid var(--color-accent-subtle);
-	outline-offset: 0;
+	border-color: var(--color-accent-border);
+	outline: none;
 }
 
 .fieldInputInvalid,
 .fieldInputInvalid:focus {
 	border-color: var(--color-status-danger);
-	outline: 2px solid var(--color-status-danger-subtle);
-	outline-offset: 0;
+	outline: none;
 }
 
 .pathPicker {
@@ -496,6 +494,18 @@ select.fieldInput {
 
 .segmentButton:hover {
 	color: var(--color-text-primary);
+}
+
+.segmentDisabled {
+	opacity: 0.55;
+}
+
+.segmentDisabled .segmentButton {
+	cursor: default;
+}
+
+.segmentDisabled .segmentButton:hover {
+	color: var(--color-text-tertiary);
 }
 
 .segmentButtonActive {

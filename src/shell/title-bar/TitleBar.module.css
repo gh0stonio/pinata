@@ -62,7 +62,7 @@
 	background: transparent;
 	border: 0;
 	border-radius: var(--radius-sm);
-	cursor: default;
+	cursor: pointer;
 	transition:
 		background 150ms ease,
 		color 150ms ease;
@@ -89,7 +89,7 @@
 
 .active,
 .active:hover:not(:disabled) {
-	color: var(--color-accent-primary);
+	color: var(--color-accent-icon);
 	background: var(--color-accent-subtle);
 }
 
