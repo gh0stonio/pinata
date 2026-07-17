@@ -7,6 +7,7 @@ import TitleBar from '../title-bar/TitleBar.vue'
 import {
   createTask,
   createEmptyAppState,
+  hasRegisteredRepo,
   loadAppState,
   saveAppState,
   updateTask,
@@ -89,12 +90,7 @@ function finishOnboarding(payload: { openNewTask: boolean; repositories: Registe
   if (payload.repositories.length) {
     const existing = appState.value.repoRegistry
     const repositories = payload.repositories.filter(
-      (repo) =>
-        !existing.some(
-          (candidate) =>
-            candidate.name.toLowerCase() === repo.name.toLowerCase() ||
-            candidate.source.path === repo.source.path,
-        ),
+      (repo) => !hasRegisteredRepo(existing, { name: repo.name, path: repo.source.path }),
     )
 
     if (repositories.length) {

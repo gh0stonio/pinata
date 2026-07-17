@@ -13,10 +13,11 @@ import SunIcon from '../../icons/SunIcon.vue'
 import XIcon from '../../icons/XIcon.vue'
 import logoUrl from '../../assets/brand/pinata-logo.png'
 import {
+  createRegisteredRepoFromInspection,
+  hasRegisteredRepo,
   inspectRepository,
   type AppState,
   type RegisteredRepo,
-  type RepositoryInspection,
 } from '../app-state/app-state'
 import {
   type Accent,
@@ -82,25 +83,8 @@ const accentPreviewStyle = computed<Record<string, string>>(() => {
 })
 const accentIntensityDisabled = computed(() => props.settings.accent === 'mono')
 
-function isDuplicateRepository(inspection: RepositoryInspection) {
-  const normalizedName = inspection.name.trim().toLowerCase()
-  const normalizedPath = inspection.path.trim()
-
-  return [...props.appState.repoRegistry, ...repositories.value].some(
-    (repo) => repo.name.toLowerCase() === normalizedName || repo.source.path === normalizedPath,
-  )
-}
-
-function isDuplicatePath(path: string) {
-  const normalizedPath = path.trim()
-
-  if (!normalizedPath) {
-    return false
-  }
-
-  return [...props.appState.repoRegistry, ...repositories.value].some(
-    (repo) => repo.source.path === normalizedPath,
-  )
+function allRegisteredRepos() {
+  return [...props.appState.repoRegistry, ...repositories.value]
 }
 
 function chooseTheme(theme: AppSettings['theme']) {
@@ -139,7 +123,7 @@ async function inspectPath(path = registerPath.value) {
     return null
   }
 
-  if (isDuplicatePath(nextPath)) {
+  if (hasRegisteredRepo(allRegisteredRepos(), { path: nextPath })) {
     registerPath.value = nextPath
     registerError.value = 'Repository already added.'
     return null
@@ -198,23 +182,14 @@ async function addRepositoryFromPath(path = registerPath.value) {
     return
   }
 
-  if (isDuplicateRepository(inspection)) {
+  if (hasRegisteredRepo(allRegisteredRepos(), { name: inspection.name, path: inspection.path })) {
     registerError.value = 'Repository already added.'
     return
   }
 
   repositories.value = [
     ...repositories.value,
-    {
-      id: `repo-${crypto.randomUUID()}`,
-      name: inspection.name,
-      org: inspection.org,
-      source: { kind: 'local', path: inspection.path },
-      branches: inspection.branches.includes(inspection.defaultBranch)
-        ? inspection.branches
-        : [inspection.defaultBranch, ...inspection.branches],
-      defaultBranch: inspection.defaultBranch,
-    },
+    createRegisteredRepoFromInspection(inspection),
   ]
   resetRegisterForm()
 }

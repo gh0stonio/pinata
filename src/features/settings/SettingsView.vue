@@ -14,7 +14,9 @@ import TrashIcon from '../../icons/TrashIcon.vue'
 import XIcon from '../../icons/XIcon.vue'
 import {
   DEFAULT_WORKTREE_BASE_PATH,
+  createRegisteredRepoFromInspection,
   defaultRepoWorktreePath,
+  hasRegisteredRepo,
   inspectRepository,
   type AppState,
   type RepositoryInspection,
@@ -239,14 +241,6 @@ function updateRegisteredRepo(repoId: string, patch: Partial<RegisteredRepo>) {
   })
 }
 
-function hasDuplicateRepo(name: string, path: string) {
-  const normalizedName = name.toLowerCase()
-
-  return props.appState.repoRegistry.some(
-    (repo) => repo.name.toLowerCase() === normalizedName || repo.source.path === path,
-  )
-}
-
 function updateRepositoryDefaults(event: Event) {
   const worktreeBasePath = fieldValue(event).trim() || DEFAULT_WORKTREE_BASE_PATH
   const error = validateWorktreePath(worktreeBasePath)
@@ -287,7 +281,7 @@ async function registerRepository() {
     const worktreeBasePath = registerWorktreeBasePath.value.trim()
     const worktreeError = validateWorktreePath(worktreeBasePath)
 
-    if (hasDuplicateRepo(name, inspection.path)) {
+    if (hasRegisteredRepo(props.appState.repoRegistry, { name, path: inspection.path })) {
       registerError.value = 'Repository already registered.'
       return
     }
@@ -297,17 +291,11 @@ async function registerRepository() {
       return
     }
 
-    const repo: RegisteredRepo = {
-      id: `repo-${crypto.randomUUID()}`,
+    const repo = createRegisteredRepoFromInspection(inspection, {
       name,
-      org: inspection.org,
-      source: { kind: 'local', path: inspection.path },
-      branches: inspection.branches.includes(defaultBranch)
-        ? inspection.branches
-        : [defaultBranch, ...inspection.branches],
       defaultBranch,
-      worktreeBasePath: worktreeBasePath || undefined,
-    }
+      worktreeBasePath,
+    })
 
     emit('update-app-state', {
       ...props.appState,

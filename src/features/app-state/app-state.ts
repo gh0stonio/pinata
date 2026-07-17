@@ -34,6 +34,17 @@ export type RepositoryInspection = {
   defaultBranch: string
 }
 
+type RegisteredRepoOptions = {
+  name?: string
+  defaultBranch?: string
+  worktreeBasePath?: string
+}
+
+type RegisteredRepoCandidate = {
+  name?: string
+  path?: string
+}
+
 export type RepoSource = {
   kind: 'local'
   path: string
@@ -100,6 +111,38 @@ export function inspectRepository(path: string): Promise<RepositoryInspection> {
 
 export function findRegisteredRepo(state: AppState, id: string): RegisteredRepo | undefined {
   return state.repoRegistry.find((repo) => repo.id === id)
+}
+
+export function hasRegisteredRepo(repos: RegisteredRepo[], candidate: RegisteredRepoCandidate) {
+  const normalizedName = candidate.name?.trim().toLowerCase()
+  const normalizedPath = candidate.path?.trim()
+
+  return repos.some(
+    (repo) =>
+      (Boolean(normalizedName) && repo.name.toLowerCase() === normalizedName) ||
+      (Boolean(normalizedPath) && repo.source.path === normalizedPath),
+  )
+}
+
+export function createRegisteredRepoFromInspection(
+  inspection: RepositoryInspection,
+  options: RegisteredRepoOptions = {},
+): RegisteredRepo {
+  const name = options.name?.trim() || inspection.name
+  const defaultBranch = options.defaultBranch?.trim() || inspection.defaultBranch
+  const worktreeBasePath = options.worktreeBasePath?.trim()
+
+  return {
+    id: `repo-${crypto.randomUUID()}`,
+    name,
+    org: inspection.org,
+    source: { kind: 'local', path: inspection.path },
+    branches: inspection.branches.includes(defaultBranch)
+      ? inspection.branches
+      : [defaultBranch, ...inspection.branches],
+    defaultBranch,
+    worktreeBasePath: worktreeBasePath || undefined,
+  }
 }
 
 export function defaultRepoWorktreePath(defaults: RepositoryDefaults, repoName: string) {
