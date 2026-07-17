@@ -87,7 +87,7 @@ function toggleTask(task: Task) {
 
 function handleKeydown(event: KeyboardEvent) {
   if (settingsVisible.value) {
-    if (event.key === 'Escape' || ((event.metaKey || event.ctrlKey) && event.key === ',')) {
+    if ((event.metaKey || event.ctrlKey) && event.key === ',') {
       event.preventDefault()
       closeSettings()
     }
@@ -166,9 +166,11 @@ onBeforeUnmount(() => {
       v-if="settingsVisible"
       :theme="settings.theme"
       :accent="settings.accent"
+      :app-state="appState"
       @close="closeSettings"
       @update-theme="(theme) => updateSettings({ theme })"
       @update-accent="(accent) => updateSettings({ accent })"
+      @update-app-state="persistAppState"
     />
   </div>
 </template>

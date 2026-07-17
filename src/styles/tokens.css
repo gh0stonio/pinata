@@ -3,6 +3,14 @@
 	--font-ui: "Space Grotesk", system-ui, sans-serif;
 	--font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
+	--font-size-display-min: 24px;
+	--font-size-display-max: 34px;
+	--font-size-title: 17.5px;
+	--font-size-heading: 14px;
+	--font-size-body: 13px;
+	--font-size-meta: 12px;
+	--font-size-label: 11px;
+
 	--radius-sm: 6px;
 	--radius-md: 9px;
 	--radius-lg: 13px;

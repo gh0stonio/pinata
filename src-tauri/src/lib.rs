@@ -4,6 +4,7 @@ use tauri::{
 };
 
 mod app_state;
+mod repository;
 
 const OPEN_SETTINGS_MENU_ID: &str = "open-settings";
 const OPEN_SETTINGS_EVENT: &str = "pinata://open-settings";
@@ -11,7 +12,9 @@ const OPEN_SETTINGS_EVENT: &str = "pinata://open-settings";
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     if let Err(error) = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            repository::inspect_repository,
             app_state::load_app_state,
             app_state::save_app_state
         ])

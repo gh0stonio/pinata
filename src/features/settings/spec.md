@@ -15,9 +15,9 @@
   - **Spec 03** - the New Task dialog can deep-link into Settings once repo setup ships.
   - Terminal settings will later live-wire `--ui-fs` / `--density` / `--motion` onto the terminal
     surface when spec 05 ships.
-- **Shared contract:** `SettingsView({ theme, accent, onClose, onUpdateTheme, onUpdateAccent })`;
-  settings object persisted at `localStorage['pinata.settings.v1']`; future settings keys stay in
-  `features/settings/settings.ts`.
+- **Shared contract:** `SettingsView({ theme, accent, appState, onClose, onUpdateTheme,
+  onUpdateAccent, onUpdateAppState })`; settings object persisted at `localStorage['pinata.settings.v1']`;
+  repo registration writes through app state; future settings keys stay in `features/settings/settings.ts`.
 
 ## Purpose
 
@@ -31,9 +31,10 @@ preferences. Opened with the native macOS Settings menu item or ⌘,; closed wit
 
 ### Nav model (`NAV`)
 - **Personal:** Appearance · Shortcuts
+- **Coding:** Git & PR
 
-General, Terminal, Git & PR, and Language servers stay out of `NAV` until their pages are wired.
-Agents and Connections stay latent.
+General, Terminal, and Language servers stay out of `NAV` until their pages are wired. Agents and
+Connections stay latent.
 
 ## Persistence
 - One object → `localStorage['pinata.settings.v1']`, merged over `S_DEFAULTS`; `set(key, value)`
@@ -50,6 +51,22 @@ border, no shadow** - reads by contrast alone; critical in light theme), `SText`
 - **Appearance** (see spec 15): theme segmented control writes `theme`; the 7 **accent** swatches
   write `accent`.
 - **Shortcuts:** read-only keyboard map for active app shortcuts.
+- **Git & PR:** repository registry only for now. Shows a global worktree base, a Register repo
+  action, and compact repo rows that open a repository settings modal. The register modal accepts a
+  local path with a native directory picker plus optional name, default branch, and worktree override.
+  Repo rows show repo name plus inline quick-look metadata: org and default branch. The repository
+  modal makes source path, org, default branch, and optional worktree override explicit. The override
+  placeholder previews `<global worktree base>/<repo name>` and Reset clears the override back to
+  that fallback. Selecting or changing the path calls Rust `inspect_repository`; non-git folders
+  show an error and cannot be registered. Valid git folders populate repo name, canonical path,
+  default branch, and branch list. Submitting rejects duplicates by name or canonical path, then
+  appends to `appState.repoRegistry`. Repository settings follow the Codex settings rhythm: setting
+  copy on the left, right-aligned value/control sized to its content, optional worktree override,
+  reset action, and danger-zone removal. Remove deletes only the Piñata registration and is disabled
+  with an explanatory tooltip while any task references the repo. Global and per-repo repository
+  config edits apply from their field change. Worktree paths must be blank, absolute, or `~/` based;
+  they do not need to exist yet. Worktree labels expose a small help tooltip explaining that path
+  changes only affect future task worktrees.
 
 ## Later pages
 - **Search:** filter settings nav once enough pages exist to justify it.
@@ -58,13 +75,8 @@ border, no shadow** - reads by contrast alone; critical in light theme), `SText`
 - **Terminal:** default shell · default split direction (⌘D) · scrollback · blinking cursor · copy
   on select. Add Text & Density here when implementing terminal: terminal font size (S/M/L/XL),
   density, and reduced motion live-wired to the terminal surface.
-- **Git & PR** (`GitPage`) - includes the **repo registry**:
-  - Fetch & worktrees (Auto-fetch, Prune worktrees on delete); GitHub CLI (`gh` path).
-  - **Repositories**: a "N registered" count + **Register repo** button; a toggled **register form**
-    (local path + Browse, name, Register → `registerRepo`, auto-expands the new repo); a list of
-    **compact collapsible rows** (chevron · repo icon · name · `org · N branches · base` · gh dot)
-    that expand to per-repo config (Remote, Default branch, Worktree path, GitHub account,
-    Authentication). Deliberately compact so 10+ repos stay scannable.
+- **Git & PR additions:** Repo removal, Fetch & worktrees controls, GitHub CLI path, GitHub account,
+  and authentication state.
 - **Language servers:** global toggles (enable, format on save, inlay hints) + installed
   servers with active/disabled status.
 
@@ -82,6 +94,14 @@ border, no shadow** - reads by contrast alone; critical in light theme), `SText`
 ## Acceptance criteria
 - [ ] Rail + scoped page; Back to app closes; ⌘, toggles.
 - [ ] Values persist to `pinata.settings.v1`; theme + accent update the root app theme immediately.
+- [ ] Git & PR registers a local git checkout into `appState.repoRegistry` and persists it through
+      app state.
+- [ ] Non-git folders fail during inspection and keep Register disabled.
+- [ ] Per-repo worktree path is optional and falls back to `<global worktree base>/<repo name>`.
+- [ ] Registered repos can be removed only when no task references them.
+- [ ] Global and per-repo repository config edits persist from their field change.
+- [ ] Invalid worktree paths block Register/change and show an inline error.
+- [ ] Worktree help explains that existing task worktrees keep their current paths.
 - [ ] Segmented control's selected segment reads clearly in **both** themes (fill by contrast, no
       hairline, no shadow).
 - [ ] Tokens only, flat, reduced-motion respected. No em-dashes.

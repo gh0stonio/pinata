@@ -1,6 +1,6 @@
 export type Theme = 'pinata-dark' | 'pinata-light'
 export type Accent = 'coral' | 'teal' | 'gold' | 'magenta' | 'lime' | 'azure' | 'mono'
-export type SettingsSection = 'appearance' | 'shortcuts'
+export type SettingsSection = 'appearance' | 'shortcuts' | 'git'
 
 export type AppSettings = {
   theme: Theme
@@ -28,7 +28,6 @@ export const shortcuts = [
   { keys: '⌘B', label: 'Toggle left side panel' },
   { keys: '⌘L', label: 'Toggle right side panel' },
   { keys: '⌘,', label: 'Open settings' },
-  { keys: 'Esc', label: 'Close settings' },
 ]
 
 export const defaultSettings: AppSettings = {

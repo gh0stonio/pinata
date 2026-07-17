@@ -96,9 +96,9 @@ others).
 ## Overlays (z-order, all mounted by `App`)
 
 Settings (top, own rail) → Onboarding (first run) → New Task dialog (scrim) → Command palette
-(scrim) → fixed menus (task/repo/PR/task-edit) → toast (bottom-center). Each closes on Escape /
-outside-click as appropriate. A `toast(msg)` helper shows a bottom-center confirmation (check icon
-+ message) that auto-dismisses (~2.6s).
+(scrim) → fixed menus (task/repo/PR/task-edit) → toast (bottom-center). Settings closes through
+Back to app or ⌘,; transient overlays close on Escape / outside-click as appropriate. A `toast(msg)`
+helper shows a bottom-center confirmation (check icon + message) that auto-dismisses (~2.6s).
 
 ## Keyboard
 

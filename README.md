@@ -43,13 +43,13 @@ Implemented:
 - task/repo schema for registered repos, task repo instances, selection, and expanded tasks
 - task side panel with task rows, repo rows, selected repo state, and repo metadata hover
 - main surface reflects the selected repo until terminal spawn lands
-- Settings view with theme and accent controls
+- Settings view with theme, accent, shortcuts, and Git & PR repo registration
+- Rust git inspection for local repository registration
 - Space Grotesk for UI, JetBrains Mono for code
 
 Not implemented yet:
 
 - task creation flow
-- repo registration UI
 - worktree creation
 - terminal spawn
 - tabs and split panes
@@ -132,7 +132,7 @@ pnpm build
 
 ## Next Work
 
-1. Add task creation and repo registration.
+1. Add task creation using registered repos.
 2. Add plain terminal spawning for the selected task repo.
 3. Add tab and split pane handling.
 4. Add worktree creation.
