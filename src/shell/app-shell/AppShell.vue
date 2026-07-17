@@ -12,27 +12,39 @@ import {
   updateTask,
   type AppState,
   type NewTaskInput,
+  type RegisteredRepo,
   type Task,
   type TaskRepo,
 } from '../../features/app-state/app-state'
+import OnboardingFlow from '../../features/onboarding/OnboardingFlow.vue'
+import { onboardingKey } from '../../features/onboarding/onboarding'
 import SettingsView from '../../features/settings/SettingsView.vue'
 import TaskDialog from '../../features/task-sidebar/task-dialog/TaskDialog.vue'
 import TaskSidePanel from '../../features/task-sidebar/TaskSidePanel.vue'
-import { type AppSettings, loadSettings, saveSettings } from '../../features/settings/settings'
+import {
+  type AppSettings,
+  defaultSettings,
+  loadSettings,
+  saveSettings,
+} from '../../features/settings/settings'
 import styles from './AppShell.module.css'
 
+const startsInOnboarding = !localStorage.getItem(onboardingKey)
 const leftSidePanelVisible = ref(true)
 const rightSidePanelVisible = ref(false)
 const settingsVisible = ref(false)
 const newTaskVisible = ref(false)
 const editingTaskId = ref<string | null>(null)
+const onboardingVisible = ref(startsInOnboarding)
+const bootstrapped = ref(false)
 const appState = ref<AppState>(createEmptyAppState())
-const settings = ref<AppSettings>(loadSettings())
+const settings = ref<AppSettings>(startsInOnboarding ? { ...defaultSettings } : loadSettings())
 const editingTask = computed(() =>
   appState.value.tasks.find((task) => task.id === editingTaskId.value),
 )
 const taskDialogOpen = computed(() => newTaskVisible.value || Boolean(editingTask.value))
 let unlistenOpenSettings: UnlistenFn | undefined
+let appStateTouched = false
 
 function updateSettings(next: Partial<AppSettings>) {
   settings.value = { ...settings.value, ...next }
@@ -70,7 +82,37 @@ function closeSettings() {
   settingsVisible.value = false
 }
 
+function finishOnboarding(payload: { openNewTask: boolean; repositories: RegisteredRepo[] }) {
+  localStorage.setItem(onboardingKey, '1')
+  onboardingVisible.value = false
+
+  if (payload.repositories.length) {
+    const existing = appState.value.repoRegistry
+    const repositories = payload.repositories.filter(
+      (repo) =>
+        !existing.some(
+          (candidate) =>
+            candidate.name.toLowerCase() === repo.name.toLowerCase() ||
+            candidate.source.path === repo.source.path,
+        ),
+    )
+
+    if (repositories.length) {
+      persistAppState({
+        ...appState.value,
+        repoRegistry: [...existing, ...repositories],
+      })
+    }
+  }
+
+  if (payload.openNewTask) {
+    settingsVisible.value = false
+    openNewTask()
+  }
+}
+
 function persistAppState(next: AppState) {
+  appStateTouched = true
   appState.value = next
   void saveAppState(next).catch((error: unknown) => {
     console.error('Failed to save app state', error)
@@ -179,6 +221,14 @@ function deleteExistingTask(task: Task) {
 }
 
 function handleKeydown(event: KeyboardEvent) {
+  if (!bootstrapped.value) {
+    return
+  }
+
+  if (onboardingVisible.value) {
+    return
+  }
+
   if (taskDialogOpen.value) {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'n') {
       event.preventDefault()
@@ -219,10 +269,17 @@ onMounted(() => {
   window.addEventListener('keydown', handleKeydown)
   void loadAppState()
     .then((state) => {
+      if (appStateTouched) {
+        return
+      }
+
       appState.value = state
     })
     .catch((error: unknown) => {
       console.error('Failed to load app state', error)
+    })
+    .finally(() => {
+      bootstrapped.value = true
     })
   void listen('pinata://open-settings', openSettings).then((unlisten) => {
     unlistenOpenSettings = unlisten
@@ -243,53 +300,65 @@ onBeforeUnmount(() => {
     :data-accent-intensity="settings.accentIntensity"
     data-density="regular"
   >
-    <TitleBar
-      :left-side-panel-visible="leftSidePanelVisible"
-      :right-side-panel-visible="rightSidePanelVisible"
-      @toggle-left-side-panel="toggleLeftSidePanel"
-      @toggle-right-side-panel="toggleRightSidePanel"
-    />
+    <template v-if="bootstrapped">
+      <template v-if="!onboardingVisible">
+        <TitleBar
+          :left-side-panel-visible="leftSidePanelVisible"
+          :right-side-panel-visible="rightSidePanelVisible"
+          @toggle-left-side-panel="toggleLeftSidePanel"
+          @toggle-right-side-panel="toggleRightSidePanel"
+        />
 
-    <div
-      :class="[
-        styles.body,
-        !leftSidePanelVisible && styles.leftSidePanelHidden,
-        rightSidePanelVisible && styles.rightSidePanelVisible,
-      ]"
-    >
-      <TaskSidePanel
+        <div
+          :class="[
+            styles.body,
+            !leftSidePanelVisible && styles.leftSidePanelHidden,
+            rightSidePanelVisible && styles.rightSidePanelVisible,
+          ]"
+        >
+          <TaskSidePanel
+            :app-state="appState"
+            :visible="leftSidePanelVisible"
+            @edit-task="openEditTask"
+            @open-new-task="openNewTask"
+            @select-task-repo="selectTaskRepo"
+            @toggle-task="toggleTask"
+          />
+          <MainSurface :app-state="appState" />
+          <SidePanel title="Side panel" empty="Nothing here yet." side="right" :visible="rightSidePanelVisible" />
+        </div>
+
+        <SettingsView
+          v-if="settingsVisible"
+          :theme="settings.theme"
+          :accent="settings.accent"
+          :accent-intensity="settings.accentIntensity"
+          :app-state="appState"
+          @close="closeSettings"
+          @update-theme="(theme) => updateSettings({ theme })"
+          @update-accent="(accent) => updateSettings({ accent })"
+          @update-accent-intensity="(accentIntensity) => updateSettings({ accentIntensity })"
+          @update-app-state="persistAppState"
+        />
+
+        <TaskDialog
+          v-if="newTaskVisible || editingTask"
+          :app-state="appState"
+          :task="editingTask || undefined"
+          @close="closeTaskDialog"
+          @create="createNewTask"
+          @delete="deleteExistingTask"
+          @update="updateExistingTask"
+        />
+      </template>
+
+      <OnboardingFlow
+        v-else
+        :settings="settings"
         :app-state="appState"
-        :visible="leftSidePanelVisible"
-        @edit-task="openEditTask"
-        @open-new-task="openNewTask"
-        @select-task-repo="selectTaskRepo"
-        @toggle-task="toggleTask"
+        @update-settings="updateSettings"
+        @finish="finishOnboarding"
       />
-      <MainSurface :app-state="appState" />
-      <SidePanel title="Side panel" empty="Nothing here yet." side="right" :visible="rightSidePanelVisible" />
-    </div>
-
-    <SettingsView
-      v-if="settingsVisible"
-      :theme="settings.theme"
-      :accent="settings.accent"
-      :accent-intensity="settings.accentIntensity"
-      :app-state="appState"
-      @close="closeSettings"
-      @update-theme="(theme) => updateSettings({ theme })"
-      @update-accent="(accent) => updateSettings({ accent })"
-      @update-accent-intensity="(accentIntensity) => updateSettings({ accentIntensity })"
-      @update-app-state="persistAppState"
-    />
-
-    <TaskDialog
-      v-if="newTaskVisible || editingTask"
-      :app-state="appState"
-      :task="editingTask || undefined"
-      @close="closeTaskDialog"
-      @create="createNewTask"
-      @delete="deleteExistingTask"
-      @update="updateExistingTask"
-    />
+    </template>
   </div>
 </template>

@@ -28,11 +28,13 @@ it.
 
 ## Current scaffold scope
 
-Today the shell owns `AppShell`, `TitleBar`, `SidePanel`, `MainSurface`, and the task side panel
-host. It renders the three-column frame, left/right panel toggles, app branding in the left task
-side panel, persisted task/repo selection, and the native settings menu bridge. The title bar center
-stays empty until breadcrumb switchers ship. Resizers, pane trees, and right-panel feature content
-are future work from the sections below.
+Today the shell owns `AppShell`, `TitleBar`, `SidePanel`, `MainSurface`, first-run Onboarding, and
+the task side panel host. It renders the three-column frame, left/right panel toggles, app branding
+in the left task side panel, persisted task/repo selection, and the native settings menu bridge. The
+shell waits for persisted app state to bootstrap before mounting app chrome, so startup never
+renders an empty default state for a frame. First-run Onboarding is exclusive and mounts instead of
+the title bar/body until setup finishes. The title bar center stays empty until breadcrumb switchers
+ship. Resizers, pane trees, and right-panel feature content are future work from the sections below.
 
 ## Layout regions
 
@@ -95,10 +97,11 @@ others).
 
 ## Overlays (z-order, all mounted by `App`)
 
-Settings (top, own rail) → Onboarding (first run) → New Task dialog (scrim) → Command palette
-(scrim) → fixed menus (task/repo/PR/task-edit) → toast (bottom-center). Settings closes through
-Back to app or ⌘,; transient overlays close on Escape / outside-click as appropriate. A `toast(msg)`
-helper shows a bottom-center confirmation (check icon + message) that auto-dismisses (~2.6s).
+Onboarding is a first-run exclusive screen, mounted after app-state bootstrap and before app chrome.
+For the normal app, Settings (top, own rail) → New Task dialog (scrim) → Command palette (scrim) →
+fixed menus (task/repo/PR/task-edit) → toast (bottom-center). Settings closes through Back to app or
+⌘,; transient overlays close on Escape / outside-click as appropriate. A `toast(msg)` helper shows a
+bottom-center confirmation (check icon + message) that auto-dismisses (~2.6s).
 
 ## Keyboard
 

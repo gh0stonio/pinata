@@ -14,8 +14,8 @@ Rust owns the file:
 ```
 
 Vue loads it with `load_app_state` on app start. Vue saves through `save_app_state` when product
-state changes. Rust also exposes `inspect_repository` so Settings can validate a local git checkout
-before adding it to `repoRegistry`.
+state changes. Rust also exposes `inspect_repository` so Settings and Onboarding can validate a
+local git checkout before adding it to `repoRegistry`.
 
 ## Schema
 
@@ -69,8 +69,8 @@ type TaskRepo = {
 - `repositoryDefaults.worktreeBasePath` is the shared worktree base. Per-repo
   `worktreeBasePath` is an optional override only.
 - The effective repo worktree base is `repo.worktreeBasePath ?? <repository default>/<repo name>`.
-- Settings registers repos by inspecting a local git checkout, then storing canonical path, branches,
-  default branch, optional org, and optional worktree override in `repoRegistry`.
+- Settings and Onboarding register repos by inspecting a local git checkout, then storing canonical
+  path, branches, default branch, optional org, and optional worktree override in `repoRegistry`.
 - Registration de-dupes by repo name or canonical source path.
 - Settings removal deletes only the `repoRegistry` entry and is blocked while any `TaskRepo`
   references that `RegisteredRepo.id`.

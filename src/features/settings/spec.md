@@ -12,13 +12,15 @@
     `localStorage['pinata.settings.v1']`.
   - **Spec 15** - all controls are tokens; the accent swatches are the 7 accents.
 - **Used by / links to:**
+  - **Spec 01** - Onboarding writes the same `theme`, `accent`, and `accentIntensity` settings.
   - **Spec 03** - the New Task dialog can deep-link into Settings once repo setup ships.
   - Terminal settings will later live-wire `--ui-fs` / `--density` / `--motion` onto the terminal
     surface when spec 05 ships.
 - **Shared contract:** `SettingsView({ theme, accent, accentIntensity, appState, onClose,
   onUpdateTheme, onUpdateAccent, onUpdateAccentIntensity, onUpdateAppState })`; settings object
   persisted at `localStorage['pinata.settings.v1']`; repo registration writes through app state;
-  future settings keys stay in `features/settings/settings.ts`.
+  future settings keys stay in `features/settings/settings.ts`; accent swatches use
+  `src/components/accent-swatch-picker`.
 
 ## Purpose
 
@@ -51,8 +53,9 @@ border, no shadow** - reads by contrast alone; critical in light theme), `SText`
 
 ## Pages
 - **Appearance** (see spec 15): theme segmented control writes `theme`; the 7 **accent** swatches
-  write `accent`; accent intensity segmented control writes `accentIntensity` and is disabled for
-  Mono because neutral accent mode has fixed strength.
+  write `accent`; hover/selected swatch borders use the swatch's muted accent token; accent
+  intensity segmented control writes `accentIntensity` and is disabled for Mono because neutral
+  accent mode has fixed strength.
 - **Shortcuts:** read-only keyboard map for active app shortcuts.
 - **Git & PR:** repository registry only for now. Shows a global worktree base, a Register repo
   action, and compact repo rows that open a repository settings modal. The register modal accepts a
