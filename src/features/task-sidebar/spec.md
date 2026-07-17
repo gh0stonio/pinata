@@ -10,10 +10,10 @@ Based on v0 spec 03 and `reference/src/term-sidebar.jsx`.
 - Selection and expanded tasks persist through app state.
 - Each task row is one button. Clicking any hovered part toggles expand/collapse only. Repo
   selection changes only from repo rows.
-- Task label follows v0 eyebrow: mono 10px, 0.15em tracking, weight 600.
+- Task label uses the shared meta scale: mono `--font-size-meta`, 0.08em tracking, weight 700.
 - Task rows follow v0 spacing with the chevron aligned to the Tasks icon. Repo names align with task names.
-- Task titles follow v0: mono 12.5px, `--color-text-secondary`, weight 600.
-- Repo rows follow v0: mono 12px, inactive `--color-text-secondary` at 500, active
+- Task titles use mono `--font-size-heading`, `--color-text-secondary`, weight 600.
+- Repo rows use mono `--font-size-body`, inactive `--color-text-secondary` at 500, active
   `--color-text-primary` at 700 with `--color-accent-subtle` fill.
 - Task groups have a 6px gap.
 

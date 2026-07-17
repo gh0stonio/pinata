@@ -25,8 +25,8 @@ themes is codified in `APP.md` §6.1; this spec is the exact values + rules.)
 ## Current implementation scope
 
 `tokens.css` owns structural tokens: fonts, spacing, radii, fixed shell sizes, swatches, and
-fallbacks. `themes.css` owns theme and accent colors. Component and feature CSS should consume
-tokens, not raw color or spacing values.
+fallbacks. `themes.css` owns theme colors, input fills, accent colors, and accent text colors.
+Component and feature CSS should consume tokens, not raw color or spacing values.
 
 ## Principles
 - **Graphite + flat.** Neutral warm-gray (dark) / paper (light) surfaces. **No elevation shadows
@@ -48,7 +48,7 @@ Applied as `data-theme` on `.term-desktop`; selected via the `theme` tweak
 --surface:#2c3032  --surface-2:#34393b  --elevated:#2f3335
 --border:#353a3c  --border-soft:#2a2e30  --muted:#4a4f52
 --text:#dfe3e5  --text-dim:#c2c7c9  --text-faint:#a6aeb2  --text-ghost:#8f989d
---purple:#b9a6e0 --green:#9cd389 --yellow:#e0c06a --red:#e08a8a --orange:#d9a06a --nord9/8:#86b8c7 (cyan)
+--purple:#b9a6e0 --green:#9cd389 --yellow:#e0c06a --red:#e08a8a --red-subtle:rgba(224,138,138,.18) --orange:#d9a06a --nord9/8:#86b8c7 (cyan)
 --link:#86b8c7
 --add-bg:rgba(156,211,137,.14) --add-fg:#9cd389  --del-bg:rgba(224,138,138,.13) --del-fg:#e08a8a
 --titlebar/--sidebar:#262a2c  --scrim:rgba(0,0,0,.55)
@@ -60,7 +60,7 @@ Applied as `data-theme` on `.term-desktop`; selected via the `theme` tweak
 --surface:#ffffff  --surface-2:#e5e9ec  --elevated:#ffffff
 --border:#ccd1d6  --border-soft:#dee3e7  --muted:#a7aeb5
 --text:#1a1f23  --text-dim:#39424a  --text-faint:#4a5259  --text-ghost:#62686e
---purple:#7557b9 --green:#2f7643 --yellow:#856421 --red:#a05252 --orange:#905e2b --nord9/8:#2a7284 (cyan)
+--purple:#7557b9 --green:#2f7643 --yellow:#856421 --red:#a05252 --red-subtle:rgba(160,82,82,.18) --orange:#905e2b --nord9/8:#2a7284 (cyan)
 --link:#2a7284
 --add-bg:rgba(47,118,67,.16) --add-fg:#2f7643  --del-bg:rgba(160,82,82,.17) --del-fg:#a05252
 --titlebar/--sidebar:#e7ebee  --scrim:rgba(28,34,40,.34)
@@ -103,8 +103,9 @@ The 7 accents (`PINATA_ACCENTS`) - **pastel** brand colors, each with a legible 
 
 ### Where accent appears (and must not)
 Appears: active tab top-border, `.chip-btn.on` (20% tint + accent text), selection/active rings,
-terminal + input caret, text selection, toggle knobs, checkboxes, primary buttons (`--accent` fill
-+ `--on-accent`), New Task button tint (14%/32%), palette selected-row icon, "view diff" chips.
+terminal + input caret, text selection, toggle knobs, checkboxes, primary buttons
+(`--color-accent-primary` fill + `--color-accent-text`), New Task button tint (14%/32%), palette
+selected-row icon, "view diff" chips.
 Must **not**: body text, surfaces, borders, semantic colors, the 16 ANSI terminal colors.
 
 ### Visibility (opacity, never hue)
@@ -128,8 +129,9 @@ Resolve tokens to hex with `getComputedStyle`. Rebuild on theme change; only bg/
 follow the accent - **never remap the 16 ANSI hues.**
 
 ## Type & motion
-- **Space Grotesk** (UI/head), **JetBrains Mono** (terminal/code/labels). `.eyebrow` = 10px mono
-  uppercase letter-spaced.
+- **Space Grotesk** (UI/head), **JetBrains Mono** (terminal/code/labels). Chrome typography uses
+  shared tokens: display clamp `24px` to `34px`, title `17.5px`, heading `14px`, body `13px`,
+  meta `12px`, label `11px`.
 - `--ui-fs`/`--density`/`--motion` live-wired from Settings (spec 14). Honor `--motion` +
   `prefers-reduced-motion`; functional pulses only, no decorative loops.
 
