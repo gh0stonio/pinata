@@ -3,12 +3,18 @@ use tauri::{
     Emitter,
 };
 
+mod app_state;
+
 const OPEN_SETTINGS_MENU_ID: &str = "open-settings";
 const OPEN_SETTINGS_EVENT: &str = "pinata://open-settings";
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     if let Err(error) = tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![
+            app_state::load_app_state,
+            app_state::save_app_state
+        ])
         .setup(|app| {
             let handle = app.handle();
             let package_info = handle.package_info();
