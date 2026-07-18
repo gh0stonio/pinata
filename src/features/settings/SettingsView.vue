@@ -329,7 +329,6 @@ async function registerRepository() {
       repoRegistry: [...props.appState.repoRegistry, repo],
     })
     cancelRegistering()
-    selectedRepoId.value = repo.id
   } catch (error) {
     registerError.value = error instanceof Error ? error.message : String(error)
   } finally {
