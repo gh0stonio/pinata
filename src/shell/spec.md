@@ -103,6 +103,10 @@ fixed menus (task/repo/PR/task-edit) → toast (bottom-center). Settings closes 
 ⌘,; transient overlays close on Escape / outside-click as appropriate. A `toast(msg)` helper shows a
 bottom-center confirmation (check icon + message) that auto-dismisses (~2.6s).
 
+Every full-screen overlay or scrim must keep the top `--titlebar-height` region draggable with
+`data-tauri-drag-region` plus `app-region: drag`. This is the default for all future modal work,
+including blocking progress flows.
+
 ## Keyboard
 
 Implement the full global map from `APP.md` §8 in one central keydown handler. Notes:

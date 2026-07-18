@@ -36,8 +36,7 @@ position, or local radius.
 
 ## Principles
 - **Graphite + flat.** Neutral warm-gray (dark) / paper (light) surfaces. **No elevation shadows
-  anywhere** (`--shadow-card`/`--shadow-pop` = `none` in every theme). Separation = fills, hairline
-  borders, color.
+  anywhere.** Separation = fills, hairline borders, color.
 - **Accent = the few interactive moments only** (active tab underline, active chip, focus rings,
   terminal caret, text selection, toggles/checkboxes, primary buttons). Everything else graphite.
 - **WCAG AA.** Every text/background pair meets AA, tuned against the actual background it sits on.

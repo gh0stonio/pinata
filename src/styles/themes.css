@@ -51,9 +51,6 @@
 	--color-diff-add-text: #9cd389;
 	--color-diff-delete-background: rgba(255, 87, 112, 0.13);
 	--color-diff-delete-text: #ff6f82;
-
-	--shadow-card: none;
-	--shadow-popover: 0 6px 16px rgb(0 0 0 / 0.22);
 }
 
 /* Piñata Light: paper app shell. */
@@ -109,9 +106,6 @@
 	--color-diff-add-text: #2f7643;
 	--color-diff-delete-background: rgba(197, 48, 69, 0.15);
 	--color-diff-delete-text: #c53045;
-
-	--shadow-card: none;
-	--shadow-popover: 0 8px 24px rgb(18 25 30 / 0.14);
 }
 
 [data-accent="coral"] {
