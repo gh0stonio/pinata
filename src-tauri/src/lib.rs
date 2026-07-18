@@ -14,6 +14,8 @@ pub fn run() {
     if let Err(error) = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            repository::create_task_repo_worktree,
+            repository::delete_task_repo_worktree,
             repository::inspect_repository,
             app_state::load_app_state,
             app_state::save_app_state

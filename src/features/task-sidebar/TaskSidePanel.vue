@@ -16,6 +16,7 @@ import styles from './TaskSidePanel.module.css'
 const props = defineProps<{
   appState: AppState
   visible: boolean
+  workingTaskId?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -58,7 +59,15 @@ function isTaskSelected(taskId: string) {
 }
 
 function isTaskRepoSelected(task: Task, taskRepo: TaskRepo) {
+  if (isTaskWorking(task.id)) {
+    return false
+  }
+
   return isTaskSelected(task.id) && props.appState.selection.taskRepoIdByTaskId[task.id] === taskRepo.id
+}
+
+function isTaskWorking(taskId: string) {
+  return props.workingTaskId === taskId
 }
 
 function registeredRepoFor(taskRepo: TaskRepo) {
@@ -113,11 +122,14 @@ function taskRepoPath(task: Task, taskRepo: TaskRepo) {
     </div>
 
     <div :class="styles.scroller">
-      <p v-if="!appState.tasks.length" :class="styles.empty">Nothing here yet.</p>
+      <div v-if="!appState.tasks.length" :class="styles.empty">
+        <strong>No tasks yet</strong>
+        <p>Create one to group repos and terminals.</p>
+      </div>
 
       <ul v-else :class="styles.taskList" aria-label="Tasks">
         <li v-for="task in appState.tasks" :key="task.id" :class="styles.taskItem">
-          <div :class="styles.taskRow">
+          <div :class="styles.taskRow" :data-working="isTaskWorking(task.id)">
             <button
               type="button"
               :class="styles.taskToggle"
@@ -137,7 +149,14 @@ function taskRepoPath(task: Task, taskRepo: TaskRepo) {
               </span>
             </button>
 
+            <span
+              v-if="isTaskWorking(task.id)"
+              :class="styles.taskSpinner"
+              role="status"
+              aria-label="Task operation running"
+            />
             <button
+              v-else
               type="button"
               class="uiButton uiButtonIcon uiButtonNaked"
               :class="styles.taskAction"

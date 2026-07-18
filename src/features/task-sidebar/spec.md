@@ -6,10 +6,24 @@ Based on v0 spec 03 and `reference/src/term-sidebar.jsx`.
 
 ## Current scope
 
-- Brand header, task count, task rows, repo rows, and repo hover metadata.
+- Brand header, task rows, repo rows, and repo hover metadata.
 - New Task button and creation modal for registered repos.
 - Creating a task persists task/repo records, selects the new task, expands it, and selects its
-  first repo.
+  first repo after git branch and worktree creation succeeds.
+- Task creation and task edit switch the dialog body to a plain synchronous checklist while setting
+  up or cleaning up task-owned repository worktrees. The checklist shows one row per repo, with no
+  branch or worktree path detail. The repo name is the row label; the status column carries the live
+  phase while a row runs, then `Ready`, `Cleaned`, `Queued`, or `Failed`. App-state persistence is
+  part of the transaction but is not shown as a user step. The form returns only when git errors
+  need user correction.
+- The task dialog scrim preserves the top title-bar drag region while open, including blocking
+  worktree progress states.
+- During worktree creation, Rust streams git output and hook output into sanitized phase names such
+  as `Preparing worktree`, `Updating files`, `Repository hooks`, `Installing packages`,
+  `Linking project`, `Building project`, and `Checking constraints`. Raw command details are not
+  displayed.
+- Git setup and cleanup run repositories in parallel. Inside each repository operation, branch and
+  worktree changes stay sequential in the Rust command.
 - Task creation/edit does not show a generated branch preview. Repo hover metadata owns branch
   display after the row exists.
 - Repo hover worktree metadata shows the planned final path:
@@ -32,15 +46,13 @@ Based on v0 spec 03 and `reference/src/term-sidebar.jsx`.
 - Repo rows use mono `--font-size-body`, inactive `--color-text-secondary` at 500, active
   `--color-text-primary` at 700 with `--color-accent-subtle` fill.
 - Task groups have a 6px gap.
+- During task git work, repo selection highlight is suppressed and the task row shows a spinner.
 
 ## Deferred
 
 - Archive task flow: task removal should become archive-first, not destructive delete. Archived
   tasks leave the active sidebar, appear in a Settings archive list, can be restored from there, and
   can be permanently deleted only from the archive view.
-- Real git worktree creation during task creation.
-- Real cleanup for confirmed task or task-repo deletion: remove task-owned worktrees and branches
-  when they exist.
 - Terminal spawn after task creation.
 - Drag reorder.
 - Diff counters, PR glyphs, checks donut.

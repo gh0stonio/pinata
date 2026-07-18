@@ -14,8 +14,8 @@ Rust owns the file:
 ```
 
 Vue loads it with `load_app_state` on app start. Vue saves through `save_app_state` when product
-state changes. Rust also exposes `inspect_repository` so Settings and Onboarding can validate a
-local git checkout before adding it to `repoRegistry`.
+state changes. Rust also exposes git commands so Settings and Onboarding can validate local
+checkouts and task creation can create or delete task-owned branches and worktrees.
 
 ## Schema
 
@@ -81,17 +81,19 @@ type TaskRepo = {
 - Settings removal deletes only the `repoRegistry` entry and is blocked while any `TaskRepo`
   references that `RegisteredRepo.id`.
 - New Task creates task records from registered repos only. It stores the chosen base branch and
-  planned topic branch (`feat/<6-char task-id hash>-<slug>`), then selects and expands the new task.
+  topic branch (`feat/<6-char task-id hash>-<slug>`), creates the branch and worktree synchronously,
+  persists `TaskRepo.worktreePath`, then selects and expands the new task. Git creation resolves the
+  base branch locally first, then falls back to `origin/<base branch>` when only the remote ref exists.
 - Task editing can update task name, repo membership, and base branches. Existing `TaskRepo.id`,
   `branch`, and `worktreePath` are preserved when the registered repo stays in the task.
 - Branch identity is immutable after a task repo row is created. Renaming a task must not rename
   existing planned or materialized branches; newly added repos use the existing task id hash plus
   the current task slug. If `worktreePath` exists, preserve the existing `TaskRepo.baseBranch` too
   and treat the base branch as locked in task edit UI.
-- Task deletion removes the task, its selection entry, and its expanded state. If the deleted task
-  was selected, selection moves to the first remaining task.
-- New Task does not create git worktrees or terminal tabs yet. `TaskRepo.worktreePath` stays empty
-  until the worktree feature owns actual checkout creation; UI can still show the planned path.
+- Task deletion removes task-owned worktrees and branches before removing the task, its selection
+  entry, and its expanded state. If the deleted task was selected, selection moves to the first
+  remaining task.
+- Terminal tabs are not created yet.
 - `selection.taskRepoIdByTaskId` points at `TaskRepo.id`, not `RegisteredRepo.id`.
 - Do not persist derived git state here: diffs, PRs, auth health, ports, terminals, tabs, panes.
   Add those when their feature ships.

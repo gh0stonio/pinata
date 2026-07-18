@@ -75,6 +75,14 @@ export type NewTaskInput = {
   repos: NewTaskRepoInput[]
 }
 
+export type TaskRepoGitOperation = {
+  sourcePath: string
+  baseBranch: string
+  branch: string
+  worktreePath: string
+  progressId?: string
+}
+
 export type AppSelection = {
   taskId: string | null
   taskRepoIdByTaskId: Record<string, string | null>
@@ -107,6 +115,14 @@ export function saveAppState(state: AppState): Promise<void> {
 
 export function inspectRepository(path: string): Promise<RepositoryInspection> {
   return invoke<RepositoryInspection>('inspect_repository', { path })
+}
+
+export function createTaskRepoWorktree(input: TaskRepoGitOperation): Promise<string> {
+  return invoke<string>('create_task_repo_worktree', { input })
+}
+
+export function deleteTaskRepoWorktree(input: TaskRepoGitOperation): Promise<void> {
+  return invoke('delete_task_repo_worktree', { input })
 }
 
 export function findRegisteredRepo(state: AppState, id: string): RegisteredRepo | undefined {

@@ -8,6 +8,19 @@
 	background: var(--color-overlay-scrim);
 }
 
+.dragRegion {
+	position: fixed;
+	top: 0;
+	right: 0;
+	left: 0;
+	z-index: 80;
+	height: var(--titlebar-height);
+	user-select: none;
+	-webkit-user-select: none;
+	app-region: drag;
+	-webkit-app-region: drag;
+}
+
 .dialog {
 	width: min(560px, calc(100vw - 64px));
 	max-height: calc(100vh - 96px);
@@ -16,7 +29,6 @@
 	background: var(--color-surface-primary);
 	border: 1px solid var(--color-border-primary);
 	border-radius: var(--radius-xl);
-	box-shadow: var(--shadow-popover);
 }
 
 .header {
@@ -33,7 +45,7 @@
 	height: 42px;
 	flex: 0 0 auto;
 	place-items: center;
-	color: var(--color-accent-primary);
+	color: var(--color-accent-icon);
 	background: var(--color-accent-subtle);
 	border-radius: var(--radius-md);
 }
@@ -68,6 +80,10 @@
 	flex-direction: column;
 	gap: var(--space-xl);
 	padding: var(--space-3xl);
+}
+
+.progressBody {
+	gap: var(--space-xl);
 }
 
 .field {
@@ -205,6 +221,143 @@ select.fieldInput {
 	text-align: center;
 }
 
+.progressList {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-xs);
+	padding: 0;
+	margin: 0;
+	list-style: none;
+}
+
+.progressStep {
+	display: grid;
+	grid-template-columns: var(--space-4xl) minmax(0, 1fr) minmax(150px, auto);
+	align-items: center;
+	gap: var(--space-lg);
+	min-width: 0;
+	min-height: 42px;
+	padding: var(--space-sm) var(--space-md);
+	border-radius: var(--radius-md);
+	color: var(--color-text-tertiary);
+	transition: color 150ms ease;
+}
+
+.progressStep[data-status="pending"] {
+	color: var(--color-text-placeholder);
+}
+
+.progressStep[data-status="running"] {
+	color: var(--color-accent-primary);
+}
+
+.progressStep[data-status="done"] {
+	color: var(--color-status-success);
+}
+
+.progressStep[data-status="error"] {
+	color: var(--color-status-danger);
+}
+
+.progressMark {
+	display: grid;
+	width: var(--space-4xl);
+	height: var(--space-4xl);
+	flex: 0 0 auto;
+	place-items: center;
+	background: var(--color-input-background);
+	border: 1.5px solid currentcolor;
+	border-radius: var(--radius-sm);
+}
+
+.progressMark svg {
+	width: var(--space-xl);
+	height: var(--space-xl);
+}
+
+.progressStep[data-status="running"] .progressMark {
+	border-color: var(--color-accent-border);
+}
+
+.progressStep[data-status="done"] .progressMark {
+	color: var(--color-accent-text);
+	background: var(--color-status-success);
+	border-color: var(--color-status-success);
+}
+
+.progressStep[data-status="error"] .progressMark {
+	background: var(--color-status-danger-subtle);
+	border-color: var(--color-status-danger);
+}
+
+.progressSpinner {
+	width: var(--space-lg);
+	height: var(--space-lg);
+	border: 2px solid currentcolor;
+	border-top-color: transparent;
+	border-radius: var(--radius-pill);
+	animation: progressSpin 0.8s linear infinite;
+}
+
+.progressCopy {
+	display: flex;
+	min-width: 0;
+	flex: 1 1 auto;
+}
+
+.progressCopy strong {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.progressCopy strong {
+	color: var(--color-text-primary);
+	font-size: var(--font-size-body);
+	font-weight: 700;
+	line-height: 1.2;
+}
+
+.progressStep[data-status="pending"] .progressCopy strong {
+	color: var(--color-text-secondary);
+}
+
+.progressState {
+	color: currentcolor;
+	font-family: var(--font-mono);
+	font-size: var(--font-size-label);
+	font-weight: 800;
+	letter-spacing: 0.08em;
+	text-align: right;
+	text-transform: uppercase;
+	white-space: nowrap;
+}
+
+.progressStep[data-status="pending"] .progressState {
+	color: var(--color-text-placeholder);
+}
+
+.progressError {
+	margin: 0;
+	color: var(--color-status-danger);
+	font-size: var(--font-size-body);
+	font-weight: 700;
+	line-height: 1.35;
+}
+
+.progressActions {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: var(--space-sm);
+}
+
+@keyframes progressSpin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
 .footer {
 	display: flex;
 	align-items: center;
@@ -278,7 +431,6 @@ select.fieldInput {
 	background: var(--color-surface-primary);
 	border: 1px solid var(--color-border-primary);
 	border-radius: var(--radius-lg);
-	box-shadow: var(--shadow-popover);
 }
 
 .confirmHeader {
