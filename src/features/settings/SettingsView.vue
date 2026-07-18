@@ -62,8 +62,10 @@ const registerInspection = ref<RepositoryInspection | null>(null)
 const selectedRepoId = ref<string | null>(null)
 const defaultWorktreeBaseError = ref('')
 const repoWorktreeErrors = reactive<Record<string, string>>({})
+const repoWorktreeDrafts = reactive<Record<string, string>>({})
 const registerFormId = 'repo-register-form'
 const registerPathInputId = 'repo-register-path'
+const repoRelativeWorktreePlaceholder = './worktrees (inside this repo folder)'
 const appWindow = getCurrentWindow()
 const accentIntensityDisabled = computed(() => props.accent === 'mono')
 
@@ -71,10 +73,12 @@ const globalWorktreeBasePath = computed(() => props.appState.repositoryDefaults.
 const selectedRepo = computed(
   () => props.appState.repoRegistry.find((repo) => repo.id === selectedRepoId.value) ?? null,
 )
-const registerWorktreePlaceholder = computed(() =>
-  repoWorktreePlaceholder(registerName.value.trim() || registerInspection.value?.name || 'repo'),
+const registerWorktreeFallback = computed(() =>
+  repoWorktreeFallback(registerName.value.trim() || registerInspection.value?.name || 'repo'),
 )
-const registerWorktreeError = computed(() => validateWorktreePath(registerWorktreeBasePath.value))
+const registerWorktreeError = computed(() =>
+  validateWorktreePath(registerWorktreeBasePath.value, { allowRepoRelative: true }),
+)
 const canRegisterRepo = computed(
   () => Boolean(registerInspection.value) && !registeringBusy.value && !registerWorktreeError.value,
 )
@@ -115,15 +119,26 @@ function repoRemovalReason(repo: RegisteredRepo) {
   return `Used by ${tasks.length} tasks. Remove it from those tasks first.`
 }
 
-function repoWorktreePlaceholder(repoName: string) {
+function repoWorktreeFallback(repoName: string) {
   return defaultRepoWorktreePath(props.appState.repositoryDefaults, repoName)
+}
+
+function repoWorktreeInputValue(repo: RegisteredRepo) {
+  return repoWorktreeDrafts[repo.id] ?? repo.worktreeBasePath ?? ''
+}
+
+function hasRepoWorktreeInputValue(repo: RegisteredRepo) {
+  return Boolean(repoWorktreeInputValue(repo).trim())
 }
 
 function fieldValue(event: Event) {
   return (event.target as HTMLInputElement | HTMLSelectElement).value
 }
 
-function validateWorktreePath(path: string) {
+function validateWorktreePath(
+  path: string,
+  options: { allowRepoRelative?: boolean; allowPartialRepoRelative?: boolean } = {},
+) {
   const value = path.trim()
 
   if (!value) {
@@ -134,8 +149,19 @@ function validateWorktreePath(path: string) {
     return 'Use a single-line path.'
   }
 
-  if (value !== '~' && !value.startsWith('~/') && !value.startsWith('/')) {
-    return 'Use an absolute path or ~/ path.'
+  const isRepoRelative = options.allowRepoRelative && value.startsWith('./')
+  const isPartialRepoRelative = options.allowPartialRepoRelative && value === '.'
+
+  if (
+    value !== '~' &&
+    !value.startsWith('~/') &&
+    !value.startsWith('/') &&
+    !isRepoRelative &&
+    !isPartialRepoRelative
+  ) {
+    return options.allowRepoRelative
+      ? 'Use an absolute path, ~/ path, or ./ path.'
+      : 'Use an absolute path or ~/ path.'
   }
 
   return ''
@@ -143,6 +169,7 @@ function validateWorktreePath(path: string) {
 
 function openRepoConfig(repo: RegisteredRepo) {
   registering.value = false
+  repoWorktreeDrafts[repo.id] = repo.worktreeBasePath ?? ''
   selectedRepoId.value = repo.id
 }
 
@@ -279,7 +306,7 @@ async function registerRepository() {
     const name = registerName.value.trim() || inspection.name
     const defaultBranch = registerDefaultBranch.value.trim() || inspection.defaultBranch
     const worktreeBasePath = registerWorktreeBasePath.value.trim()
-    const worktreeError = validateWorktreePath(worktreeBasePath)
+    const worktreeError = validateWorktreePath(worktreeBasePath, { allowRepoRelative: true })
 
     if (hasRegisteredRepo(props.appState.repoRegistry, { name, path: inspection.path })) {
       registerError.value = 'Repository already registered.'
@@ -315,25 +342,33 @@ function updateRepoDefaultBranch(repo: RegisteredRepo, event: Event) {
 }
 
 function validateRepoWorktreePath(repo: RegisteredRepo, event: Event) {
-  repoWorktreeErrors[repo.id] = validateWorktreePath(fieldValue(event))
+  const worktreeBasePath = fieldValue(event)
+
+  repoWorktreeDrafts[repo.id] = worktreeBasePath
+  repoWorktreeErrors[repo.id] = validateWorktreePath(worktreeBasePath, {
+    allowRepoRelative: true,
+    allowPartialRepoRelative: true,
+  })
 }
 
 function resetRepoWorktreeBasePath(repo: RegisteredRepo) {
+  repoWorktreeDrafts[repo.id] = ''
   repoWorktreeErrors[repo.id] = ''
   updateRegisteredRepo(repo.id, { worktreeBasePath: undefined })
 }
 
 function updateRepoWorktreeBasePath(repo: RegisteredRepo, event: Event) {
-  const worktreeBasePath = fieldValue(event).trim()
-  const worktreeError = validateWorktreePath(worktreeBasePath)
+  const worktreeBasePath = fieldValue(event)
+  const worktreeError = validateWorktreePath(worktreeBasePath, { allowRepoRelative: true })
 
+  repoWorktreeDrafts[repo.id] = worktreeBasePath
   repoWorktreeErrors[repo.id] = worktreeError
 
   if (worktreeError) {
     return
   }
 
-  updateRegisteredRepo(repo.id, { worktreeBasePath: worktreeBasePath || undefined })
+  updateRegisteredRepo(repo.id, { worktreeBasePath: worktreeBasePath.trim() || undefined })
 }
 
 function removeRegisteredRepo(repo: RegisteredRepo) {
@@ -345,6 +380,7 @@ function removeRegisteredRepo(repo: RegisteredRepo) {
     ...props.appState,
     repoRegistry: props.appState.repoRegistry.filter((candidate) => candidate.id !== repo.id),
   })
+  delete repoWorktreeDrafts[repo.id]
   delete repoWorktreeErrors[repo.id]
   closeRepoConfig()
 }
@@ -708,7 +744,7 @@ onBeforeUnmount(() => {
                         registerWorktreeError && styles.fieldInputInvalid,
                       ]"
                       type="text"
-                      :placeholder="registerWorktreePlaceholder"
+                      :placeholder="repoRelativeWorktreePlaceholder"
                       autocomplete="off"
                       spellcheck="false"
                       :aria-invalid="Boolean(registerWorktreeError)"
@@ -729,6 +765,9 @@ onBeforeUnmount(() => {
                       {{ registerWorktreeError }}
                     </span>
                   </div>
+                  <p :class="styles.fieldHint">
+                    Default: <code>{{ registerWorktreeFallback }}</code>
+                  </p>
                 </label>
 
                 <div :class="styles.formActions">
@@ -824,10 +863,11 @@ onBeforeUnmount(() => {
                         <span :class="styles.helpTooltip" role="tooltip">
                           Changes only affect future task worktrees. Existing worktrees keep their
                           current path.
+                          Relative paths like ./worktrees start from this repository folder.
                         </span>
                       </button>
                     </h2>
-                    <p>Empty uses the global base plus repo name.</p>
+                    <p>Optional. Empty uses the default.</p>
                   </div>
                   <div :class="styles.configControl">
                     <div :class="[styles.pathPicker, styles.pathPickerInline]">
@@ -835,22 +875,22 @@ onBeforeUnmount(() => {
                         :class="[
                           styles.fieldInput,
                           styles.monoInput,
-                          styles.fieldInputWithAction,
+                          hasRepoWorktreeInputValue(selectedRepo) && styles.fieldInputWithAction,
                           repoWorktreeErrors[selectedRepo.id] && styles.fieldInputInvalid,
                         ]"
                         type="text"
-                        :value="selectedRepo.worktreeBasePath ?? ''"
-                        :placeholder="repoWorktreePlaceholder(selectedRepo.name)"
+                        :value="repoWorktreeInputValue(selectedRepo)"
+                        :placeholder="repoRelativeWorktreePlaceholder"
                         spellcheck="false"
                         :aria-invalid="Boolean(repoWorktreeErrors[selectedRepo.id])"
                         @input="validateRepoWorktreePath(selectedRepo, $event)"
                         @change="updateRepoWorktreeBasePath(selectedRepo, $event)"
                       />
                       <button
+                        v-if="hasRepoWorktreeInputValue(selectedRepo)"
                         type="button"
                         class="uiButton uiButtonIcon uiButtonNaked"
                         :class="styles.inputIconButton"
-                        :disabled="!selectedRepo.worktreeBasePath"
                         aria-label="Reset worktree override"
                         @click="resetRepoWorktreeBasePath(selectedRepo)"
                       >
@@ -864,6 +904,9 @@ onBeforeUnmount(() => {
                         {{ repoWorktreeErrors[selectedRepo.id] }}
                       </span>
                     </div>
+                    <p :class="styles.fieldHint">
+                      Default: <code>{{ repoWorktreeFallback(selectedRepo.name) }}</code>
+                    </p>
                   </div>
                 </div>
 

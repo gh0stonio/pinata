@@ -69,6 +69,9 @@ type TaskRepo = {
 - `repositoryDefaults.worktreeBasePath` is the shared worktree base. Per-repo
   `worktreeBasePath` is an optional override only.
 - The effective repo worktree base is `repo.worktreeBasePath ?? <repository default>/<repo name>`.
+- If a per-repo override starts with `./`, resolve it by joining the remainder onto the repo's
+  canonical `source.path`. Example: `./worktrees` for `/repos/api` resolves to
+  `/repos/api/worktrees`.
 - Settings and Onboarding register repos by inspecting a local git checkout, then storing canonical
   path, branches, default branch, optional org, and optional worktree override in `repoRegistry`.
 - Registration de-dupes by repo name or canonical source path.
@@ -78,6 +81,9 @@ type TaskRepo = {
   planned topic branch (`feat/<slug>`), then selects and expands the new task.
 - Task editing can update task name, repo membership, and base branches. Existing `TaskRepo.id`
   and `worktreePath` are preserved when the registered repo stays in the task.
+- Task editing must not silently rewrite materialized repo branch metadata. If `worktreePath`
+  exists, preserve the existing `TaskRepo.baseBranch` and `TaskRepo.branch`; new or unmaterialized
+  repos use the current task slug and selected base branch.
 - Task deletion removes the task, its selection entry, and its expanded state. If the deleted task
   was selected, selection moves to the first remaining task.
 - New Task does not create git worktrees or terminal tabs yet. `TaskRepo.worktreePath` stays empty

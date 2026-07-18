@@ -286,6 +286,20 @@
 	opacity: 0.72;
 }
 
+.fieldHint {
+	margin: 0;
+	color: var(--color-text-tertiary);
+	font-size: var(--settings-font-meta);
+	line-height: 1.35;
+}
+
+.fieldHint code {
+	color: var(--color-text-secondary);
+	font-family: var(--font-mono);
+	font-size: inherit;
+	font-weight: 700;
+}
+
 select.fieldInput {
 	cursor: pointer;
 }
@@ -323,11 +337,6 @@ select.fieldInput {
 	top: 50%;
 	right: var(--space-xs);
 	transform: translateY(-50%);
-}
-
-.inputIconButton:disabled {
-	cursor: default;
-	opacity: 0;
 }
 
 .rowControl {
@@ -755,7 +764,7 @@ select.fieldInput {
 
 .configControl {
 	display: flex;
-	flex: 0 1 min(420px, 48%);
+	flex: 0 1 min(520px, 54%);
 	flex-direction: column;
 	gap: var(--space-xs);
 	margin-left: auto;

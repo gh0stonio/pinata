@@ -20,9 +20,15 @@ import styles from './TaskDialog.module.css'
 
 type DialogRepoRow = {
   id: string
+  taskRepoId?: string
   registeredRepoId: string
   baseBranch: string
 }
+
+type PendingConfirmation =
+  | { kind: 'delete-task' }
+  | { kind: 'remove-repo'; rowId: string; repoName: string }
+  | { kind: 'replace-repo'; rowId: string; repoId: string; repoName: string; nextRepoName: string }
 
 const props = defineProps<{
   appState: AppState
@@ -39,6 +45,7 @@ const emit = defineEmits<{
 const nameInput = ref<HTMLInputElement | null>(null)
 const taskName = ref(props.task?.name ?? '')
 const rows = ref<DialogRepoRow[]>(initialRows())
+const pendingConfirmation = ref<PendingConfirmation | null>(null)
 
 const registry = computed(() => props.appState.repoRegistry)
 const isEditing = computed(() => Boolean(props.task))
@@ -71,6 +78,35 @@ const hasChanges = computed(() => {
 const canSave = computed(
   () => taskSlug.value.length >= 2 && rows.value.length > 0 && hasValidRows() && hasChanges.value,
 )
+const confirmationTitle = computed(() => {
+  if (pendingConfirmation.value?.kind === 'remove-repo') {
+    return `Remove ${pendingConfirmation.value.repoName}?`
+  }
+
+  if (pendingConfirmation.value?.kind === 'replace-repo') {
+    return `Replace ${pendingConfirmation.value.repoName}?`
+  }
+
+  return 'Delete task?'
+})
+const confirmationBody = computed(() => {
+  if (pendingConfirmation.value?.kind === 'remove-repo') {
+    return 'This removes the repository from this task and deletes its task-owned branch and worktree when present. Registered repositories stay untouched.'
+  }
+
+  if (pendingConfirmation.value?.kind === 'replace-repo') {
+    return `This removes ${pendingConfirmation.value.repoName} from this task and deletes its task-owned branch and worktree when present. ${pendingConfirmation.value.nextRepoName} will be added instead. Registered repositories stay untouched.`
+  }
+
+  return 'This deletes the task and its task-owned branches and worktrees when present. Registered repositories stay untouched.'
+})
+const confirmationActionLabel = computed(() =>
+  pendingConfirmation.value?.kind === 'delete-task'
+    ? 'Delete'
+    : pendingConfirmation.value?.kind === 'replace-repo'
+      ? 'Replace'
+      : 'Remove',
+)
 
 function initialRows(): DialogRepoRow[] {
   if (props.task) {
@@ -93,6 +129,7 @@ function rowFromRepo(repo: RegisteredRepo): DialogRepoRow {
 function rowFromTaskRepo(taskRepo: TaskRepo): DialogRepoRow {
   return {
     id: `dialog-${taskRepo.id}`,
+    taskRepoId: taskRepo.id,
     registeredRepoId: taskRepo.registeredRepoId,
     baseBranch: taskRepo.baseBranch,
   }
@@ -149,7 +186,58 @@ function removeRepoRow(rowId: string) {
   rows.value = rows.value.filter((row) => row.id !== rowId)
 }
 
-function updateRowRepo(rowId: string, repoId: string) {
+function requestRemoveRepoRow(row: DialogRepoRow) {
+  if (rows.value.length <= 1) {
+    return
+  }
+
+  if (!props.task || !row.taskRepoId) {
+    removeRepoRow(row.id)
+    return
+  }
+
+  pendingConfirmation.value = {
+    kind: 'remove-repo',
+    rowId: row.id,
+    repoName: repoForRow(row)?.name ?? 'repository',
+  }
+}
+
+function requestDeleteTask() {
+  if (props.task) {
+    pendingConfirmation.value = { kind: 'delete-task' }
+  }
+}
+
+function cancelConfirmation() {
+  pendingConfirmation.value = null
+}
+
+function confirmDangerAction() {
+  const confirmation = pendingConfirmation.value
+
+  if (!confirmation) {
+    return
+  }
+
+  pendingConfirmation.value = null
+
+  if (confirmation.kind === 'remove-repo') {
+    removeRepoRow(confirmation.rowId)
+    return
+  }
+
+  if (confirmation.kind === 'replace-repo') {
+    applyRowRepoUpdate(confirmation.rowId, confirmation.repoId)
+    return
+  }
+
+  if (props.task) {
+    emit('delete', props.task)
+  }
+}
+
+function applyRowRepoUpdate(rowId: string, repoId: string) {
   const nextRepo = registry.value.find((repo) => repo.id === repoId)
 
   if (!nextRepo) {
@@ -165,6 +253,27 @@ function updateRowRepo(rowId: string, repoId: string) {
         }
       : row,
   )
+}
+
+function updateRowRepo(row: DialogRepoRow, repoId: string) {
+  const nextRepo = registry.value.find((repo) => repo.id === repoId)
+
+  if (!nextRepo || row.registeredRepoId === repoId) {
+    return
+  }
+
+  if (props.task && row.taskRepoId) {
+    pendingConfirmation.value = {
+      kind: 'replace-repo',
+      rowId: row.id,
+      repoId,
+      repoName: repoForRow(row)?.name ?? 'repository',
+      nextRepoName: nextRepo.name,
+    }
+    return
+  }
+
+  applyRowRepoUpdate(row.id, repoId)
 }
 
 function updateRowBase(rowId: string, baseBranch: string) {
@@ -193,6 +302,15 @@ function saveTask() {
   }
 }
 
+function handleEscape() {
+  if (pendingConfirmation.value) {
+    cancelConfirmation()
+    return
+  }
+
+  emit('close')
+}
+
 onMounted(() => {
   nameInput.value?.focus()
 })
@@ -203,7 +321,7 @@ onMounted(() => {
     :class="styles.scrim"
     role="presentation"
     @click.self="emit('close')"
-    @keydown.esc.stop.prevent="emit('close')"
+    @keydown.esc.stop.prevent="handleEscape"
   >
     <section
       :class="styles.dialog"
@@ -274,7 +392,7 @@ onMounted(() => {
                 <select
                   :class="[styles.fieldInput, styles.repoSelect]"
                   :value="row.registeredRepoId"
-                  @change="updateRowRepo(row.id, fieldValue($event))"
+                  @change="updateRowRepo(row, fieldValue($event))"
                 >
                   <option
                     v-for="repo in registry"
@@ -308,7 +426,7 @@ onMounted(() => {
                 class="uiButton uiButtonIcon uiButtonNaked"
                 :disabled="rows.length <= 1"
                 aria-label="Remove repository"
-                @click="removeRepoRow(row.id)"
+                @click="requestRemoveRepoRow(row)"
               >
                 <XIcon />
               </button>
@@ -328,7 +446,7 @@ onMounted(() => {
               <button
                 type="button"
                 class="uiButton uiButtonSmall uiButtonDanger"
-                @click="emit('delete', task)"
+                @click="requestDeleteTask"
               >
                 <TrashIcon />
                 Delete
@@ -353,5 +471,42 @@ onMounted(() => {
         </footer>
       </div>
     </section>
+
+    <div
+      v-if="pendingConfirmation"
+      :class="styles.confirmLayer"
+      role="presentation"
+      @click.self="cancelConfirmation"
+    >
+      <section
+        :class="styles.confirmDialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="task-confirm-title"
+      >
+        <header :class="styles.confirmHeader">
+          <span :class="styles.confirmIcon">
+            <TrashIcon />
+          </span>
+          <div>
+            <h2 id="task-confirm-title">{{ confirmationTitle }}</h2>
+            <p>{{ confirmationBody }}</p>
+          </div>
+        </header>
+        <footer :class="styles.confirmActions">
+          <button type="button" class="uiButton uiButtonSmall" @click="cancelConfirmation">
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="uiButton uiButtonSmall uiButtonDanger"
+            @click="confirmDangerAction"
+          >
+            <TrashIcon />
+            {{ confirmationActionLabel }}
+          </button>
+        </footer>
+      </section>
+    </div>
   </div>
 </template>

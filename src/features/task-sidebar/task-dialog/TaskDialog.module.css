@@ -271,6 +271,65 @@ select.fieldInput {
 	line-height: 1.45;
 }
 
+.confirmLayer {
+	position: fixed;
+	inset: 0;
+	z-index: 1;
+	display: grid;
+	place-items: center;
+	padding: var(--space-5xl);
+	background: var(--color-overlay-scrim);
+}
+
+.confirmDialog {
+	width: min(430px, calc(100vw - 64px));
+	color: var(--color-text-primary);
+	background: var(--color-surface-primary);
+	border: 1px solid var(--color-border-primary);
+	border-radius: var(--radius-lg);
+	box-shadow: var(--shadow-popover);
+}
+
+.confirmHeader {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--space-lg);
+	padding: var(--space-xl);
+}
+
+.confirmIcon {
+	display: grid;
+	width: 34px;
+	height: 34px;
+	flex: 0 0 auto;
+	place-items: center;
+	color: var(--color-status-danger);
+	background: var(--color-status-danger-subtle);
+	border-radius: var(--radius-md);
+}
+
+.confirmHeader h2 {
+	margin: 0;
+	color: var(--color-text-primary);
+	font-size: var(--font-size-heading);
+	font-weight: 700;
+	line-height: 1.25;
+}
+
+.confirmHeader p {
+	margin: var(--space-xs) 0 0;
+	color: var(--color-text-tertiary);
+	font-size: var(--font-size-body);
+	line-height: 1.45;
+}
+
+.confirmActions {
+	display: flex;
+	justify-content: flex-end;
+	gap: var(--space-sm);
+	padding: 0 var(--space-xl) var(--space-xl);
+}
+
 @media (max-width: 720px) {
 	.dialog {
 		width: calc(100vw - 32px);

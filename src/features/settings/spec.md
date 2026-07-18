@@ -62,16 +62,19 @@ border, no shadow** - reads by contrast alone; critical in light theme), `SText`
   local path with a native directory picker plus optional name, default branch, and worktree override.
   Repo rows show repo name plus inline quick-look metadata: org and default branch. The repository
   modal makes source path, org, default branch, and optional worktree override explicit. The override
-  placeholder previews `<global worktree base>/<repo name>` and Reset clears the override back to
-  that fallback. Selecting or changing the path calls Rust `inspect_repository`; non-git folders
+  placeholder shows a repo-relative example like `./worktrees (inside this repo folder)`, while
+  helper text surfaces the fallback `<global worktree base>/<repo name>`. Reset clears the override
+  back to that fallback.
+  Selecting or changing the path calls Rust `inspect_repository`; non-git folders
   show an error and cannot be registered. Valid git folders populate repo name, canonical path,
   default branch, and branch list. Submitting rejects duplicates by name or canonical path, then
   appends to `appState.repoRegistry`. Repository settings follow the Codex settings rhythm: setting
   copy on the left, right-aligned value/control sized to its content, optional worktree override,
   reset action, and danger-zone removal. Remove deletes only the Piñata registration and is disabled
   with an explanatory tooltip while any task references the repo. Global and per-repo repository
-  config edits apply from their field change. Worktree paths must be blank, absolute, or `~/` based;
-  they do not need to exist yet. Worktree labels expose a small help tooltip explaining that path
+  config edits apply from their field change. Global worktree paths must be absolute or `~/` based.
+  Per-repo overrides may also start with `./`, which resolves from that repository folder. Worktree
+  paths do not need to exist yet. Worktree labels expose a small help tooltip explaining that path
   changes only affect future task worktrees.
 
 ## Later pages
@@ -105,6 +108,8 @@ border, no shadow** - reads by contrast alone; critical in light theme), `SText`
       app state.
 - [ ] Non-git folders fail during inspection and keep Register disabled.
 - [ ] Per-repo worktree path is optional and falls back to `<global worktree base>/<repo name>`.
+- [ ] Per-repo worktree placeholder explains `./worktrees (inside this repo folder)`; fallback path
+      is helper text.
 - [ ] Registered repos can be removed only when no task references them.
 - [ ] Global and per-repo repository config edits persist from their field change.
 - [ ] Invalid worktree paths block Register/change and show an inline error.

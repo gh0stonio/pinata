@@ -11,7 +11,13 @@ Based on v0 spec 03 and `reference/src/term-sidebar.jsx`.
 - Creating a task persists task/repo records, selects the new task, expands it, and selects its
   first repo.
 - Task edit reuses the creation modal to update name, repositories, and base branches.
-- Task deletion is available from the edit modal danger zone.
+- Task deletion is available from the edit modal danger zone and requires confirmation. The
+  confirmation explains that task-owned branches and worktrees are deleted when present.
+- Removing or replacing an already-saved repo row from task edit requires confirmation. Fresh
+  unsaved rows remove immediately.
+- Renaming a task or changing base branch does not silently rewrite already-materialized repo
+  branch metadata. Repos with an existing worktree keep their base branch and topic branch; new or
+  unmaterialized repos use the current task slug and selected base branch.
 - Selection and expanded tasks persist through app state.
 - Each task row is one button. Clicking any hovered part toggles expand/collapse only. Repo
   selection changes only from repo rows.
@@ -28,6 +34,8 @@ Based on v0 spec 03 and `reference/src/term-sidebar.jsx`.
   tasks leave the active sidebar, appear in a Settings archive list, can be restored from there, and
   can be permanently deleted only from the archive view.
 - Real git worktree creation during task creation.
+- Real cleanup for confirmed task or task-repo deletion: remove task-owned worktrees and branches
+  when they exist.
 - Terminal spawn after task creation.
 - Drag reorder.
 - Diff counters, PR glyphs, checks donut.

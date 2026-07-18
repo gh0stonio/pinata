@@ -151,11 +151,24 @@ export function defaultRepoWorktreePath(defaults: RepositoryDefaults, repoName: 
   return `${basePath}/${repoName}`
 }
 
+function joinPath(basePath: string, childPath: string) {
+  const base = basePath.replace(/\/+$/, '')
+  const child = childPath.replace(/^\/+/, '')
+
+  return child ? `${base}/${child}` : base
+}
+
 export function effectiveRepoWorktreeBasePath(
   defaults: RepositoryDefaults,
-  repo: Pick<RegisteredRepo, 'name' | 'worktreeBasePath'>,
+  repo: Pick<RegisteredRepo, 'name' | 'source' | 'worktreeBasePath'>,
 ) {
-  return repo.worktreeBasePath?.trim() || defaultRepoWorktreePath(defaults, repo.name)
+  const override = repo.worktreeBasePath?.trim()
+
+  if (override?.startsWith('./')) {
+    return joinPath(repo.source.path, override.slice(2))
+  }
+
+  return override || defaultRepoWorktreePath(defaults, repo.name)
 }
 
 export function slugifyTaskName(name: string) {
@@ -208,8 +221,8 @@ export function updateTask(task: Task, input: NewTaskInput): Task {
       return {
         id: existingRepo?.id ?? `task-repo-${crypto.randomUUID()}`,
         registeredRepoId: repo.registeredRepoId,
-        baseBranch: repo.baseBranch,
-        branch,
+        baseBranch: existingRepo?.worktreePath ? existingRepo.baseBranch : repo.baseBranch,
+        branch: existingRepo?.worktreePath ? existingRepo.branch : branch,
         worktreePath: existingRepo?.worktreePath,
       }
     }),
