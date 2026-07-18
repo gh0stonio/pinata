@@ -63,6 +63,8 @@ const selectedRepoId = ref<string | null>(null)
 const defaultWorktreeBaseError = ref('')
 const repoWorktreeErrors = reactive<Record<string, string>>({})
 const repoWorktreeDrafts = reactive<Record<string, string>>({})
+const registerModalPointerStartedOutside = ref(false)
+const repoModalPointerStartedOutside = ref(false)
 const registerFormId = 'repo-register-form'
 const registerPathInputId = 'repo-register-path'
 const repoRelativeWorktreePlaceholder = './worktrees (inside this repo folder)'
@@ -199,6 +201,30 @@ function cancelRegistering() {
   registerWorktreeBasePath.value = ''
   registerError.value = ''
   registerInspection.value = null
+}
+
+function handleRegisterModalPointerDown(event: PointerEvent) {
+  registerModalPointerStartedOutside.value = event.target === event.currentTarget
+}
+
+function handleRegisterModalPointerUp(event: PointerEvent) {
+  if (registerModalPointerStartedOutside.value && event.target === event.currentTarget) {
+    cancelRegistering()
+  }
+
+  registerModalPointerStartedOutside.value = false
+}
+
+function handleRepoModalPointerDown(event: PointerEvent) {
+  repoModalPointerStartedOutside.value = event.target === event.currentTarget
+}
+
+function handleRepoModalPointerUp(event: PointerEvent) {
+  if (repoModalPointerStartedOutside.value && event.target === event.currentTarget) {
+    closeRepoConfig()
+  }
+
+  repoModalPointerStartedOutside.value = false
 }
 
 async function browseRepositoryPath() {
@@ -639,7 +665,8 @@ onBeforeUnmount(() => {
             v-if="registering"
             :class="styles.modalLayer"
             role="presentation"
-            @click.self="cancelRegistering"
+            @pointerdown="handleRegisterModalPointerDown"
+            @pointerup="handleRegisterModalPointerUp"
           >
             <section
               :class="styles.modal"
@@ -790,7 +817,8 @@ onBeforeUnmount(() => {
             v-if="selectedRepo"
             :class="styles.modalLayer"
             role="presentation"
-            @click.self="closeRepoConfig"
+            @pointerdown="handleRepoModalPointerDown"
+            @pointerup="handleRepoModalPointerUp"
           >
             <section
               :class="styles.modal"

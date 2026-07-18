@@ -46,6 +46,8 @@ const nameInput = ref<HTMLInputElement | null>(null)
 const taskName = ref(props.task?.name ?? '')
 const rows = ref<DialogRepoRow[]>(initialRows())
 const pendingConfirmation = ref<PendingConfirmation | null>(null)
+const scrimPointerStartedOutside = ref(false)
+const confirmPointerStartedOutside = ref(false)
 
 const registry = computed(() => props.appState.repoRegistry)
 const isEditing = computed(() => Boolean(props.task))
@@ -318,6 +320,30 @@ function handleEscape() {
   emit('close')
 }
 
+function handleScrimPointerDown(event: PointerEvent) {
+  scrimPointerStartedOutside.value = event.target === event.currentTarget
+}
+
+function handleScrimPointerUp(event: PointerEvent) {
+  if (scrimPointerStartedOutside.value && event.target === event.currentTarget) {
+    emit('close')
+  }
+
+  scrimPointerStartedOutside.value = false
+}
+
+function handleConfirmPointerDown(event: PointerEvent) {
+  confirmPointerStartedOutside.value = event.target === event.currentTarget
+}
+
+function handleConfirmPointerUp(event: PointerEvent) {
+  if (confirmPointerStartedOutside.value && event.target === event.currentTarget) {
+    cancelConfirmation()
+  }
+
+  confirmPointerStartedOutside.value = false
+}
+
 onMounted(() => {
   nameInput.value?.focus()
 })
@@ -327,7 +353,8 @@ onMounted(() => {
   <div
     :class="styles.scrim"
     role="presentation"
-    @click.self="emit('close')"
+    @pointerdown="handleScrimPointerDown"
+    @pointerup="handleScrimPointerUp"
     @keydown.esc.stop.prevent="handleEscape"
   >
     <section
@@ -479,7 +506,8 @@ onMounted(() => {
       v-if="pendingConfirmation"
       :class="styles.confirmLayer"
       role="presentation"
-      @click.self="cancelConfirmation"
+      @pointerdown="handleConfirmPointerDown"
+      @pointerup="handleConfirmPointerUp"
     >
       <section
         :class="styles.confirmDialog"
