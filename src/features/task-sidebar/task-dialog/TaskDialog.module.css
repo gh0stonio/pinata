@@ -116,19 +116,10 @@ select.fieldInput {
 	appearance: none;
 }
 
-.branchPreview {
-	display: flex;
-	align-items: center;
-	gap: var(--space-sm);
+.fieldInput:disabled {
+	cursor: default;
 	color: var(--color-text-placeholder);
-	font-family: var(--font-mono);
-	font-size: var(--font-size-meta);
-	font-weight: 600;
-}
-
-.branchPreview strong {
-	color: var(--color-status-special);
-	font-weight: 800;
+	opacity: 1;
 }
 
 .repoSection {

@@ -72,22 +72,26 @@ type TaskRepo = {
 - If a per-repo override starts with `./`, resolve it by joining the remainder onto the repo's
   canonical `source.path`. Example: `./worktrees` for `/repos/api` resolves to
   `/repos/api/worktrees`.
+- A task repo worktree path is `<effective repo worktree base>/<6-char task-id hash>-<task slug>`.
+  The leaf is derived from the immutable branch generated when that repo row is added, so later
+  task renames do not silently move planned worktrees.
 - Settings and Onboarding register repos by inspecting a local git checkout, then storing canonical
   path, branches, default branch, optional org, and optional worktree override in `repoRegistry`.
 - Registration de-dupes by repo name or canonical source path.
 - Settings removal deletes only the `repoRegistry` entry and is blocked while any `TaskRepo`
   references that `RegisteredRepo.id`.
 - New Task creates task records from registered repos only. It stores the chosen base branch and
-  planned topic branch (`feat/<slug>`), then selects and expands the new task.
-- Task editing can update task name, repo membership, and base branches. Existing `TaskRepo.id`
-  and `worktreePath` are preserved when the registered repo stays in the task.
-- Task editing must not silently rewrite materialized repo branch metadata. If `worktreePath`
-  exists, preserve the existing `TaskRepo.baseBranch` and `TaskRepo.branch`; new or unmaterialized
-  repos use the current task slug and selected base branch.
+  planned topic branch (`feat/<6-char task-id hash>-<slug>`), then selects and expands the new task.
+- Task editing can update task name, repo membership, and base branches. Existing `TaskRepo.id`,
+  `branch`, and `worktreePath` are preserved when the registered repo stays in the task.
+- Branch identity is immutable after a task repo row is created. Renaming a task must not rename
+  existing planned or materialized branches; newly added repos use the existing task id hash plus
+  the current task slug. If `worktreePath` exists, preserve the existing `TaskRepo.baseBranch` too
+  and treat the base branch as locked in task edit UI.
 - Task deletion removes the task, its selection entry, and its expanded state. If the deleted task
   was selected, selection moves to the first remaining task.
 - New Task does not create git worktrees or terminal tabs yet. `TaskRepo.worktreePath` stays empty
-  until the worktree feature owns actual checkout creation.
+  until the worktree feature owns actual checkout creation; UI can still show the planned path.
 - `selection.taskRepoIdByTaskId` points at `TaskRepo.id`, not `RegisteredRepo.id`.
 - Do not persist derived git state here: diffs, PRs, auth health, ports, terminals, tabs, panes.
   Add those when their feature ships.

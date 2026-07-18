@@ -8,7 +8,6 @@ import RepositoryIcon from '../../../icons/RepositoryIcon.vue'
 import TrashIcon from '../../../icons/TrashIcon.vue'
 import XIcon from '../../../icons/XIcon.vue'
 import {
-  taskBranchForName,
   slugifyTaskName,
   type AppState,
   type NewTaskInput,
@@ -23,6 +22,7 @@ type DialogRepoRow = {
   taskRepoId?: string
   registeredRepoId: string
   baseBranch: string
+  baseBranchLocked: boolean
 }
 
 type PendingConfirmation =
@@ -50,7 +50,6 @@ const pendingConfirmation = ref<PendingConfirmation | null>(null)
 const registry = computed(() => props.appState.repoRegistry)
 const isEditing = computed(() => Boolean(props.task))
 const taskSlug = computed(() => slugifyTaskName(taskName.value))
-const branchPreview = computed(() => taskBranchForName(taskName.value))
 const selectedRepoIds = computed(() => new Set(rows.value.map((row) => row.registeredRepoId)))
 const canAddRepo = computed(() => rows.value.length < registry.value.length)
 const hasChanges = computed(() => {
@@ -123,6 +122,7 @@ function rowFromRepo(repo: RegisteredRepo): DialogRepoRow {
     id: `dialog-repo-${crypto.randomUUID()}`,
     registeredRepoId: repo.id,
     baseBranch: repo.defaultBranch,
+    baseBranchLocked: false,
   }
 }
 
@@ -132,6 +132,7 @@ function rowFromTaskRepo(taskRepo: TaskRepo): DialogRepoRow {
     taskRepoId: taskRepo.id,
     registeredRepoId: taskRepo.registeredRepoId,
     baseBranch: taskRepo.baseBranch,
+    baseBranchLocked: Boolean(taskRepo.worktreePath),
   }
 }
 
@@ -248,8 +249,10 @@ function applyRowRepoUpdate(rowId: string, repoId: string) {
     row.id === rowId
       ? {
           ...row,
+          taskRepoId: undefined,
           registeredRepoId: nextRepo.id,
           baseBranch: nextRepo.defaultBranch,
+          baseBranchLocked: false,
         }
       : row,
   )
@@ -277,6 +280,10 @@ function updateRowRepo(row: DialogRepoRow, repoId: string) {
 }
 
 function updateRowBase(rowId: string, baseBranch: string) {
+  if (rows.value.find((row) => row.id === rowId)?.baseBranchLocked) {
+    return
+  }
+
   rows.value = rows.value.map((row) => (row.id === rowId ? { ...row, baseBranch } : row))
 }
 
@@ -361,12 +368,6 @@ onMounted(() => {
           />
         </label>
 
-        <div :class="styles.branchPreview" aria-live="polite">
-          <GitBranchIcon />
-          <span>branch</span>
-          <strong>{{ branchPreview }}</strong>
-        </div>
-
         <section :class="styles.repoSection" aria-labelledby="task-repos-title">
           <div :class="styles.sectionHeader">
             <p id="task-repos-title">Repositories</p>
@@ -412,6 +413,8 @@ onMounted(() => {
                 <select
                   :class="[styles.fieldInput, styles.branchSelect]"
                   :value="row.baseBranch"
+                  :disabled="row.baseBranchLocked"
+                  :aria-label="row.baseBranchLocked ? 'Base branch locked after worktree creation' : 'Base branch'"
                   @change="updateRowBase(row.id, fieldValue($event))"
                 >
                   <option v-for="branch in branchesForRow(row)" :key="branch" :value="branch">

@@ -171,6 +171,23 @@ export function effectiveRepoWorktreeBasePath(
   return override || defaultRepoWorktreePath(defaults, repo.name)
 }
 
+export function plannedTaskRepoWorktreePath(
+  defaults: RepositoryDefaults,
+  task: Pick<Task, 'id' | 'name'>,
+  taskRepo: Pick<TaskRepo, 'branch' | 'worktreePath'>,
+  repo: Pick<RegisteredRepo, 'name' | 'source' | 'worktreeBasePath'>,
+) {
+  if (taskRepo.worktreePath) {
+    return taskRepo.worktreePath
+  }
+
+  const taskLeaf =
+    slugifyTaskName(taskRepo.branch.replace(/^feat\//, '')) ||
+    `${shortTaskIdHash(task.id)}-${taskNameSlug(task.name)}`
+
+  return joinPath(effectiveRepoWorktreeBasePath(defaults, repo), taskLeaf)
+}
+
 export function slugifyTaskName(name: string) {
   return name
     .trim()
@@ -181,19 +198,32 @@ export function slugifyTaskName(name: string) {
     .replace(/^-+|-+$/g, '')
 }
 
-export function taskBranchForName(name: string) {
-  const slug = slugifyTaskName(name)
+function taskNameSlug(name: string) {
+  return slugifyTaskName(name) || 'task'
+}
 
-  return slug ? `feat/${slug}` : 'feat/...'
+function shortTaskIdHash(taskId: string) {
+  let hash = 2166136261
+
+  for (let index = 0; index < taskId.length; index += 1) {
+    hash ^= taskId.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+
+  return (hash >>> 0).toString(16).padStart(8, '0').slice(0, 6)
+}
+
+function taskBranchForTask(taskId: string, taskName: string) {
+  return `feat/${shortTaskIdHash(taskId)}-${taskNameSlug(taskName)}`
 }
 
 export function createTask(input: NewTaskInput): Task {
   const name = input.name.trim()
-  const slug = slugifyTaskName(name) || 'task'
-  const branch = `feat/${slug}`
+  const id = `task-${taskNameSlug(name)}-${crypto.randomUUID()}`
+  const branch = taskBranchForTask(id, name)
 
   return {
-    id: `task-${slug}-${crypto.randomUUID()}`,
+    id,
     name,
     color: '#8f989d',
     repos: input.repos.map((repo) => ({
@@ -207,8 +237,7 @@ export function createTask(input: NewTaskInput): Task {
 
 export function updateTask(task: Task, input: NewTaskInput): Task {
   const name = input.name.trim()
-  const slug = slugifyTaskName(name) || 'task'
-  const branch = `feat/${slug}`
+  const branch = taskBranchForTask(task.id, name)
 
   return {
     ...task,
@@ -222,7 +251,7 @@ export function updateTask(task: Task, input: NewTaskInput): Task {
         id: existingRepo?.id ?? `task-repo-${crypto.randomUUID()}`,
         registeredRepoId: repo.registeredRepoId,
         baseBranch: existingRepo?.worktreePath ? existingRepo.baseBranch : repo.baseBranch,
-        branch: existingRepo?.worktreePath ? existingRepo.branch : branch,
+        branch: existingRepo?.branch ?? branch,
         worktreePath: existingRepo?.worktreePath,
       }
     }),

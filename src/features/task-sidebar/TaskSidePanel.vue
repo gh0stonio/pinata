@@ -5,8 +5,8 @@ import ChevronDownIcon from '../../icons/ChevronDownIcon.vue'
 import PencilIcon from '../../icons/PencilIcon.vue'
 import PlusIcon from '../../icons/PlusIcon.vue'
 import {
-  effectiveRepoWorktreeBasePath,
   findRegisteredRepo,
+  plannedTaskRepoWorktreePath,
   type AppState,
   type Task,
   type TaskRepo,
@@ -25,6 +25,7 @@ const emit = defineEmits<{
   'toggle-task': [task: Task]
 }>()
 
+const hoveredTask = ref<Task | null>(null)
 const hoveredTaskRepo = ref<TaskRepo | null>(null)
 const hoverTop = ref(0)
 const hoverLeft = ref(0)
@@ -34,15 +35,17 @@ const hoverStyle = computed(() => ({
   left: `${hoverLeft.value}px`,
 }))
 
-function showRepoHover(taskRepo: TaskRepo, event: MouseEvent) {
+function showRepoHover(task: Task, taskRepo: TaskRepo, event: MouseEvent) {
   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
 
+  hoveredTask.value = task
   hoveredTaskRepo.value = taskRepo
   hoverTop.value = Math.max(8, Math.min(rect.top, window.innerHeight - 210))
   hoverLeft.value = Math.max(8, Math.min(rect.right + 4, window.innerWidth - 280))
 }
 
 function hideRepoHover() {
+  hoveredTask.value = null
   hoveredTaskRepo.value = null
 }
 
@@ -66,16 +69,18 @@ function taskRepoName(taskRepo: TaskRepo) {
   return registeredRepoFor(taskRepo)?.name ?? 'Unknown repo'
 }
 
-function taskRepoPath(taskRepo: TaskRepo) {
+function taskRepoPath(task: Task, taskRepo: TaskRepo) {
   const registeredRepo = registeredRepoFor(taskRepo)
 
   if (!registeredRepo) {
     return taskRepo.worktreePath ?? 'Not set'
   }
 
-  return (
-    taskRepo.worktreePath ??
-    effectiveRepoWorktreeBasePath(props.appState.repositoryDefaults, registeredRepo)
+  return plannedTaskRepoWorktreePath(
+    props.appState.repositoryDefaults,
+    task,
+    taskRepo,
+    registeredRepo,
   )
 }
 </script>
@@ -151,7 +156,7 @@ function taskRepoPath(taskRepo: TaskRepo) {
                   styles.repoButton,
                   isTaskRepoSelected(task, taskRepoItem) && styles.repoButtonActive,
                 ]"
-                @mouseenter="showRepoHover(taskRepoItem, $event)"
+                @mouseenter="showRepoHover(task, taskRepoItem, $event)"
                 @mouseleave="hideRepoHover"
                 @click="emit('select-task-repo', task, taskRepoItem)"
               >
@@ -165,7 +170,12 @@ function taskRepoPath(taskRepo: TaskRepo) {
       </ul>
     </div>
 
-    <div v-if="hoveredTaskRepo" :class="styles.hoverCard" :style="hoverStyle" role="tooltip">
+    <div
+      v-if="hoveredTask && hoveredTaskRepo"
+      :class="styles.hoverCard"
+      :style="hoverStyle"
+      role="tooltip"
+    >
       <dl :class="styles.metaList">
         <div>
           <dt>Branch</dt>
@@ -177,7 +187,7 @@ function taskRepoPath(taskRepo: TaskRepo) {
         </div>
         <div>
           <dt>Worktree</dt>
-          <dd>{{ taskRepoPath(hoveredTaskRepo) }}</dd>
+          <dd>{{ taskRepoPath(hoveredTask, hoveredTaskRepo) }}</dd>
         </div>
       </dl>
     </div>
