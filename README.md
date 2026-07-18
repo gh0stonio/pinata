@@ -13,6 +13,7 @@
   <a href="#vision">Vision</a> |
   <a href="#current-state">Current state</a> |
   <a href="#product-direction">Product direction</a> |
+  <a href="#architecture">Architecture</a> |
   <a href="#development">Development</a>
 </p>
 
@@ -109,6 +110,11 @@ Later layers add files, diffs, review, checks, and PR context around that same t
 ├── package.json
 └── vite.config.ts
 ```
+
+## Architecture
+
+For the codebase map, app lifecycle, state ownership, and branch/worktree flow, see
+[docs/architecture.md](docs/architecture.md).
 
 ## Development
 
