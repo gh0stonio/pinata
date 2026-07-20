@@ -9,14 +9,14 @@
     (specs 10-13).
   - **The overlay stack** - Settings (14), Onboarding (01), New Task dialog (03), Command palette
     (09), and the fixed menus below.
-  - **Global selection state** (`selection.taskId`, `selection.taskRepoIdByTaskId`,
+  - **Global selection state** (`selection.taskId`, `selection.surfaceByTaskId`,
     `selection.expandedTaskIds`) and the **global keyboard handler** (`APP.md` §8). Specs 03-13
     read this state and receive callbacks from `App`.
 - **Routes into other features:** the **PR-list menu** selects a repo + sets the right panel to the
   **PR** view and reveals it (spec 13/10); the task/repo **switchers** change selection consumed by
   every center/right surface; **⌘P** opens the palette (spec 09); **⌘,** opens Settings (spec 14).
-- **Shared contract:** `App` passes each child its slice of state + callbacks (`selectTaskRepo`,
-  `toggleTask`, future `selectTab`, `newTabInRepo`, `openFile`, `runCommand`, pane `ctx`,
+- **Shared contract:** `App` passes each child its slice of state + callbacks (`selectTask`,
+  `selectTaskRepo`, `toggleTask`, future `selectTab`, `newTabInRepo`, `openFile`, `runCommand`, pane `ctx`,
   `setRightView`, …). Keep these names stable across specs.
 
 ## Purpose
@@ -31,8 +31,8 @@ it.
 Today the shell owns `AppShell`, `TitleBar`, `SidePanel`, `MainSurface`, first-run Onboarding, and
 the task side panel host. It renders the three-column frame, left/right panel toggles, app branding
 in the left task side panel, persisted task/repo selection, the native settings menu bridge, and the
-selected task repo terminal. The shell waits for persisted app state to bootstrap before mounting
-app chrome, so startup never renders an empty default state for a frame. First-run Onboarding is
+selected task terminal or selected repo terminal. The shell waits for persisted app state to
+bootstrap before mounting app chrome, so startup never renders an empty default state for a frame. First-run Onboarding is
 exclusive and mounts instead of the title bar/body until setup finishes. The title bar center stays
 empty until breadcrumb switchers ship. The left and right panels collapse independently and drag
 resize inside persisted width clamps. Pane trees and right-panel feature content are future work
@@ -67,11 +67,11 @@ drag-resizable; the center flexes to fill.
 - **Sidebar toggle** (`chip-btn`, `on` when sidebar visible) - collapse/expand left sidebar,
   tooltip shows ⌘B.
 - **Center breadcrumb** (flex, centered, truncating):
-  - **Task switcher** - task color chip + task name (mono, bold) + chevron. Click opens the
+  - **Task switcher** - task color chip + task name (UI font, bold) + chevron. Click opens the
     **task menu** (fixed dropdown) listing all tasks with their color/status chip; choosing one
     selects it. Max-width ~260px, truncates.
   - Separator `/`.
-  - **Repo switcher** - active repo name (mono) + chevron. Click opens the **repo menu** listing
+  - **Repo switcher** - active repo name (UI font) + chevron. Click opens the **repo menu** listing
     the current task's repos; choosing one selects it.
 - **Right cluster** (fixed ~260px, right-aligned):
   - **⌘P** button (`chip-btn`, search icon) - opens the command palette (spec 06).
@@ -88,11 +88,11 @@ others).
 
 ## Center column
 
-- **Current scope:** `MainSurface` renders the selected `TaskRepo` terminal once that repo has a
-  persisted `worktreePath`. The terminal feature owns xterm rendering, Rust PTY transport, and the
-  bundled tmux session. See `src/features/terminal/spec.md`.
-- **Empty state:** with no selected task repo, or with a repo that has not finished worktree setup,
-  the center shows a simple empty state.
+- **Current scope:** `MainSurface` renders the selected task terminal, or the selected `TaskRepo`
+  terminal once that repo has a persisted `worktreePath`. The terminal feature owns xterm
+  rendering, Rust PTY transport, and the bundled tmux session. See `src/features/terminal/spec.md`.
+- **Empty state:** with no selected task, or with a selected repo that has not finished worktree
+  setup, the center shows a simple empty state.
 
 Future center work from v0:
 
@@ -106,10 +106,12 @@ Future center work from v0:
 
 ## Selection state (in `App`)
 
-- `selection.taskId` - current task id. `selection.taskRepoIdByTaskId[taskId]` - current task repo
-  per task. `selection.expandedTaskIds` - which tasks are expanded in the left side panel.
-- Clicking a task row toggles expand/collapse only. Clicking a repo row selects that repo and its
-  task. Future tab selection should be remembered per repo once terminal tabs land.
+- `selection.taskId` - current task id. `selection.surfaceByTaskId[taskId]` - selected task
+  surface, either task terminal or repo terminal. `selection.expandedTaskIds` - which tasks are
+  expanded in the left side panel.
+- Clicking a task row selects the task terminal. Clicking the chevron toggles expand/collapse.
+  Clicking a repo row selects that repo and its task. Future tab selection should be remembered per
+  surface once terminal tabs land.
 
 ## Overlays (z-order, all mounted by `App`)
 
@@ -135,7 +137,7 @@ Implement the full global map from `APP.md` §8 in one central keydown handler. 
 ## States & edge cases
 
 - **No task selected / empty project:** center shows an empty state; breadcrumb hides repo half.
-- **Task with no repos:** repo switcher empty; center shows EmptyRepo.
+- **Task with no repos:** repo switcher empty; center shows the task terminal in `~`.
 - **Repo with no tabs:** center shows EmptyRepo with a "New terminal" CTA.
 - **Both panels collapsed:** center fills the window; toggles still available in the title bar.
 - **Remote-down gate:** there is a latent `RepoRemoteGate` path (shown instead of the center when a

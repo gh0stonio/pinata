@@ -138,11 +138,13 @@ repainting ANSI colors.
 with `getComputedStyle` and reapply on theme change. **Never remap ANSI hues from the app accent.**
 
 ## Type & motion
-- **Space Grotesk** (UI/head), **JetBrains Mono** (terminal/code/labels). Chrome typography uses
+- **Space Grotesk** (UI/head/product text), **JetBrains Mono** (terminal/code-like values:
+  branches, paths, filenames, diffs). Chrome typography uses
   shared tokens: display clamp `24px` to `34px`, title `17.5px`, heading `14px`, body `13px`,
   meta `12px`, label `11px`.
 - `data-app-font-size` on the app root adjusts the shared app font tokens and the settings-specific
-  text tokens. Terminal font size is separate and feeds xterm directly.
+  text tokens. Small app font sets row/body text to `12px`. Terminal font size is separate and
+  feeds xterm directly.
 - Future density and motion controls should stay token-driven. Honor `prefers-reduced-motion`;
   functional pulses only, no decorative loops.
 

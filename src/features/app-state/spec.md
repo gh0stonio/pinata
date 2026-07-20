@@ -41,7 +41,7 @@ type AppState = {
   tasks: Task[]
   selection: {
     taskId: string | null
-    taskRepoIdByTaskId: Record<string, string | null>
+    surfaceByTaskId: Record<string, TaskSurfaceSelection>
     expandedTaskIds: string[]
   }
 }
@@ -62,7 +62,13 @@ type Task = {
   id: string
   name: string
   color: string
+  terminal: TaskTerminal
   repos: TaskRepo[]
+}
+
+type TaskTerminal = {
+  id: string
+  cwd: '~'
 }
 
 type TaskRepo = {
@@ -72,6 +78,10 @@ type TaskRepo = {
   branch: string
   worktreePath?: string
 }
+
+type TaskSurfaceSelection =
+  | { kind: 'task-terminal' }
+  | { kind: 'repo'; taskRepoId: string }
 ```
 
 ## Rules
@@ -83,6 +93,9 @@ type TaskRepo = {
 - `layout.sidePanels` persists the left and right panel widths. Open or closed panel visibility is
   runtime shell state for now.
 - `repoRegistry` is global repo config. `TaskRepo` is the repo instance inside a task.
+- Every `Task` owns a default `TaskTerminal`. It starts in `~` and is the task's scratch or
+  orchestration surface when no repo is selected.
+- Tasks may have zero repos. Repo-less tasks are valid and open their task terminal immediately.
 - `repositoryDefaults.worktreeBasePath` is the shared worktree base. Per-repo
   `worktreeBasePath` is an optional override only.
 - The effective repo worktree base is `repo.worktreeBasePath ?? <repository default>/<repo name>`.
@@ -97,21 +110,27 @@ type TaskRepo = {
 - Registration de-dupes by repo name or canonical source path.
 - Settings removal deletes only the `repoRegistry` entry and is blocked while any `TaskRepo`
   references that `RegisteredRepo.id`.
-- New Task creates task records from registered repos only. It stores the chosen base branch and
-  topic branch (`feat/<6-char task-id hash>-<slug>`), creates the branch and worktree synchronously,
-  persists `TaskRepo.worktreePath`, then selects and expands the new task. Git creation resolves the
-  base branch locally first, then falls back to `origin/<base branch>` when only the remote ref exists.
+- New Task always creates a task terminal. If repos are attached, it also stores the chosen base
+  branch and topic branch (`feat/<6-char task-id hash>-<slug>`), creates repo branches and
+  worktrees in one blocking transaction, persists `TaskRepo.worktreePath`, then selects the task
+  terminal. Repositories run in parallel, while branch and worktree setup inside one repository stay
+  sequential. Git creation resolves the base branch locally first, then falls back to
+  `origin/<base branch>` when only the remote ref exists.
 - Task editing can update task name, repo membership, and base branches. Existing `TaskRepo.id`,
   `branch`, and `worktreePath` are preserved when the registered repo stays in the task.
 - Branch identity is immutable after a task repo row is created. Renaming a task must not rename
   existing planned or materialized branches; newly added repos use the existing task id hash plus
   the current task slug. If `worktreePath` exists, preserve the existing `TaskRepo.baseBranch` too
   and treat the base branch as locked in task edit UI.
-- Task deletion removes task-owned worktrees and branches before removing the task, its selection
-  entry, and its expanded state. If the deleted task was selected, selection moves to the first
-  remaining task.
-- Terminal sessions are runtime state. `TaskRepo.id` derives the bundled tmux session name and
-  `TaskRepo.worktreePath` gives the shell start directory if the session must be recreated.
-- `selection.taskRepoIdByTaskId` points at `TaskRepo.id`, not `RegisteredRepo.id`.
+- Task deletion kills the task terminal, removes task-owned worktrees and branches, then removes the
+  task, its surface selection entry, and its expanded state. If the deleted task was selected,
+  selection moves to the first remaining task terminal.
+- Terminal sessions are runtime state. `Task.terminal.id` and `TaskRepo.id` derive bundled tmux
+  session names. `Task.terminal.cwd` and `TaskRepo.worktreePath` give the shell start directory if
+  the session must be recreated.
+- `selection.surfaceByTaskId` points at either the task terminal or a `TaskRepo.id`, not a
+  `RegisteredRepo.id`.
+- Rust and Vue normalize legacy state where `selection.taskRepoIdByTaskId` existed. `null` legacy
+  repo selections become task-terminal selections.
 - Do not persist derived git state here: diffs, PRs, auth health, ports, or live terminal process
   details. Add durable terminal layout only when tabs and panes ship.

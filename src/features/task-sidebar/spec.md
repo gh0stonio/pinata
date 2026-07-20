@@ -7,9 +7,10 @@ Based on v0 spec 03 and `reference/src/term-sidebar.jsx`.
 ## Current scope
 
 - Brand header, task rows, repo rows, and repo hover metadata.
-- New Task button and creation modal for registered repos.
-- Creating a task persists task/repo records, selects the new task, expands it, and selects its
-  first repo after git branch, worktree, and terminal session creation succeeds.
+- New Task button and creation modal for task-only or repo-attached tasks.
+- Creating a task persists the task record with its default terminal, selects that task terminal,
+  and opens the task in the main surface. If repos are attached, Piñata expands the task after git
+  branch and worktree creation succeeds.
 - Task creation and task edit switch the dialog body to a plain synchronous checklist while setting
   up or cleaning up task-owned repository worktrees. The checklist shows one row per repo, with no
   branch or worktree path detail. The repo name is the row label; the status column carries the live
@@ -26,6 +27,7 @@ Based on v0 spec 03 and `reference/src/term-sidebar.jsx`.
   worktree changes stay sequential in the Rust command.
 - After each task repo worktree is created, Piñata ensures the matching bundled tmux terminal
   session exists. Terminal setup is part of the same blocking task transaction.
+- A repo-less task skips git setup and opens its task terminal in the user's home directory.
 - Task creation/edit does not show a generated branch preview. Repo hover metadata owns branch
   display after the row exists.
 - Repo hover worktree metadata shows the planned final path:
@@ -40,13 +42,19 @@ Based on v0 spec 03 and `reference/src/term-sidebar.jsx`.
   id hash plus current task slug. Repos with an existing worktree keep their base branch too, and
   the base branch control is disabled in task edit.
 - Selection and expanded tasks persist through app state.
-- Each task row is one button. Clicking any hovered part toggles expand/collapse only. Repo
-  selection changes only from repo rows.
-- Task label uses the shared meta scale: mono `--font-size-meta`, 0.08em tracking, weight 700.
+- Clicking a task row selects the task terminal. Clicking the chevron expands or collapses attached
+  repos. Clicking a repo row selects that repo terminal.
+- Repo-less task rows do not reserve caret space. They read as a plain selectable task terminal row.
+- Task label uses the shared meta scale: `--font-ui`, `--font-size-meta`, 0.08em tracking,
+  weight 700.
 - Task rows follow v0 spacing with the chevron aligned to the Tasks icon. Repo names align with task names.
-- Task titles use mono `--font-size-heading`, `--color-text-secondary`, weight 600.
-- Repo rows use mono `--font-size-body`, inactive `--color-text-secondary` at 500, active
+- Task titles use `--font-ui`, `--font-size-body`, `--color-text-secondary`, weight 600.
+- Repo rows use `--font-ui`, `--font-size-body`, inactive `--color-text-secondary` at 500, active
   `--color-text-primary` at 700 with `--color-accent-subtle` fill.
+- Task names own the full remaining row width. Edit controls overlay the right edge on row hover or
+  focus with a row-background fade, and do not reserve a layout column.
+- Repo hover metadata values use `--font-mono` because branch and worktree paths are git/shell
+  values.
 - Task groups have a 6px gap.
 - During task git work, repo selection highlight is suppressed and the task row shows a spinner.
 

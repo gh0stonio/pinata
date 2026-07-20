@@ -103,7 +103,7 @@ border, no shadow** - reads by contrast alone; critical in light theme), `SText`
 - [ ] Rail + scoped page; Back to app closes; ⌘, toggles.
 - [ ] Values persist to `pinata.settings.v1`; theme, accent, accent intensity, and app font size
       update the root app theme immediately.
-- [ ] Terminal font size updates the active terminal without recreating the task repo session.
+- [ ] Terminal font size updates the active terminal without recreating the tmux session.
 - [ ] Git & PR registers a local git checkout into `appState.repoRegistry` and persists it through
       app state.
 - [ ] Non-git folders fail during inspection and keep Register disabled.

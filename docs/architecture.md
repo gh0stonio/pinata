@@ -39,11 +39,12 @@ Piñata is a terminal-first macOS workbench. The core product model is:
 
 ```text
 Task
-+-- Task repo
++-- Task terminal
++-- Attached repo
     +-- Registered repository config
     +-- Task-owned git branch
     +-- Task-owned worktree
-    +-- Task-owned terminal session
+    +-- Repo terminal
 ```
 
 The app does not own agent output. The terminal surface is a real shell where users start `pi`,
@@ -79,7 +80,7 @@ The app does not own agent output. The terminal surface is a real shell where us
 |   +-- icons/                  # centralized SVG icon components
 |   +-- shell/
 |   |   +-- app-shell/          # root orchestrator
-|   |   +-- main-surface/       # center selected task repo terminal host
+|   |   +-- main-surface/       # center selected task or repo terminal host
 |   |   +-- side-panel/         # generic right side panel scaffold
 |   |   +-- title-bar/          # custom macOS title bar
 |   +-- styles/                 # design tokens, themes, globals
@@ -243,7 +244,7 @@ type AppState = {
   tasks: Task[]
   selection: {
     taskId: string | null
-    taskRepoIdByTaskId: Record<string, string | null>
+    surfaceByTaskId: Record<string, TaskSurfaceSelection>
     expandedTaskIds: string[]
   }
 }
@@ -264,7 +265,13 @@ type Task = {
   id: string
   name: string
   color: string
+  terminal: TaskTerminal
   repos: TaskRepo[]
+}
+
+type TaskTerminal = {
+  id: string
+  cwd: '~'
 }
 
 type TaskRepo = {
@@ -274,6 +281,10 @@ type TaskRepo = {
   branch: string
   worktreePath?: string
 }
+
+type TaskSurfaceSelection =
+  | { kind: 'task-terminal' }
+  | { kind: 'repo'; taskRepoId: string }
 ```
 
 State rules:
@@ -284,12 +295,15 @@ State rules:
   state for now.
 - `repoRegistry` is global repository config.
 - `TaskRepo` is a repository instance inside one task.
-- Selection points to `TaskRepo.id`, not `RegisteredRepo.id`.
+- Every task owns a default task terminal that starts in `~`.
+- Tasks may have zero attached repos.
+- Selection points to either the task terminal or `TaskRepo.id`, never `RegisteredRepo.id`.
 - Registered repository removal is blocked while any task references it.
 - Task branch identity is immutable after the row is created.
 - Task rename does not rename existing branches or move existing worktrees.
-- Terminal live process state is not in app state. `TaskRepo.id` derives the tmux session name, and
-  `TaskRepo.worktreePath` lets Piñata recreate the session if the tmux server is gone.
+- Terminal live process state is not in app state. `Task.terminal.id` and `TaskRepo.id` derive tmux
+  session names. Their `cwd` or `worktreePath` values let Piñata recreate sessions if the tmux
+  server is gone.
 
 Write behavior:
 
@@ -316,13 +330,20 @@ type AppSettings = {
   theme: 'pinata-dark' | 'pinata-light'
   accent: 'coral' | 'teal' | 'gold' | 'magenta' | 'lime' | 'azure' | 'mono'
   accentIntensity: 'transparent' | 'balanced' | 'vibrant'
+  appFontSize: 'small' | 'regular' | 'large'
+  terminalFontSize: 'small' | 'regular' | 'large' | 'xl'
 }
 ```
 
 `AppShell` applies these values as data attributes on the root shell:
 
 ```html
-<div data-theme="pinata-dark" data-accent="coral" data-accent-intensity="balanced">
+<div
+  data-theme="pinata-dark"
+  data-accent="coral"
+  data-accent-intensity="balanced"
+  data-app-font-size="regular"
+>
 ```
 
 Theme CSS reads those attributes and exposes semantic tokens like `--color-accent-primary`,
@@ -353,11 +374,12 @@ Registered commands:
 | `inspect_repository` | `repository.rs` | Validate git checkout, infer repo metadata |
 | `create_task_repo_worktree` | `repository.rs` | Create task-owned branch and worktree |
 | `delete_task_repo_worktree` | `repository.rs` | Remove task-owned worktree and branch |
-| `terminal_ensure_session` | `terminal.rs` | Ensure a bundled tmux session exists for a task repo |
-| `terminal_attach` | `terminal.rs` | Attach xterm to the task repo tmux session through a PTY |
-| `terminal_resize` | `terminal.rs` | Resize the PTY to match xterm |
+| `terminal_ensure_session` | `terminal.rs` | Ensure a bundled tmux session exists for a selected task surface |
+| `terminal_attach` | `terminal.rs` | Attach xterm to the selected tmux session through a PTY |
+| `terminal_resize` | `terminal.rs` | Resize the selected terminal PTY to match xterm |
+| `terminal_scroll` | `terminal.rs` | Bridge wheel scrolling to tmux pane history |
 | `terminal_detach` | `terminal.rs` | Drop the PTY attachment while keeping tmux alive |
-| `terminal_kill_session` | `terminal.rs` | Kill the task repo tmux session before worktree cleanup |
+| `terminal_kill_session` | `terminal.rs` | Kill a selected task or repo terminal session during cleanup |
 
 ## Native Menu And Window Behavior
 
@@ -527,11 +549,12 @@ flowchart TB
 Interaction rules:
 
 - New Task opens `TaskDialog` in create mode.
-- Clicking a task row toggles expand or collapse, it does not select the first repo.
+- Clicking a task row selects the task terminal.
+- Clicking a task chevron toggles expand or collapse.
 - Clicking a repo row selects that `TaskRepo`.
 - Dragging a side panel edge resizes that panel inside its clamp and persists the new width on
   pointer release.
-- Expanded task ids and selected task repo ids persist in app state.
+- Expanded task ids and selected task surfaces persist in app state.
 - Repo hover metadata shows branch, base branch, and planned or persisted worktree path.
 - During blocking task git work, the working task shows progress and repo selection highlight is
   suppressed.
@@ -548,8 +571,11 @@ sequenceDiagram
 
     dialog->>shell: create(NewTaskInput)
     shell->>state: createTask(input)
+    shell->>state: create task terminal target
     shell->>shell: build git plans for repos without worktreePath
-    shell->>dialog: show progress-only modal
+    opt attached repos
+        shell->>dialog: show progress-only modal
+    end
     par each repo
         shell->>rust: create_task_repo_worktree(plan)
         rust->>rust: validate repo, branch, path
@@ -562,7 +588,8 @@ sequenceDiagram
     shell->>dialog: close
 ```
 
-Creation is synchronous from the user's point of view. The modal stays open until git work finishes.
+Creation is synchronous from the user's point of view when repos are attached. The modal stays open
+until git work finishes. Repo-less tasks skip git work and select the task terminal immediately.
 
 Parallelism:
 
@@ -610,6 +637,7 @@ Rules:
 - Existing repo rows keep their `branch`.
 - Existing materialized repo rows keep their `baseBranch`.
 - Newly-added repos get the task id hash plus the current task name slug.
+- Removing all repos is valid. The task stays alive with its task terminal.
 - Removing or replacing a saved repo row requires confirmation.
 
 ## Task Deletion Lifecycle
@@ -624,7 +652,7 @@ sequenceDiagram
     dialog->>dialog: confirm danger action
     dialog->>shell: delete(task)
     shell->>dialog: show cleanup progress
-    par each task repo
+    par each attached repo
         shell->>rust: delete_task_repo_worktree(plan)
         rust->>rust: git worktree remove --force path
         rust->>rust: git branch -D branch
@@ -743,19 +771,20 @@ Use this file for the big picture. Use feature specs when changing one feature.
 
 ## Terminal Runtime
 
-The current terminal is one embedded shell per `TaskRepo`.
+The current terminal is one embedded shell per selected task surface. A task surface is either the
+task terminal or one attached repo terminal.
 
 ```mermaid
 flowchart LR
-    TaskRepo["TaskRepo.id + worktreePath"]
+    Surface["Task.terminal or TaskRepo"]
     MainSurface["MainSurface"]
     TerminalSurface["TerminalSurface + xterm.js"]
     RustTerminal["Rust terminal.rs"]
     PTY["portable-pty attachment"]
     Tmux["bundled tmux private session"]
-    Shell["user shell in worktree"]
+    Shell["user shell in cwd"]
 
-    TaskRepo --> MainSurface
+    Surface --> MainSurface
     MainSurface --> TerminalSurface
     TerminalSurface <--> RustTerminal
     RustTerminal <--> PTY
@@ -774,18 +803,22 @@ Runtime rules:
 - Piñata uses the embedded `src-tauri/resources/tmux/bin/tmux-*` binary in dev and packaged builds.
 - The `tmux` server uses a private socket under the app data directory.
 - Piñata disables the tmux status bar so the xterm surface owns the full content area.
-- Piñata enables tmux mouse mode so wheel scrolling moves through tmux pane history instead of
-  reaching the shell prompt as Up/Down history input.
-- Session names are deterministic from `TaskRepo.id`.
-- The shell starts in `TaskRepo.worktreePath`.
+- Piñata keeps tmux mouse mode off so xterm owns selection. Wheel scrolling is intercepted by the
+  webview and bridged to tmux copy-mode history instead of reaching the shell prompt as Up/Down
+  history input.
+- Session names are deterministic from `Task.terminal.id` or `TaskRepo.id`.
+- The shell starts in `Task.terminal.cwd` for task terminals and `TaskRepo.worktreePath` for repo
+  terminals.
 - The default shell is the user's `SHELL`; missing or invalid shell falls back to `/bin/zsh`.
 
 Task lifecycle integration:
 
-- Task create: create worktree, ensure terminal session, persist app state.
+- Task create: create task terminal target, create attached repo worktrees if any, persist app
+  state.
 - Task edit with added repo: create worktree, ensure terminal session, persist app state.
 - Task edit with removed repo: kill terminal session, delete worktree and branch, persist app state.
-- Task delete: kill each task repo terminal session, delete worktrees and branches, persist app state.
+- Task delete: kill the task terminal session and each task repo terminal session, delete worktrees
+  and branches, persist app state.
 
 Deferred:
 

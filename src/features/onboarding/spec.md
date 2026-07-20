@@ -20,6 +20,8 @@ Based on v0 spec 01 and `reference/src/term-onboarding.jsx`.
 - Repository step starts empty, uses the native directory picker, validates the selected folder
   through Rust `inspect_repository`, immediately adds valid repos to the temporary list with
   fetched metadata, then persists them into `appState.repoRegistry` on finish.
+- Repository setup is optional. Users can finish onboarding with zero repos and create a task that
+  opens its home terminal in `~`.
 - Added repository rows surface the repo name first, then git org when available, default branch,
   and local path.
 - Done step can finish normally or open the New Task dialog.
