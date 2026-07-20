@@ -28,32 +28,41 @@ let fitAddon: FitAddon | undefined
 let unlistenOutput: UnlistenFn | undefined
 let unlistenExit: UnlistenFn | undefined
 let resizeObserver: ResizeObserver | undefined
+let themeObserver: MutationObserver | undefined
 let writeDisposer: { dispose: () => void } | undefined
+
+function cssToken(style: CSSStyleDeclaration, name: string, fallback: string) {
+  return style.getPropertyValue(name).trim() || style.getPropertyValue(fallback).trim()
+}
 
 function terminalTheme(element: HTMLElement) {
   const style = getComputedStyle(element)
 
   return {
-    background: style.getPropertyValue('--color-background').trim(),
-    black: style.getPropertyValue('--color-background-subtle').trim(),
-    blue: style.getPropertyValue('--color-status-info').trim(),
-    brightBlack: style.getPropertyValue('--color-text-placeholder').trim(),
-    brightBlue: style.getPropertyValue('--color-status-info').trim(),
-    brightCyan: style.getPropertyValue('--color-status-info').trim(),
-    brightGreen: style.getPropertyValue('--color-status-success').trim(),
-    brightMagenta: style.getPropertyValue('--color-status-special').trim(),
-    brightRed: style.getPropertyValue('--color-status-danger').trim(),
-    brightWhite: style.getPropertyValue('--color-text-primary').trim(),
-    brightYellow: style.getPropertyValue('--color-status-warning').trim(),
-    cursor: style.getPropertyValue('--color-text-primary').trim(),
-    cyan: style.getPropertyValue('--color-status-info').trim(),
-    foreground: style.getPropertyValue('--color-text-primary').trim(),
-    green: style.getPropertyValue('--color-status-success').trim(),
-    magenta: style.getPropertyValue('--color-status-special').trim(),
-    red: style.getPropertyValue('--color-status-danger').trim(),
-    selectionBackground: style.getPropertyValue('--color-fallback-selection').trim(),
-    white: style.getPropertyValue('--color-text-secondary').trim(),
-    yellow: style.getPropertyValue('--color-status-warning').trim(),
+    background: cssToken(style, '--color-terminal-background', '--color-background'),
+    black: cssToken(style, '--color-terminal-black', '--color-background-subtle'),
+    blue: cssToken(style, '--color-terminal-blue', '--color-status-info'),
+    brightBlack: cssToken(style, '--color-terminal-bright-black', '--color-text-placeholder'),
+    brightBlue: cssToken(style, '--color-terminal-blue', '--color-status-info'),
+    brightCyan: cssToken(style, '--color-terminal-cyan', '--color-status-info'),
+    brightGreen: cssToken(style, '--color-terminal-green', '--color-status-success'),
+    brightMagenta: cssToken(style, '--color-terminal-magenta', '--color-status-special'),
+    brightRed: cssToken(style, '--color-terminal-red', '--color-status-danger'),
+    brightWhite: cssToken(style, '--color-terminal-bright-white', '--color-text-primary'),
+    brightYellow: cssToken(style, '--color-terminal-yellow', '--color-status-warning'),
+    cursor: cssToken(style, '--color-terminal-foreground', '--color-text-primary'),
+    cyan: cssToken(style, '--color-terminal-cyan', '--color-status-info'),
+    foreground: cssToken(style, '--color-terminal-foreground', '--color-text-primary'),
+    green: cssToken(style, '--color-terminal-green', '--color-status-success'),
+    magenta: cssToken(style, '--color-terminal-magenta', '--color-status-special'),
+    red: cssToken(style, '--color-terminal-red', '--color-status-danger'),
+    selectionBackground: cssToken(
+      style,
+      '--color-terminal-selection',
+      '--color-fallback-selection',
+    ),
+    white: cssToken(style, '--color-terminal-white', '--color-text-secondary'),
+    yellow: cssToken(style, '--color-terminal-yellow', '--color-status-warning'),
   }
 }
 
@@ -118,6 +127,16 @@ async function attach() {
   fitAddon = new FitAddon()
   terminal.loadAddon(fitAddon)
   terminal.open(element)
+  const themeRoot = element.closest('[data-theme]')
+
+  if (themeRoot) {
+    themeObserver = new MutationObserver(() => {
+      if (terminal) {
+        terminal.options.theme = terminalTheme(element)
+      }
+    })
+    themeObserver.observe(themeRoot, { attributes: true, attributeFilter: ['data-theme'] })
+  }
   await nextTick()
   await nextAnimationFrame()
   fitAddon.fit()
@@ -172,6 +191,8 @@ async function attach() {
 function detach() {
   resizeObserver?.disconnect()
   resizeObserver = undefined
+  themeObserver?.disconnect()
+  themeObserver = undefined
   unlistenOutput?.()
   unlistenOutput = undefined
   unlistenExit?.()
