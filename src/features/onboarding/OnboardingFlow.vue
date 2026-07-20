@@ -372,10 +372,10 @@ function startWindowDrag(event: MouseEvent) {
           <template v-else-if="step === 2">
             <header :class="styles.stepHeader">
               <p :class="styles.eyebrow">Repositories</p>
-              <h2>Add your first repository</h2>
+              <h2>Add repositories</h2>
               <p>
-                Point Piñata at a local git checkout. Add at least one to get going. You can
-                register more anytime from Settings.
+                Point Piñata at local git checkouts now, or start with a home terminal and add
+                repos later from Settings.
               </p>
             </header>
 
@@ -436,7 +436,7 @@ function startWindowDrag(event: MouseEvent) {
             </div>
 
             <div v-else :class="styles.emptyRepos">
-              <p>No repositories yet. Add a folder above to continue.</p>
+              <p>No repositories added. You can continue and register them later.</p>
             </div>
           </template>
 
@@ -538,7 +538,6 @@ function startWindowDrag(event: MouseEvent) {
             v-else-if="step === 2"
             type="button"
             class="uiButton uiButtonPrimary"
-            :disabled="repositories.length === 0"
             @click="goNext"
           >
             Continue

@@ -97,7 +97,7 @@
 .sectionHeader p {
 	margin: 0;
 	color: var(--color-text-tertiary);
-	font-family: var(--font-mono);
+	font-family: var(--font-ui);
 	font-size: var(--font-size-label);
 	font-weight: 700;
 	letter-spacing: 0.08em;
@@ -204,7 +204,7 @@ select.fieldInput {
 
 .fromLabel {
 	color: var(--color-text-placeholder);
-	font-family: var(--font-mono);
+	font-family: var(--font-ui);
 	font-size: var(--font-size-label);
 	font-weight: 700;
 	text-align: center;
@@ -324,7 +324,7 @@ select.fieldInput {
 
 .progressState {
 	color: currentcolor;
-	font-family: var(--font-mono);
+	font-family: var(--font-ui);
 	font-size: var(--font-size-label);
 	font-weight: 800;
 	letter-spacing: 0.08em;
@@ -377,7 +377,7 @@ select.fieldInput {
 .dangerZone h3 {
 	margin: 0;
 	color: var(--color-status-danger);
-	font-size: 12.5px;
+	font-size: var(--font-size-body);
 	font-weight: 800;
 	line-height: 1.25;
 }
@@ -403,7 +403,7 @@ select.fieldInput {
 .configCopy h2 {
 	margin: 0;
 	color: var(--color-text-primary);
-	font-size: 12.5px;
+	font-size: var(--font-size-body);
 	font-weight: 700;
 	line-height: 1.25;
 }
@@ -411,7 +411,7 @@ select.fieldInput {
 .configCopy p {
 	margin: var(--space-2xs) 0 0;
 	color: var(--color-text-tertiary);
-	font-size: 12px;
+	font-size: var(--font-size-meta);
 	line-height: 1.45;
 }
 

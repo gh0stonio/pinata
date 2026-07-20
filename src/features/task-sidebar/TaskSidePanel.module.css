@@ -50,7 +50,7 @@
 	min-width: 0;
 	color: var(--color-text-primary);
 	font-family: var(--font-display);
-	font-size: 15.5px;
+	font-size: var(--font-size-title);
 	font-weight: 700;
 	line-height: 1;
 }
@@ -61,7 +61,7 @@
 
 .newTaskButton {
 	--ui-button-radius: var(--radius-md);
-	--ui-button-font-size: 12.5px;
+	--ui-button-font-size: var(--font-size-body);
 	--ui-button-font-weight: 500;
 
 	width: 100%;
@@ -77,8 +77,8 @@
 }
 
 .label {
-	font-family: var(--font-mono);
-	font-size: 10px;
+	font-family: var(--font-ui);
+	font-size: var(--font-size-label);
 	font-weight: 600;
 	letter-spacing: 0.15em;
 	text-transform: uppercase;
@@ -134,8 +134,13 @@
 }
 
 .taskRow {
+	--task-row-background: transparent;
+	--task-row-action-fade: 72px;
+	--task-row-action-solid: 32px;
+
+	position: relative;
 	display: grid;
-	grid-template-columns: minmax(0, 1fr) auto;
+	grid-template-columns: 12px minmax(0, 1fr);
 	align-items: center;
 	gap: var(--space-sm);
 	width: 100%;
@@ -143,20 +148,55 @@
 	min-width: 0;
 	padding: 0 var(--space-sm) 0 var(--space-lg);
 	border-radius: var(--radius-sm);
-	background: transparent;
+	overflow: visible;
+	background: var(--task-row-background);
 	color: inherit;
 	transition: background 150ms ease;
 }
 
-.taskRow:hover {
-	background: var(--color-control-hover);
+.taskRow[data-has-repos="false"] {
+	grid-template-columns: minmax(0, 1fr);
+}
+
+.taskRow:hover,
+.taskRow:focus-within {
+	--task-row-background: var(--color-control-hover);
+}
+
+.taskRowActive {
+	--task-row-background: var(--color-accent-subtle);
+}
+
+.taskRowActive:hover {
+	--task-row-background: var(--color-accent-hover);
+}
+
+.taskRowActive .taskName {
+	color: var(--color-text-primary);
+	font-weight: 700;
 }
 
 .taskRow[data-working="true"] {
-	background: var(--color-control-hover);
+	--task-row-background: var(--color-control-hover);
+}
+
+.taskRow:hover .taskButton,
+.taskRow:focus-within .taskButton,
+.taskRow[data-working="true"] .taskButton {
+	-webkit-mask-image: linear-gradient(
+		90deg,
+		black calc(100% - var(--task-row-action-fade)),
+		transparent calc(100% - var(--task-row-action-solid))
+	);
+	mask-image: linear-gradient(
+		90deg,
+		black calc(100% - var(--task-row-action-fade)),
+		transparent calc(100% - var(--task-row-action-solid))
+	);
 }
 
 .taskToggle,
+.taskButton,
 .repoButton {
 	border: 0;
 	color: inherit;
@@ -165,37 +205,56 @@
 }
 
 .taskToggle {
-	display: flex;
-	align-items: center;
-	gap: var(--space-sm);
-	min-width: 0;
-	height: 100%;
+	display: grid;
+	width: 12px;
+	height: 12px;
 	padding: 0;
 	background: transparent;
-	text-align: left;
+	place-items: center;
+}
+
+.taskToggle:disabled {
+	display: none;
+	cursor: default;
+}
+
+.taskActionTooltip {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	right: var(--space-xs);
+	z-index: 2;
+	display: grid;
+	place-items: center;
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 150ms ease;
 }
 
 .taskAction {
 	--ui-button-height: 18px;
 
-	justify-self: end;
-	opacity: 0;
-	pointer-events: none;
-	transition:
-		color 150ms ease,
-		opacity 150ms ease;
+	color: var(--color-text-secondary);
 }
 
-.taskRow:hover .taskAction,
+.taskAction:hover,
 .taskAction:focus-visible {
+	color: var(--color-text-primary);
+}
+
+.taskRow:hover .taskActionTooltip,
+.taskActionTooltip:focus-within {
 	opacity: 1;
 	pointer-events: auto;
 }
 
 .taskSpinner {
+	position: absolute;
+	top: calc(50% - 7px);
+	right: var(--space-xs);
+	z-index: 2;
 	width: 14px;
 	height: 14px;
-	justify-self: end;
 	border: 2px solid var(--color-accent-primary);
 	border-top-color: transparent;
 	border-radius: var(--radius-pill);
@@ -203,6 +262,7 @@
 }
 
 .taskToggle:focus-visible,
+.taskButton:focus-visible,
 .repoButton:focus-visible {
 	outline: none;
 	outline: 1px solid var(--color-accent-muted);
@@ -213,7 +273,6 @@
 	display: grid;
 	width: 12px;
 	height: 12px;
-	flex: 0 0 12px;
 	place-items: center;
 	padding: 0;
 	background: transparent;
@@ -235,7 +294,9 @@
 .taskButton {
 	display: flex;
 	align-items: center;
+	width: 100%;
 	min-width: 0;
+	height: 100%;
 	padding: 0;
 	background: transparent;
 	text-align: left;
@@ -251,8 +312,8 @@
 
 .taskName {
 	color: var(--color-text-secondary);
-	font-family: var(--font-mono);
-	font-size: 12.5px;
+	font-family: var(--font-ui);
+	font-size: var(--font-size-body);
 	font-weight: 600;
 }
 
@@ -301,8 +362,8 @@
 
 .repoName {
 	color: var(--color-text-secondary);
-	font-family: var(--font-mono);
-	font-size: 12.5px;
+	font-family: var(--font-ui);
+	font-size: var(--font-size-body);
 	font-weight: 500;
 }
 
@@ -351,8 +412,8 @@
 
 .metaList dt {
 	color: var(--color-text-placeholder);
-	font-family: var(--font-mono);
-	font-size: 9px;
+	font-family: var(--font-ui);
+	font-size: var(--font-size-help);
 	font-weight: 800;
 	letter-spacing: 0.08em;
 	text-transform: uppercase;
@@ -363,6 +424,6 @@
 	overflow-wrap: anywhere;
 	color: var(--color-text-secondary);
 	font-family: var(--font-mono);
-	font-size: 11px;
+	font-size: var(--font-size-meta);
 	line-height: 1.35;
 }

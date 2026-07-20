@@ -10,6 +10,7 @@ export type AppState = {
 }
 
 export const DEFAULT_WORKTREE_BASE_PATH = '~/.pinata/worktrees'
+export const TASK_TERMINAL_CWD = '~'
 export const DEFAULT_APP_LAYOUT: AppLayout = {
   window: {
     width: 1200,
@@ -92,7 +93,13 @@ export type Task = {
   id: string
   name: string
   color: string
+  terminal: TaskTerminal
   repos: TaskRepo[]
+}
+
+export type TaskTerminal = {
+  id: string
+  cwd: string
 }
 
 export type TaskRepo = {
@@ -123,9 +130,14 @@ export type TaskRepoGitOperation = {
 
 export type AppSelection = {
   taskId: string | null
-  taskRepoIdByTaskId: Record<string, string | null>
+  surfaceByTaskId: Record<string, TaskSurfaceSelection>
   expandedTaskIds: string[]
+  taskRepoIdByTaskId?: Record<string, string | null>
 }
+
+export type TaskSurfaceSelection =
+  | { kind: 'task-terminal' }
+  | { kind: 'repo'; taskRepoId: string }
 
 export function createEmptyAppState(): AppState {
   return {
@@ -141,18 +153,18 @@ export function createEmptyAppState(): AppState {
     tasks: [],
     selection: {
       taskId: null,
-      taskRepoIdByTaskId: {},
+      surfaceByTaskId: {},
       expandedTaskIds: [],
     },
   }
 }
 
 export function loadAppState(): Promise<AppState> {
-  return invoke<AppState>('load_app_state')
+  return invoke<AppState>('load_app_state').then(normalizeAppState)
 }
 
 export function saveAppState(state: AppState): Promise<void> {
-  return invoke('save_app_state', { state })
+  return invoke('save_app_state', { state: normalizeAppState(state) })
 }
 
 export function inspectRepository(path: string): Promise<RepositoryInspection> {
@@ -246,6 +258,65 @@ export function plannedTaskRepoWorktreePath(
   return joinPath(effectiveRepoWorktreeBasePath(defaults, repo), taskLeaf)
 }
 
+export function taskTerminalForTaskId(taskId: string): TaskTerminal {
+  return {
+    id: `task-terminal-${taskId}`,
+    cwd: TASK_TERMINAL_CWD,
+  }
+}
+
+export function taskSelectedSurface(task: Task, selection: AppSelection): TaskSurfaceSelection {
+  const surface = selection.surfaceByTaskId[task.id]
+
+  if (surface?.kind === 'repo' && task.repos.some((repo) => repo.id === surface.taskRepoId)) {
+    return surface
+  }
+
+  return { kind: 'task-terminal' }
+}
+
+export function selectedTaskRepo(task: Task, selection: AppSelection) {
+  const surface = taskSelectedSurface(task, selection)
+
+  return surface.kind === 'repo'
+    ? task.repos.find((repo) => repo.id === surface.taskRepoId)
+    : undefined
+}
+
+export function normalizeAppState(state: AppState): AppState {
+  const tasks = state.tasks.map(normalizeTask)
+  const taskIds = new Set(tasks.map((task) => task.id))
+  const legacySelection = state.selection.taskRepoIdByTaskId ?? {}
+  const surfaceByTaskId: Record<string, TaskSurfaceSelection> = {}
+
+  for (const task of tasks) {
+    const surface = state.selection.surfaceByTaskId?.[task.id]
+    const legacyTaskRepoId = legacySelection[task.id]
+
+    if (surface?.kind === 'repo' && task.repos.some((repo) => repo.id === surface.taskRepoId)) {
+      surfaceByTaskId[task.id] = surface
+    } else if (legacyTaskRepoId && task.repos.some((repo) => repo.id === legacyTaskRepoId)) {
+      surfaceByTaskId[task.id] = { kind: 'repo', taskRepoId: legacyTaskRepoId }
+    } else {
+      surfaceByTaskId[task.id] = { kind: 'task-terminal' }
+    }
+  }
+
+  const selectedTaskId = state.selection.taskId && taskIds.has(state.selection.taskId)
+    ? state.selection.taskId
+    : tasks[0]?.id ?? null
+
+  return {
+    ...state,
+    tasks,
+    selection: {
+      taskId: selectedTaskId,
+      surfaceByTaskId,
+      expandedTaskIds: state.selection.expandedTaskIds.filter((taskId) => taskIds.has(taskId)),
+    },
+  }
+}
+
 export function slugifyTaskName(name: string) {
   return name
     .trim()
@@ -284,12 +355,23 @@ export function createTask(input: NewTaskInput): Task {
     id,
     name,
     color: '#8f989d',
+    terminal: taskTerminalForTaskId(id),
     repos: input.repos.map((repo) => ({
       id: `task-repo-${crypto.randomUUID()}`,
       registeredRepoId: repo.registeredRepoId,
       baseBranch: repo.baseBranch,
       branch,
     })),
+  }
+}
+
+function normalizeTask(task: Task): Task {
+  return {
+    ...task,
+    terminal:
+      task.terminal?.id && task.terminal.cwd
+        ? task.terminal
+        : taskTerminalForTaskId(task.id),
   }
 }
 

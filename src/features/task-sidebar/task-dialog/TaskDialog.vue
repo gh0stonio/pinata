@@ -3,7 +3,6 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { computed, onMounted, ref } from 'vue'
 import CheckIcon from '../../../icons/CheckIcon.vue'
 import ChevronDownIcon from '../../../icons/ChevronDownIcon.vue'
-import GitBranchIcon from '../../../icons/GitBranchIcon.vue'
 import LayersIcon from '../../../icons/LayersIcon.vue'
 import PlusIcon from '../../../icons/PlusIcon.vue'
 import RepositoryIcon from '../../../icons/RepositoryIcon.vue'
@@ -102,7 +101,7 @@ const hasChanges = computed(() => {
   )
 })
 const canSave = computed(
-  () => taskSlug.value.length >= 2 && rows.value.length > 0 && hasValidRows() && hasChanges.value,
+  () => taskSlug.value.length >= 2 && hasValidRows() && hasChanges.value,
 )
 const progressSubtitle = computed(() => {
   if (!props.progress) {
@@ -157,7 +156,9 @@ const confirmationBody = computed(() => {
     return `This removes ${pendingConfirmation.value.repoName} from this task and deletes its task-owned branch and worktree when present. ${pendingConfirmation.value.nextRepoName} will be added instead. Registered repositories stay untouched.`
   }
 
-  return 'This deletes the task and its task-owned branches and worktrees when present. Registered repositories stay untouched.'
+  return props.task?.repos.length
+    ? 'This deletes the task and its task-owned branches and worktrees when present. Registered repositories stay untouched.'
+    : 'This deletes the task and closes its terminal session.'
 })
 const confirmationActionLabel = computed(() =>
   pendingConfirmation.value?.kind === 'delete-task'
@@ -172,9 +173,7 @@ function initialRows(): DialogRepoRow[] {
     return props.task.repos.map(rowFromTaskRepo)
   }
 
-  const firstRepo = props.appState.repoRegistry[0]
-
-  return firstRepo ? [rowFromRepo(firstRepo)] : []
+  return []
 }
 
 function rowFromRepo(repo: RegisteredRepo): DialogRepoRow {
@@ -220,7 +219,7 @@ function fieldValue(event: Event) {
 
 function hasValidRows() {
   if (!rows.value.length) {
-    return false
+    return true
   }
 
   const ids = new Set<string>()
@@ -252,7 +251,7 @@ function removeRepoRow(rowId: string) {
 }
 
 function requestRemoveRepoRow(row: DialogRepoRow) {
-  if (isWorking.value || rows.value.length <= 1) {
+  if (isWorking.value) {
     return
   }
 
@@ -462,7 +461,7 @@ onMounted(() => {
                 ? progressSubtitle
                 : isEditing
                   ? 'Update the name and repositories it spans.'
-                  : 'A name and the repositories it spans.'
+                  : 'A name and optional repositories.'
             }}
           </p>
         </div>
@@ -539,6 +538,10 @@ onMounted(() => {
             No registered repositories yet.
           </div>
 
+          <div v-else-if="!rows.length" :class="styles.emptyRepos">
+            No repositories attached.
+          </div>
+
           <div v-else :class="styles.repoRows">
             <div v-for="row in rows" :key="row.id" :class="styles.repoRow">
               <div :class="styles.selectWrap">
@@ -581,7 +584,7 @@ onMounted(() => {
               <button
                 type="button"
                 class="uiButton uiButtonIcon uiButtonNaked"
-                :disabled="isWorking || rows.length <= 1"
+                :disabled="isWorking"
                 aria-label="Remove repository"
                 @click="requestRemoveRepoRow(row)"
               >
@@ -628,7 +631,7 @@ onMounted(() => {
             :disabled="isWorking || !canSave"
             @click="saveTask"
           >
-            <GitBranchIcon />
+            <LayersIcon />
             {{ isWorking ? 'Working' : isEditing ? 'Save changes' : 'Create task' }}
           </button>
         </footer>

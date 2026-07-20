@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import pinataLogo from '../../assets/brand/pinata-logo.png'
+import AppTooltip from '../../components/tooltip/AppTooltip.vue'
 import ChevronDownIcon from '../../icons/ChevronDownIcon.vue'
 import PencilIcon from '../../icons/PencilIcon.vue'
 import PlusIcon from '../../icons/PlusIcon.vue'
 import {
   findRegisteredRepo,
   plannedTaskRepoWorktreePath,
+  taskSelectedSurface,
   type AppState,
   type Task,
   type TaskRepo,
@@ -22,6 +24,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   'edit-task': [task: Task]
   'open-new-task': []
+  'select-task': [task: Task]
   'select-task-repo': [task: Task, taskRepo: TaskRepo]
   'toggle-task': [task: Task]
 }>()
@@ -63,7 +66,17 @@ function isTaskRepoSelected(task: Task, taskRepo: TaskRepo) {
     return false
   }
 
-  return isTaskSelected(task.id) && props.appState.selection.taskRepoIdByTaskId[task.id] === taskRepo.id
+  const surface = taskSelectedSurface(task, props.appState.selection)
+
+  return isTaskSelected(task.id) && surface.kind === 'repo' && surface.taskRepoId === taskRepo.id
+}
+
+function isTaskTerminalSelected(task: Task) {
+  if (isTaskWorking(task.id)) {
+    return false
+  }
+
+  return isTaskSelected(task.id) && taskSelectedSurface(task, props.appState.selection).kind === 'task-terminal'
 }
 
 function isTaskWorking(taskId: string) {
@@ -129,24 +142,30 @@ function taskRepoPath(task: Task, taskRepo: TaskRepo) {
 
       <ul v-else :class="styles.taskList" aria-label="Tasks">
         <li v-for="task in appState.tasks" :key="task.id" :class="styles.taskItem">
-          <div :class="styles.taskRow" :data-working="isTaskWorking(task.id)">
+          <div
+            :class="[styles.taskRow, isTaskTerminalSelected(task) && styles.taskRowActive]"
+            :data-working="isTaskWorking(task.id)"
+            :data-has-repos="Boolean(task.repos.length)"
+          >
             <button
               type="button"
               :class="styles.taskToggle"
               :aria-expanded="isTaskExpanded(task.id)"
               :aria-label="isTaskExpanded(task.id) ? `Collapse ${task.name}` : `Expand ${task.name}`"
+              :disabled="!task.repos.length"
               @click="emit('toggle-task', task)"
             >
               <span
+                v-if="task.repos.length"
                 :class="[styles.chevron, isTaskExpanded(task.id) && styles.chevronOpen]"
                 aria-hidden="true"
               >
                 <ChevronDownIcon />
               </span>
+            </button>
 
-              <span :class="styles.taskButton">
-                <span :class="styles.taskName">{{ task.name }}</span>
-              </span>
+            <button type="button" :class="styles.taskButton" @click="emit('select-task', task)">
+              <span :class="styles.taskName">{{ task.name }}</span>
             </button>
 
             <span
@@ -155,16 +174,22 @@ function taskRepoPath(task: Task, taskRepo: TaskRepo) {
               role="status"
               aria-label="Task operation running"
             />
-            <button
+            <span
               v-else
-              type="button"
-              class="uiButton uiButtonIcon uiButtonNaked"
-              :class="styles.taskAction"
-              :aria-label="`Edit ${task.name}`"
-              @click="emit('edit-task', task)"
+              :class="styles.taskActionTooltip"
             >
-              <PencilIcon />
-            </button>
+              <AppTooltip label="Edit task" placement="top-end">
+                <button
+                  type="button"
+                  class="uiButton uiButtonIcon uiButtonNaked"
+                  :class="styles.taskAction"
+                  :aria-label="`Edit ${task.name}`"
+                  @click="emit('edit-task', task)"
+                >
+                  <PencilIcon />
+                </button>
+              </AppTooltip>
+            </span>
           </div>
 
           <ul v-if="isTaskExpanded(task.id)" :class="styles.repoList" aria-label="Task repos">

@@ -25,7 +25,8 @@ pub fn run() {
             terminal::terminal_detach,
             terminal::terminal_ensure_session,
             terminal::terminal_kill_session,
-            terminal::terminal_resize
+            terminal::terminal_resize,
+            terminal::terminal_scroll
         ])
         .setup(|app| {
             let handle = app.handle();

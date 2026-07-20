@@ -34,7 +34,6 @@
 .emptyState p {
 	margin: var(--space-xl) 0 0;
 	color: var(--color-text-tertiary);
-	font-family: var(--font-mono);
 	font-size: var(--font-size-body);
 	line-height: 1.5;
 }

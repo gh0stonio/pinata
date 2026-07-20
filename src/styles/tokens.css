@@ -14,7 +14,7 @@
 
 	--settings-font-display: 24px;
 	--settings-font-title: 15.5px;
-	--settings-font-heading: 12.5px;
+	--settings-font-heading: 13px;
 	--settings-font-body: 12px;
 	--settings-font-meta: 10.5px;
 	--settings-font-label: 10px;
@@ -70,7 +70,7 @@
 	--font-size-display-max: 32px;
 	--font-size-title: 16.5px;
 	--font-size-heading: 13px;
-	--font-size-body: 12.5px;
+	--font-size-body: 12px;
 	--font-size-meta: 11.5px;
 	--font-size-label: 10.5px;
 	--font-size-help: 8px;
@@ -96,7 +96,7 @@
 
 	--settings-font-display: 25px;
 	--settings-font-title: 16.5px;
-	--settings-font-heading: 13.5px;
+	--settings-font-heading: 14px;
 	--settings-font-body: 13px;
 	--settings-font-meta: 11.5px;
 	--settings-font-label: 10.5px;

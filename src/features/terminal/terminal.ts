@@ -4,7 +4,7 @@ import { emit } from '@tauri-apps/api/event'
 const TERMINAL_INPUT_EVENT = 'pinata://terminal-input'
 
 export type TerminalSessionInput = {
-  taskRepoId: string
+  sessionId: string
   cwd: string
 }
 
@@ -14,27 +14,32 @@ export type TerminalAttachInput = TerminalSessionInput & {
 }
 
 export type TerminalWriteInput = {
-  taskRepoId: string
+  sessionId: string
   data: string
 }
 
 export type TerminalResizeInput = {
-  taskRepoId: string
+  sessionId: string
   cols: number
   rows: number
 }
 
-export type TerminalTaskRepoInput = {
-  taskRepoId: string
+export type TerminalScrollInput = {
+  sessionId: string
+  lines: number
+}
+
+export type TerminalSessionOnlyInput = {
+  sessionId: string
 }
 
 export type TerminalOutputEvent = {
-  taskRepoId: string
+  sessionId: string
   data: string
 }
 
 export type TerminalExitEvent = {
-  taskRepoId: string
+  sessionId: string
 }
 
 export function ensureTerminalSession(input: TerminalSessionInput): Promise<void> {
@@ -53,10 +58,14 @@ export function resizeTerminal(input: TerminalResizeInput): Promise<void> {
   return invoke('terminal_resize', { input })
 }
 
-export function detachTerminal(input: TerminalTaskRepoInput): Promise<void> {
+export function scrollTerminal(input: TerminalScrollInput): Promise<void> {
+  return invoke('terminal_scroll', { input })
+}
+
+export function detachTerminal(input: TerminalSessionOnlyInput): Promise<void> {
   return invoke('terminal_detach', { input })
 }
 
-export function killTerminalSession(input: TerminalTaskRepoInput): Promise<void> {
+export function killTerminalSession(input: TerminalSessionOnlyInput): Promise<void> {
   return invoke('terminal_kill_session', { input })
 }

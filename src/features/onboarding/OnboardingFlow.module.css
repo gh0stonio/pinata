@@ -102,7 +102,7 @@
 .eyebrow {
 	margin: 0;
 	color: var(--color-text-tertiary);
-	font-family: var(--font-mono);
+	font-family: var(--font-ui);
 	font-size: var(--font-size-label);
 	font-weight: 700;
 	letter-spacing: 0.16em;
@@ -562,13 +562,17 @@
 .addedRepoBranch {
 	flex: 0 0 auto;
 	color: var(--color-text-tertiary);
-	font-family: var(--font-mono);
 	font-size: var(--font-size-label);
 	font-weight: 700;
 }
 
 .addedRepoOrg {
 	color: var(--color-text-secondary);
+	font-family: var(--font-ui);
+}
+
+.addedRepoBranch {
+	font-family: var(--font-mono);
 }
 
 .addedRepoPath {
@@ -588,7 +592,7 @@
 	align-items: center;
 	gap: var(--space-xs);
 	color: var(--color-status-success);
-	font-family: var(--font-mono);
+	font-family: var(--font-ui);
 	font-size: var(--font-size-label);
 	font-weight: 700;
 }
@@ -682,7 +686,7 @@
 	display: block;
 	margin-bottom: var(--space-xs);
 	color: var(--color-text-placeholder);
-	font-family: var(--font-mono);
+	font-family: var(--font-ui);
 	font-size: var(--font-size-label);
 	font-weight: 700;
 	letter-spacing: 0.08em;

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { onBeforeUnmount, onMounted, ref } from 'vue'
+import AppTooltip from '../../components/tooltip/AppTooltip.vue'
 import SidePanelIcon from '../../icons/SidePanelIcon.vue'
 import styles from './TitleBar.module.css'
 
@@ -64,39 +65,43 @@ onBeforeUnmount(() => {
     <div :class="styles.leftGroup" data-tauri-drag-region>
       <div :class="styles.trafficLightReserve" data-tauri-drag-region />
 
-      <button
-        type="button"
-        :class="[styles.tButton, leftSidePanelVisible && styles.active]"
-        :aria-pressed="leftSidePanelVisible"
-        :aria-label="leftSidePanelVisible ? 'Collapse left side panel' : 'Open left side panel'"
-        @mousedown.stop
-        @click.stop="emit('toggle-left-side-panel')"
+      <AppTooltip
+        :label="leftSidePanelVisible ? 'Collapse side panel' : 'Open side panel'"
+        shortcut="⌘B"
+        placement="top-start"
       >
-        <SidePanelIcon side="left" :open="leftSidePanelVisible" />
-        <span :class="[styles.tooltip, styles.leftTooltip]">
-          <span>{{ leftSidePanelVisible ? 'Collapse side panel' : 'Open side panel' }}</span>
-          <kbd>⌘B</kbd>
-        </span>
-      </button>
+        <button
+          type="button"
+          :class="[styles.tButton, leftSidePanelVisible && styles.active]"
+          :aria-pressed="leftSidePanelVisible"
+          :aria-label="leftSidePanelVisible ? 'Collapse left side panel' : 'Open left side panel'"
+          @mousedown.stop
+          @click.stop="emit('toggle-left-side-panel')"
+        >
+          <SidePanelIcon side="left" :open="leftSidePanelVisible" />
+        </button>
+      </AppTooltip>
     </div>
 
     <div :class="styles.center" data-tauri-drag-region />
 
     <div :class="styles.rightGroup" data-tauri-drag-region>
-      <button
-        type="button"
-        :class="[styles.tButton, rightSidePanelVisible && styles.active]"
-        :aria-pressed="rightSidePanelVisible"
-        :aria-label="rightSidePanelVisible ? 'Collapse right side panel' : 'Open right side panel'"
-        @mousedown.stop
-        @click.stop="emit('toggle-right-side-panel')"
+      <AppTooltip
+        :label="rightSidePanelVisible ? 'Collapse side panel' : 'Open side panel'"
+        shortcut="⌘L"
+        placement="top-end"
       >
-        <SidePanelIcon side="right" :open="rightSidePanelVisible" />
-        <span :class="[styles.tooltip, styles.rightTooltip]">
-          <span>{{ rightSidePanelVisible ? 'Collapse side panel' : 'Open side panel' }}</span>
-          <kbd>⌘L</kbd>
-        </span>
-      </button>
+        <button
+          type="button"
+          :class="[styles.tButton, rightSidePanelVisible && styles.active]"
+          :aria-pressed="rightSidePanelVisible"
+          :aria-label="rightSidePanelVisible ? 'Collapse right side panel' : 'Open right side panel'"
+          @mousedown.stop
+          @click.stop="emit('toggle-right-side-panel')"
+        >
+          <SidePanelIcon side="right" :open="rightSidePanelVisible" />
+        </button>
+      </AppTooltip>
     </div>
   </header>
 </template>

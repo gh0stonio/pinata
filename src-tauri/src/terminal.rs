@@ -31,14 +31,14 @@ struct TerminalAttachment {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalSessionInput {
-    pub task_repo_id: String,
+    pub session_id: String,
     pub cwd: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalAttachInput {
-    pub task_repo_id: String,
+    pub session_id: String,
     pub cwd: String,
     pub cols: u16,
     pub rows: u16,
@@ -47,40 +47,47 @@ pub struct TerminalAttachInput {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalWriteInput {
-    pub task_repo_id: String,
+    pub session_id: String,
     pub data: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalResizeInput {
-    pub task_repo_id: String,
+    pub session_id: String,
     pub cols: u16,
     pub rows: u16,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct TerminalTaskRepoInput {
-    pub task_repo_id: String,
+pub struct TerminalScrollInput {
+    pub session_id: String,
+    pub lines: i16,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalSessionOnlyInput {
+    pub session_id: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct TerminalOutputEvent {
-    task_repo_id: String,
+    session_id: String,
     data: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct TerminalExitEvent {
-    task_repo_id: String,
+    session_id: String,
 }
 
 #[tauri::command]
 pub fn terminal_ensure_session(app: AppHandle, input: TerminalSessionInput) -> Result<(), String> {
-    ensure_session(&app, &input.task_repo_id, &input.cwd)
+    ensure_session(&app, &input.session_id, &input.cwd)
 }
 
 #[tauri::command]
@@ -89,12 +96,12 @@ pub fn terminal_attach(
     state: State<TerminalState>,
     input: TerminalAttachInput,
 ) -> Result<(), String> {
-    ensure_session(&app, &input.task_repo_id, &input.cwd)?;
-    detach_attachment(&state, &input.task_repo_id);
+    ensure_session(&app, &input.session_id, &input.cwd)?;
+    detach_attachment(&state, &input.session_id);
 
     let tmux = tmux_binary_path(&app)?;
     let socket = tmux_socket_path(&app)?;
-    let session_name = tmux_session_name(&input.task_repo_id);
+    let session_name = tmux_session_name(&input.session_id);
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
@@ -129,8 +136,8 @@ pub fn terminal_attach(
         .master
         .take_writer()
         .map_err(|error| error.to_string())?;
-    let task_repo_id = input.task_repo_id.clone();
-    let event_task_repo_id = input.task_repo_id.clone();
+    let session_id = input.session_id.clone();
+    let event_session_id = input.session_id.clone();
     let app_for_reader = app.clone();
 
     thread::spawn(move || {
@@ -143,7 +150,7 @@ pub fn terminal_attach(
                     let _ = app_for_reader.emit(
                         TERMINAL_OUTPUT_EVENT,
                         TerminalOutputEvent {
-                            task_repo_id: event_task_repo_id.clone(),
+                            session_id: event_session_id.clone(),
                             data: STANDARD.encode(&buffer[..count]),
                         },
                     );
@@ -155,7 +162,7 @@ pub fn terminal_attach(
         let _ = app_for_reader.emit(
             TERMINAL_EXIT_EVENT,
             TerminalExitEvent {
-                task_repo_id: event_task_repo_id,
+                session_id: event_session_id,
             },
         );
     });
@@ -166,7 +173,7 @@ pub fn terminal_attach(
         .map_err(|_| "terminal state is locked".to_string())?;
 
     attachments.insert(
-        task_repo_id,
+        session_id,
         TerminalAttachment {
             master: pair.master,
             writer,
@@ -191,7 +198,7 @@ fn write_terminal_input(state: &TerminalState, input: TerminalWriteInput) -> Res
         .attachments
         .lock()
         .map_err(|_| "terminal state is locked".to_string())?;
-    let Some(attachment) = attachments.get_mut(&input.task_repo_id) else {
+    let Some(attachment) = attachments.get_mut(&input.session_id) else {
         return Ok(());
     };
 
@@ -211,7 +218,7 @@ pub fn terminal_resize(
         .attachments
         .lock()
         .map_err(|_| "terminal state is locked".to_string())?;
-    let Some(attachment) = attachments.get(&input.task_repo_id) else {
+    let Some(attachment) = attachments.get(&input.session_id) else {
         return Ok(());
     };
 
@@ -227,11 +234,36 @@ pub fn terminal_resize(
 }
 
 #[tauri::command]
+pub fn terminal_scroll(app: AppHandle, input: TerminalScrollInput) -> Result<(), String> {
+    if input.lines == 0 || !has_session(&app, &input.session_id)? {
+        return Ok(());
+    }
+
+    let session_name = tmux_session_name(&input.session_id);
+    let count = input.lines.unsigned_abs().to_string();
+
+    if input.lines < 0 {
+        let status = tmux_command(&app)?
+            .args(["copy-mode", "-e", "-t", &session_name])
+            .status()
+            .map_err(|error| format!("failed to run bundled tmux: {error}"))?;
+
+        if !status.success() {
+            return Err("failed to enter terminal scrollback".into());
+        }
+
+        send_tmux_copy_mode_command(&app, &session_name, &count, "scroll-up")
+    } else {
+        send_tmux_copy_mode_command(&app, &session_name, &count, "scroll-down").or(Ok(()))
+    }
+}
+
+#[tauri::command]
 pub fn terminal_detach(
     state: State<TerminalState>,
-    input: TerminalTaskRepoInput,
+    input: TerminalSessionOnlyInput,
 ) -> Result<(), String> {
-    detach_attachment(&state, &input.task_repo_id);
+    detach_attachment(&state, &input.session_id);
     Ok(())
 }
 
@@ -239,20 +271,16 @@ pub fn terminal_detach(
 pub fn terminal_kill_session(
     app: AppHandle,
     state: State<TerminalState>,
-    input: TerminalTaskRepoInput,
+    input: TerminalSessionOnlyInput,
 ) -> Result<(), String> {
-    detach_attachment(&state, &input.task_repo_id);
+    detach_attachment(&state, &input.session_id);
 
-    if !has_session(&app, &input.task_repo_id)? {
+    if !has_session(&app, &input.session_id)? {
         return Ok(());
     }
 
     let status = tmux_command(&app)?
-        .args([
-            "kill-session",
-            "-t",
-            &tmux_session_name(&input.task_repo_id),
-        ])
+        .args(["kill-session", "-t", &tmux_session_name(&input.session_id)])
         .status()
         .map_err(|error| format!("failed to run bundled tmux: {error}"))?;
 
@@ -263,15 +291,15 @@ pub fn terminal_kill_session(
     Err("failed to kill terminal session".into())
 }
 
-fn ensure_session(app: &AppHandle, task_repo_id: &str, cwd: &str) -> Result<(), String> {
+fn ensure_session(app: &AppHandle, session_id: &str, cwd: &str) -> Result<(), String> {
     let cwd = expand_home(cwd.trim())?;
 
     if !cwd.exists() {
-        return Err("terminal worktree path does not exist".into());
+        return Err("terminal working directory does not exist".into());
     }
 
-    if has_session(app, task_repo_id)? {
-        return configure_session(app, task_repo_id);
+    if has_session(app, session_id)? {
+        return configure_session(app, session_id);
     }
 
     let shell = default_shell();
@@ -281,27 +309,27 @@ fn ensure_session(app: &AppHandle, task_repo_id: &str, cwd: &str) -> Result<(), 
             "new-session",
             "-d",
             "-s",
-            &tmux_session_name(task_repo_id),
+            &tmux_session_name(session_id),
             "-c",
             cwd.to_str()
-                .ok_or_else(|| "terminal worktree path is not valid UTF-8".to_string())?,
+                .ok_or_else(|| "terminal working directory is not valid UTF-8".to_string())?,
             &shell_command,
         ])
         .status()
         .map_err(|error| format!("failed to run bundled tmux: {error}"))?;
 
     if status.success() {
-        return configure_session(app, task_repo_id);
+        return configure_session(app, session_id);
     }
 
     Err("failed to create terminal session".into())
 }
 
-fn configure_session(app: &AppHandle, task_repo_id: &str) -> Result<(), String> {
-    let session_name = tmux_session_name(task_repo_id);
+fn configure_session(app: &AppHandle, session_id: &str) -> Result<(), String> {
+    let session_name = tmux_session_name(session_id);
 
     set_tmux_option(app, &session_name, "status", "off")?;
-    set_tmux_option(app, &session_name, "mouse", "on")?;
+    set_tmux_option(app, &session_name, "mouse", "off")?;
     set_tmux_option(app, &session_name, "window-size", "latest")?;
     set_tmux_option(app, &session_name, "history-limit", "10000")
 }
@@ -319,9 +347,27 @@ fn set_tmux_option(app: &AppHandle, target: &str, option: &str, value: &str) -> 
     Err(format!("failed to set tmux option {option}"))
 }
 
-fn has_session(app: &AppHandle, task_repo_id: &str) -> Result<bool, String> {
+fn send_tmux_copy_mode_command(
+    app: &AppHandle,
+    target: &str,
+    count: &str,
+    command: &str,
+) -> Result<(), String> {
     let status = tmux_command(app)?
-        .args(["has-session", "-t", &tmux_session_name(task_repo_id)])
+        .args(["send-keys", "-t", target, "-N", count, "-X", command])
+        .status()
+        .map_err(|error| format!("failed to run bundled tmux: {error}"))?;
+
+    if status.success() {
+        return Ok(());
+    }
+
+    Err(format!("failed to scroll terminal {command}"))
+}
+
+fn has_session(app: &AppHandle, session_id: &str) -> Result<bool, String> {
+    let status = tmux_command(app)?
+        .args(["has-session", "-t", &tmux_session_name(session_id)])
         .status()
         .map_err(|error| format!("failed to run bundled tmux: {error}"))?;
 
@@ -394,8 +440,8 @@ fn tmux_socket_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(socket_dir.join("pinata.sock"))
 }
 
-fn tmux_session_name(task_repo_id: &str) -> String {
-    let suffix: String = task_repo_id
+fn tmux_session_name(session_id: &str) -> String {
+    let suffix: String = session_id
         .chars()
         .map(|character| {
             if character.is_ascii_alphanumeric() {
@@ -409,12 +455,12 @@ fn tmux_session_name(task_repo_id: &str) -> String {
     format!("{TMUX_SESSION_PREFIX}_{suffix}")
 }
 
-fn detach_attachment(state: &State<TerminalState>, task_repo_id: &str) {
+fn detach_attachment(state: &State<TerminalState>, session_id: &str) {
     let attachment = state
         .attachments
         .lock()
         .ok()
-        .and_then(|mut attachments| attachments.remove(task_repo_id));
+        .and_then(|mut attachments| attachments.remove(session_id));
 
     if let Some(mut attachment) = attachment {
         let _ = attachment.child.kill();
@@ -463,8 +509,8 @@ mod tests {
     #[test]
     fn session_name_is_stable_and_tmux_safe() {
         assert_eq!(
-            tmux_session_name("task-repo-abc-123"),
-            "pinata_task_repo_abc_123"
+            tmux_session_name("terminal-session-abc-123"),
+            "pinata_terminal_session_abc_123"
         );
     }
 

@@ -17,6 +17,7 @@ import {
   plannedTaskRepoWorktreePath,
   saveAppState,
   SIDE_PANEL_WIDTH_LIMITS,
+  taskSelectedSurface,
   updateTask,
   type AppLayout,
   type AppState,
@@ -25,6 +26,7 @@ import {
   type Task,
   type TaskRepoGitOperation,
   type TaskRepo,
+  type TaskSurfaceSelection,
 } from '../../features/app-state/app-state'
 import OnboardingFlow from '../../features/onboarding/OnboardingFlow.vue'
 import { onboardingKey } from '../../features/onboarding/onboarding'
@@ -417,19 +419,43 @@ async function persistAppStateAsync(next: AppState) {
   await save
 }
 
+function selectTask(task: Task) {
+  persistAppState({
+    ...appState.value,
+    selection: {
+      ...appState.value.selection,
+      taskId: task.id,
+      surfaceByTaskId: {
+        ...appState.value.selection.surfaceByTaskId,
+        [task.id]: { kind: 'task-terminal' },
+      },
+    },
+  })
+}
+
 function selectTaskRepo(task: Task, taskRepo: TaskRepo) {
   persistAppState({
     ...appState.value,
     selection: {
       ...appState.value.selection,
       taskId: task.id,
-      taskRepoIdByTaskId: {
-        ...appState.value.selection.taskRepoIdByTaskId,
-        [task.id]: taskRepo.id,
+      surfaceByTaskId: {
+        ...appState.value.selection.surfaceByTaskId,
+        [task.id]: { kind: 'repo', taskRepoId: taskRepo.id },
       },
       expandedTaskIds: Array.from(new Set([...appState.value.selection.expandedTaskIds, task.id])),
     },
   })
+}
+
+function selectedSurfaceForUpdatedTask(currentTask: Task, nextTask: Task): TaskSurfaceSelection {
+  const surface = taskSelectedSurface(currentTask, appState.value.selection)
+
+  if (surface.kind === 'repo' && nextTask.repos.some((repo) => repo.id === surface.taskRepoId)) {
+    return surface
+  }
+
+  return { kind: 'task-terminal' }
 }
 
 function toggleTask(task: Task) {
@@ -578,7 +604,7 @@ function failTaskProgress(error: unknown) {
 async function rollbackCreatedWorktrees(plans: TaskRepoGitPlan[]) {
   await Promise.allSettled(
     plans.map(async (plan) => {
-      await killTerminalSession({ taskRepoId: plan.id }).catch(() => undefined)
+      await killTerminalSession({ sessionId: plan.id }).catch(() => undefined)
       await deleteTaskRepoWorktree(plan)
     }),
   )
@@ -628,7 +654,7 @@ async function runCreatePlans(
         const createdPlan = { ...plan, worktreePath }
         createdPlans.push(createdPlan)
         updateTaskProgressPhase(`create-${plan.id}`, 'Starting terminal')
-        await ensureTerminalSession({ taskRepoId: plan.id, cwd: worktreePath })
+        await ensureTerminalSession({ sessionId: plan.id, cwd: worktreePath })
         updateTaskProgressStep(`create-${plan.id}`, 'done')
         await flushTaskProgress()
 
@@ -672,7 +698,7 @@ async function runCleanupPlans(plans: TaskRepoGitPlan[]) {
   const results = await Promise.allSettled(
     plans.map(async (plan) => {
       try {
-        await killTerminalSession({ taskRepoId: plan.id })
+        await killTerminalSession({ sessionId: plan.id })
         await deleteTaskRepoWorktree(plan)
         updateTaskProgressStep(`cleanup-${plan.id}`, 'done')
       } catch (error) {
@@ -693,10 +719,11 @@ async function runCleanupPlans(plans: TaskRepoGitPlan[]) {
 async function createNewTask(input: NewTaskInput) {
   try {
     const task = createTask(input)
-    const firstTaskRepo = task.repos[0]
     const createPlans = createPlansForTask(task)
 
-    startTaskProgress('Create task', createPlans, [])
+    if (createPlans.length) {
+      startTaskProgress('Create task', createPlans, [])
+    }
 
     const nextTask = await runCreatePlans(task, createPlans)
 
@@ -706,12 +733,16 @@ async function createNewTask(input: NewTaskInput) {
       selection: {
         ...appState.value.selection,
         taskId: nextTask.id,
-        taskRepoIdByTaskId: {
-          ...appState.value.selection.taskRepoIdByTaskId,
-          [nextTask.id]: firstTaskRepo?.id ?? null,
+        surfaceByTaskId: {
+          ...appState.value.selection.surfaceByTaskId,
+          [nextTask.id]: { kind: 'task-terminal' },
         },
         expandedTaskIds: Array.from(
-          new Set([nextTask.id, ...appState.value.selection.expandedTaskIds]),
+          new Set(
+            nextTask.repos.length
+              ? [nextTask.id, ...appState.value.selection.expandedTaskIds]
+              : appState.value.selection.expandedTaskIds,
+          ),
         ),
       },
     })
@@ -750,13 +781,9 @@ async function updateExistingTask(task: Task, input: NewTaskInput) {
       tasks: appState.value.tasks.map((item) => (item.id === task.id ? materializedTask : item)),
       selection: {
         ...appState.value.selection,
-        taskRepoIdByTaskId: {
-          ...appState.value.selection.taskRepoIdByTaskId,
-          [task.id]:
-            materializedTask.repos.find(
-              (taskRepo) =>
-                taskRepo.id === appState.value.selection.taskRepoIdByTaskId[task.id],
-            )?.id ?? materializedTask.repos[0]?.id ?? null,
+        surfaceByTaskId: {
+          ...appState.value.selection.surfaceByTaskId,
+          [task.id]: selectedSurfaceForUpdatedTask(task, materializedTask),
         },
       },
     })
@@ -769,19 +796,22 @@ async function updateExistingTask(task: Task, input: NewTaskInput) {
 async function deleteExistingTask(task: Task) {
   try {
     const nextTasks = appState.value.tasks.filter((item) => item.id !== task.id)
-    const taskRepoIdByTaskId = { ...appState.value.selection.taskRepoIdByTaskId }
+    const surfaceByTaskId = { ...appState.value.selection.surfaceByTaskId }
     const selectedFallbackTask = nextTasks[0]
     const cleanupPlans = cleanupPlansForTaskRepos(task, task.repos)
 
-    delete taskRepoIdByTaskId[task.id]
+    delete surfaceByTaskId[task.id]
 
     if (appState.value.selection.taskId === task.id && selectedFallbackTask) {
-      taskRepoIdByTaskId[selectedFallbackTask.id] ??= selectedFallbackTask.repos[0]?.id ?? null
+      surfaceByTaskId[selectedFallbackTask.id] ??= { kind: 'task-terminal' }
     }
 
-    startTaskProgress('Delete task', [], cleanupPlans)
+    if (cleanupPlans.length) {
+      startTaskProgress('Delete task', [], cleanupPlans)
+    }
 
     await runCleanupPlans(cleanupPlans)
+    await killTerminalSession({ sessionId: task.terminal.id }).catch(() => undefined)
 
     await persistAppStateAsync({
       ...appState.value,
@@ -792,7 +822,7 @@ async function deleteExistingTask(task: Task) {
           appState.value.selection.taskId === task.id
             ? selectedFallbackTask?.id ?? null
             : appState.value.selection.taskId,
-        taskRepoIdByTaskId,
+        surfaceByTaskId,
         expandedTaskIds: appState.value.selection.expandedTaskIds.filter((id) => id !== task.id),
       },
     })
@@ -927,6 +957,7 @@ onBeforeUnmount(() => {
             :working-task-id="workingTaskId"
             @edit-task="openEditTask"
             @open-new-task="openNewTask"
+            @select-task="selectTask"
             @select-task-repo="selectTaskRepo"
             @toggle-task="toggleTask"
           />

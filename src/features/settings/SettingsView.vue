@@ -693,7 +693,7 @@ onBeforeUnmount(() => {
 
             <div :class="[styles.card, styles.repoList]">
               <div v-if="!appState.repoRegistry.length" :class="styles.emptyRegistry">
-                No repositories yet. Register one to start creating tasks.
+                No repositories yet. Register one to attach code to tasks.
               </div>
 
               <template v-else>
@@ -906,7 +906,9 @@ onBeforeUnmount(() => {
                     <h2>Source</h2>
                     <p>Local git checkout</p>
                   </div>
-                  <span :class="styles.configValue">{{ selectedRepo.source.path }}</span>
+                  <span :class="[styles.configValue, styles.configCodeValue]">
+                    {{ selectedRepo.source.path }}
+                  </span>
                 </div>
 
                 <div v-if="selectedRepo.org" :class="styles.configRow">
@@ -923,7 +925,7 @@ onBeforeUnmount(() => {
                     <p>Base branch for new tasks</p>
                   </div>
                   <select
-                    :class="styles.fieldInput"
+                    :class="[styles.fieldInput, styles.monoInput]"
                     :value="selectedRepo.defaultBranch"
                     @change="updateRepoDefaultBranch(selectedRepo, $event)"
                   >

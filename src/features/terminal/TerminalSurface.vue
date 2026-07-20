@@ -4,11 +4,11 @@ import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import type { TaskRepo } from '../app-state/app-state'
 import {
   attachTerminal,
   detachTerminal,
   resizeTerminal,
+  scrollTerminal,
   writeTerminal,
   type TerminalExitEvent,
   type TerminalOutputEvent,
@@ -16,8 +16,9 @@ import {
 import styles from './TerminalSurface.module.css'
 
 const props = defineProps<{
-  taskRepo: TaskRepo
-  repoName: string
+  sessionId: string
+  cwd: string
+  label: string
   fontSize: number
 }>()
 
@@ -31,6 +32,8 @@ let unlistenExit: UnlistenFn | undefined
 let resizeObserver: ResizeObserver | undefined
 let themeObserver: MutationObserver | undefined
 let writeDisposer: { dispose: () => void } | undefined
+let terminalDomElement: HTMLElement | undefined
+let wheelRemainder = 0
 
 function cssToken(style: CSSStyleDeclaration, name: string, fallback: string) {
   return style.getPropertyValue(name).trim() || style.getPropertyValue(fallback).trim()
@@ -74,7 +77,7 @@ function fitAndResize() {
 
   fitAddon.fit()
   void resizeTerminal({
-    taskRepoId: props.taskRepo.id,
+    sessionId: props.sessionId,
     cols: terminal.cols,
     rows: terminal.rows,
   }).catch(() => undefined)
@@ -105,9 +108,89 @@ function isScrolledToBottom() {
   return terminal.buffer.active.viewportY >= terminal.buffer.active.baseY
 }
 
+function copyTerminalSelection() {
+  const selection = terminal?.getSelection()
+
+  if (!selection) {
+    return false
+  }
+
+  void globalThis.navigator.clipboard?.writeText(selection).catch(() => undefined)
+  terminal?.clearSelection()
+
+  return true
+}
+
+function handleTerminalKey(event: KeyboardEvent) {
+  if (!event.metaKey || event.ctrlKey || event.altKey) {
+    return true
+  }
+
+  const key = event.key.toLowerCase()
+
+  if (key === 'c' && terminal?.hasSelection()) {
+    event.preventDefault()
+    event.stopPropagation()
+    copyTerminalSelection()
+    return false
+  }
+
+  return true
+}
+
+function handleTerminalContextMenu(event: MouseEvent) {
+  event.preventDefault()
+  event.stopPropagation()
+
+  copyTerminalSelection()
+}
+
+function wheelDeltaToLines(event: WheelEvent) {
+  if (!terminal) {
+    return 0
+  }
+
+  if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) {
+    return event.deltaY
+  }
+
+  if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+    return event.deltaY * terminal.rows
+  }
+
+  return event.deltaY / (props.fontSize * 1.35)
+}
+
+function handleTerminalWheel(event: WheelEvent) {
+  if (!terminal || event.deltaY === 0) {
+    return true
+  }
+
+  event.preventDefault()
+  event.stopPropagation()
+
+  wheelRemainder += wheelDeltaToLines(event)
+
+  const lines = wheelRemainder > 0 ? Math.floor(wheelRemainder) : Math.ceil(wheelRemainder)
+
+  if (lines !== 0) {
+    const clampedLines = Math.max(-terminal.rows, Math.min(terminal.rows, lines))
+
+    void scrollTerminal({
+      sessionId: props.sessionId,
+      lines: clampedLines,
+    }).catch((error: unknown) => {
+      errorMessage.value = error instanceof Error ? error.message : String(error)
+    })
+    wheelRemainder -= lines
+  }
+
+  return false
+}
+
 async function attach() {
   const element = terminalElement.value
-  const cwd = props.taskRepo.worktreePath
+  const cwd = props.cwd
 
   if (!element || !cwd) {
     return
@@ -115,6 +198,7 @@ async function attach() {
 
   terminal = new Terminal({
     allowProposedApi: false,
+    altClickMovesCursor: false,
     convertEol: false,
     cursorBlink: true,
     cursorStyle: 'block',
@@ -122,12 +206,19 @@ async function attach() {
     fontSize: props.fontSize,
     letterSpacing: 0,
     lineHeight: 1.35,
+    macOptionClickForcesSelection: true,
+    rightClickSelectsWord: false,
+    smoothScrollDuration: 80,
     scrollback: 10000,
     theme: terminalTheme(element),
   })
   fitAddon = new FitAddon()
   terminal.loadAddon(fitAddon)
   terminal.open(element)
+  terminal.attachCustomKeyEventHandler(handleTerminalKey)
+  element.addEventListener('wheel', handleTerminalWheel, { capture: true, passive: false })
+  element.addEventListener('contextmenu', handleTerminalContextMenu)
+  terminalDomElement = element
   const themeRoot = element.closest('[data-theme]')
 
   if (themeRoot) {
@@ -146,7 +237,7 @@ async function attach() {
     terminal?.scrollToBottom()
 
     void writeTerminal({
-      taskRepoId: props.taskRepo.id,
+      sessionId: props.sessionId,
       data,
     }).catch((error: unknown) => {
       errorMessage.value = error instanceof Error ? error.message : String(error)
@@ -154,7 +245,7 @@ async function attach() {
   })
 
   unlistenOutput = await listen<TerminalOutputEvent>('pinata://terminal-output', (event) => {
-    if (event.payload.taskRepoId !== props.taskRepo.id) {
+    if (event.payload.sessionId !== props.sessionId) {
       return
     }
 
@@ -166,7 +257,7 @@ async function attach() {
     })
   })
   unlistenExit = await listen<TerminalExitEvent>('pinata://terminal-exit', (event) => {
-    if (event.payload.taskRepoId === props.taskRepo.id) {
+    if (event.payload.sessionId === props.sessionId) {
       errorMessage.value = 'Terminal session ended.'
     }
   })
@@ -176,7 +267,7 @@ async function attach() {
 
   try {
     await attachTerminal({
-      taskRepoId: props.taskRepo.id,
+      sessionId: props.sessionId,
       cwd,
       cols: terminal.cols,
       rows: terminal.rows,
@@ -190,6 +281,10 @@ async function attach() {
 }
 
 function detach() {
+  terminalDomElement?.removeEventListener('wheel', handleTerminalWheel, { capture: true })
+  terminalDomElement?.removeEventListener('contextmenu', handleTerminalContextMenu)
+  terminalDomElement = undefined
+  wheelRemainder = 0
   resizeObserver?.disconnect()
   resizeObserver = undefined
   themeObserver?.disconnect()
@@ -204,7 +299,7 @@ function detach() {
   terminal = undefined
   fitAddon = undefined
 
-  void detachTerminal({ taskRepoId: props.taskRepo.id }).catch(() => undefined)
+  void detachTerminal({ sessionId: props.sessionId }).catch(() => undefined)
 }
 
 onMounted(() => {
@@ -227,7 +322,7 @@ onBeforeUnmount(detach)
 </script>
 
 <template>
-  <section :class="styles.surface" :aria-label="`${repoName} terminal`">
+  <section :class="styles.surface" :aria-label="`${label} terminal`">
     <div :class="styles.terminalFrame">
       <div ref="terminalElement" :class="styles.terminal" />
     </div>

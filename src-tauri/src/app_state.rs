@@ -129,7 +129,25 @@ pub struct Task {
     pub id: String,
     pub name: String,
     pub color: String,
+    #[serde(default)]
+    pub terminal: TaskTerminal,
     pub repos: Vec<TaskRepo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskTerminal {
+    pub id: String,
+    pub cwd: String,
+}
+
+impl Default for TaskTerminal {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            cwd: "~".into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -146,8 +164,21 @@ pub struct TaskRepo {
 #[serde(rename_all = "camelCase")]
 pub struct AppSelection {
     pub task_id: Option<String>,
+    #[serde(default)]
+    pub surface_by_task_id: HashMap<String, TaskSurfaceSelection>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub task_repo_id_by_task_id: HashMap<String, Option<String>>,
     pub expanded_task_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum TaskSurfaceSelection {
+    TaskTerminal,
+    Repo {
+        #[serde(rename = "taskRepoId")]
+        task_repo_id: String,
+    },
 }
 
 impl Default for AppState {
@@ -178,7 +209,7 @@ pub fn load_app_state(app: AppHandle) -> Result<AppState, String> {
         return Err(format!("unsupported app state version {}", state.version));
     }
 
-    Ok(state)
+    Ok(normalize_app_state(state))
 }
 
 #[tauri::command]
@@ -187,6 +218,7 @@ pub fn save_app_state(app: AppHandle, state: AppState) -> Result<(), String> {
         return Err(format!("unsupported app state version {}", state.version));
     }
 
+    let state = normalize_app_state(state);
     let path = app_state_path(&app)?;
 
     if let Some(parent) = path.parent() {
@@ -206,6 +238,7 @@ pub fn restore_window_layout(app: &AppHandle) -> Result<(), String> {
 
     let data = fs::read_to_string(path).map_err(|error| error.to_string())?;
     let state: AppState = serde_json::from_str(&data).map_err(|error| error.to_string())?;
+    let state = normalize_app_state(state);
 
     if state.version != APP_STATE_VERSION {
         return Ok(());
@@ -245,6 +278,61 @@ fn app_state_path(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|error| error.to_string())
 }
 
+fn normalize_app_state(mut state: AppState) -> AppState {
+    let task_ids: Vec<String> = state.tasks.iter().map(|task| task.id.clone()).collect();
+    let mut surface_by_task_id = HashMap::new();
+
+    for task in &mut state.tasks {
+        if task.terminal.id.trim().is_empty() {
+            task.terminal.id = format!("task-terminal-{}", task.id);
+        }
+
+        if task.terminal.cwd.trim().is_empty() {
+            task.terminal.cwd = "~".into();
+        }
+
+        let repo_ids: Vec<&str> = task.repos.iter().map(|repo| repo.id.as_str()).collect();
+        let legacy_repo_id = state
+            .selection
+            .task_repo_id_by_task_id
+            .get(&task.id)
+            .and_then(|repo_id| repo_id.as_deref());
+
+        let surface = match state.selection.surface_by_task_id.get(&task.id) {
+            Some(TaskSurfaceSelection::Repo { task_repo_id })
+                if repo_ids.contains(&task_repo_id.as_str()) =>
+            {
+                TaskSurfaceSelection::Repo {
+                    task_repo_id: task_repo_id.clone(),
+                }
+            }
+            Some(TaskSurfaceSelection::TaskTerminal) => TaskSurfaceSelection::TaskTerminal,
+            _ if legacy_repo_id.is_some_and(|repo_id| repo_ids.contains(&repo_id)) => {
+                TaskSurfaceSelection::Repo {
+                    task_repo_id: legacy_repo_id.unwrap().to_string(),
+                }
+            }
+            _ => TaskSurfaceSelection::TaskTerminal,
+        };
+
+        surface_by_task_id.insert(task.id.clone(), surface);
+    }
+
+    state.selection.task_id = state
+        .selection
+        .task_id
+        .filter(|task_id| task_ids.contains(task_id))
+        .or_else(|| task_ids.first().cloned());
+    state.selection.surface_by_task_id = surface_by_task_id;
+    state
+        .selection
+        .expanded_task_ids
+        .retain(|task_id| task_ids.contains(task_id));
+    state.selection.task_repo_id_by_task_id.clear();
+
+    state
+}
+
 fn default_worktree_base_path() -> String {
     DEFAULT_WORKTREE_BASE_PATH.into()
 }
@@ -267,12 +355,12 @@ fn default_right_side_panel_width() -> u16 {
 
 #[cfg(test)]
 mod tests {
-    use super::AppState;
+    use super::{normalize_app_state, AppState, TaskSurfaceSelection};
 
     #[test]
     fn legacy_state_gets_default_layout() {
         let state: AppState = serde_json::from_str(
-            r#"{
+            r##"{
               "version": 1,
               "repoRegistry": [],
               "tasks": [],
@@ -281,7 +369,7 @@ mod tests {
                 "taskRepoIdByTaskId": {},
                 "expandedTaskIds": []
               }
-            }"#,
+            }"##,
         )
         .expect("legacy state should load");
 
@@ -291,5 +379,66 @@ mod tests {
         assert_eq!(state.layout.window.y, None);
         assert_eq!(state.layout.side_panels.left_width, 264);
         assert_eq!(state.layout.side_panels.right_width, 300);
+    }
+
+    #[test]
+    fn legacy_repo_selection_migrates_to_surface_selection() {
+        let state: AppState = serde_json::from_str(
+            r##"{
+              "version": 1,
+              "repoRegistry": [],
+              "tasks": [
+                {
+                  "id": "task-one",
+                  "name": "Investigate",
+                  "color": "#8f989d",
+                  "repos": [
+                    {
+                      "id": "task-repo-one",
+                      "registeredRepoId": "repo-one",
+                      "baseBranch": "main",
+                      "branch": "feat/task-one",
+                      "worktreePath": "/tmp/task-one"
+                    }
+                  ]
+                },
+                {
+                  "id": "task-two",
+                  "name": "Scratch",
+                  "color": "#8f989d",
+                  "repos": []
+                }
+              ],
+              "selection": {
+                "taskId": "task-one",
+                "taskRepoIdByTaskId": {
+                  "task-one": "task-repo-one",
+                  "task-two": null
+                },
+                "expandedTaskIds": ["task-one", "missing-task"]
+              }
+            }"##,
+        )
+        .expect("legacy state should load");
+
+        let state = normalize_app_state(state);
+
+        assert_eq!(state.tasks[0].terminal.id, "task-terminal-task-one");
+        assert_eq!(state.tasks[0].terminal.cwd, "~");
+        assert_eq!(state.tasks[1].terminal.id, "task-terminal-task-two");
+        assert!(state.selection.task_repo_id_by_task_id.is_empty());
+        assert_eq!(state.selection.expanded_task_ids, vec!["task-one"]);
+
+        match state.selection.surface_by_task_id.get("task-one") {
+            Some(TaskSurfaceSelection::Repo { task_repo_id }) => {
+                assert_eq!(task_repo_id, "task-repo-one");
+            }
+            _ => panic!("expected repo surface"),
+        }
+
+        assert!(matches!(
+            state.selection.surface_by_task_id.get("task-two"),
+            Some(TaskSurfaceSelection::TaskTerminal)
+        ));
     }
 }
