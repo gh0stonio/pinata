@@ -9,7 +9,7 @@
 - **Depends on:** nothing - **build this first.**
 - **Consumed by:** **every** spec. Tokens (`var(--*)`) are the only allowed colors; the accent is
   set inline on `.term-desktop`. Specifically: spec 01 (accent swatches + stripe), spec 14
-  (theme/accent controls, live-wired `--ui-fs`/`--density`/`--motion`), spec 05 (terminal renderer
+  (theme/accent/text controls, live-wired `data-app-font-size`), spec 05 (terminal renderer
   palette), spec 07/12 (diff colors), and all chrome.
 - **Shared contract:** `PINATA_ACCENTS` + `accentById(key)` (`term-data.jsx`); theme ids
   `pinata-dark`/`pinata-light` on `data-theme`; accent applied as inline `--accent`/`--on-accent`/
@@ -122,27 +122,29 @@ Tints are exposed as tokens: `--color-accent-subtle`, `--color-accent-hover`,
 `data-accent-intensity`. Too faint on some accent → **raise token strength, never change component
 CSS.**
 
-## Terminal palette (`.pane`-scoped; production = terminal renderer theme)
-Higher-contrast, close to a default terminal palette, scoped to `.pane`:
-- **Dark `.pane`:** `--code-bg:#1a1c1e` (matches app bg; deliberately not darker), text `#e6e9ea`,
-  soft-pastel ANSI: green `#8fd9ac`, blue `#9dc0f2`, cyan `#8ad6dc`, magenta `#d4aee6`, orange
-  `#eab488`, yellow `#e6d38f`, red `#f0a3a3`.
-- **Light `.pane`:** `--code-bg:#ffffff`, near-black text, saturated-dark ANSI: green `#0a7a30`,
-  blue `#0a4fc2`, cyan `#067173`, magenta `#9420a0`, orange `#a8530c`, yellow `#7f6200`, red
-  `#c01818`.
+## Terminal palette
+The embedded terminal uses dedicated `--color-terminal-*` tokens, not app accent tokens and not
+chrome text tokens. This keeps shell output readable in both themes and prevents accent changes from
+repainting ANSI colors.
 
-**Terminal renderer mapping (spec 05):** `background←--code-bg`, `foreground←--text`,
-`cursor←primary text`, `selection←fallback selection`, 16 ANSI slots from the `.pane` values
-(normals + brights).
-Resolve tokens to hex with `getComputedStyle`. Rebuild on theme change; bg/fg/cursor/selection
-follow terminal and theme tokens, not the accent. **Never remap the 16 ANSI hues.**
+- **Dark:** background `#151719`, foreground `#dfe3e5`, red `#ff6f82`, green `#9cd389`, yellow
+  `#e0c06a`, blue `#6aa7ff`, magenta `#d39bff`, cyan `#7fd6e8`.
+- **Light:** background `#eef1f3`, foreground `#1a1f23`, red `#b42338`, green `#24703a`, yellow
+  `#735414`, blue `#1f6fb2`, magenta `#7d4bb5`, cyan `#1f7284`.
+
+**Terminal renderer mapping (spec 05):** `background←--color-terminal-background`,
+`foreground←--color-terminal-foreground`, `cursor←--color-terminal-foreground`,
+`selection←--color-terminal-selection`, ANSI slots from the terminal color tokens. Resolve tokens
+with `getComputedStyle` and reapply on theme change. **Never remap ANSI hues from the app accent.**
 
 ## Type & motion
 - **Space Grotesk** (UI/head), **JetBrains Mono** (terminal/code/labels). Chrome typography uses
   shared tokens: display clamp `24px` to `34px`, title `17.5px`, heading `14px`, body `13px`,
   meta `12px`, label `11px`.
-- `--ui-fs`/`--density`/`--motion` live-wired from Settings (spec 14). Honor `--motion` +
-  `prefers-reduced-motion`; functional pulses only, no decorative loops.
+- `data-app-font-size` on the app root adjusts the shared app font tokens and the settings-specific
+  text tokens. Terminal font size is separate and feeds xterm directly.
+- Future density and motion controls should stay token-driven. Honor `prefers-reduced-motion`;
+  functional pulses only, no decorative loops.
 
 ## Acceptance criteria
 - [ ] Both themes ship with the exact token sets; switching is instant and complete (no stale

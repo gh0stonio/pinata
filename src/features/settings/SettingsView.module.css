@@ -1,11 +1,4 @@
 .overlay {
-	--settings-font-display: 24px;
-	--settings-font-title: 15.5px;
-	--settings-font-heading: 12.5px;
-	--settings-font-body: 12px;
-	--settings-font-meta: 10.5px;
-	--settings-font-label: 10px;
-	--settings-font-help: 8.5px;
 	--ui-button-font-size: var(--settings-font-body);
 	--ui-button-font-weight: 700;
 

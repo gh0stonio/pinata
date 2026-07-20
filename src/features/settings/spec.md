@@ -8,18 +8,18 @@
     in the app's overlay stack.
   - **Spec 03 / repo registry** - the later **Git & PR** page hosts the register-a-repo flow and the
     registry (`registerRepo` / `loadRepoRegistry`, `APP.md` §4.6).
-  - **Settings state** - the **Appearance** page writes `theme`, `accent`, and `accentIntensity` to
-    `localStorage['pinata.settings.v1']`.
+  - **Settings state** - the **Appearance** page writes `theme`, `accent`, `accentIntensity`,
+    `appFontSize`, and `terminalFontSize` to `localStorage['pinata.settings.v1']`.
   - **Spec 15** - all controls are tokens; the accent swatches are the 7 accents.
 - **Used by / links to:**
   - **Spec 01** - Onboarding writes the same `theme`, `accent`, and `accentIntensity` settings.
   - **Spec 03** - the New Task dialog can deep-link into Settings once repo setup ships.
-  - Terminal settings will later live-wire `--ui-fs` / `--density` / `--motion` onto the terminal
-    surface when spec 05 ships.
-- **Shared contract:** `SettingsView({ theme, accent, accentIntensity, appState, onClose,
-  onUpdateTheme, onUpdateAccent, onUpdateAccentIntensity, onUpdateAppState })`; settings object
-  persisted at `localStorage['pinata.settings.v1']`; repo registration writes through app state;
-  future settings keys stay in `features/settings/settings.ts`; accent swatches use
+  - **Spec 05** - terminal font size live-wires to the embedded terminal and refits xterm.
+- **Shared contract:** `SettingsView({ theme, accent, accentIntensity, appFontSize,
+  terminalFontSize, appState, onClose, onUpdateTheme, onUpdateAccent, onUpdateAccentIntensity,
+  onUpdateAppFontSize, onUpdateTerminalFontSize, onUpdateAppState })`; settings object persisted at
+  `localStorage['pinata.settings.v1']`; repo registration writes through app state; future settings
+  keys stay in `features/settings/settings.ts`; accent swatches use
   `src/components/accent-swatch-picker`.
 
 ## Purpose
@@ -42,9 +42,8 @@ Connections stay latent.
 ## Persistence
 - One object → `localStorage['pinata.settings.v1']`, merged over `S_DEFAULTS`; `set(key, value)`
   writes through immediately.
-- Theme, accent, and accent intensity are settings today. If onboarding returns, it must read/write
-  the same object.
-- Terminal font size, density, and reduced motion are deferred until the Terminal page ships.
+- Theme, accent, accent intensity, app font size, and terminal font size are settings today. If
+  onboarding returns, it must read/write the same object.
 
 ## Controls (reusable)
 `SToggle` (accent-fill switch), `SSelect`, `SSegment` (**selected segment = `--surface` fill, no
@@ -55,7 +54,8 @@ border, no shadow** - reads by contrast alone; critical in light theme), `SText`
 - **Appearance** (see spec 15): theme segmented control writes `theme`; the 7 **accent** swatches
   write `accent`; hover/selected swatch borders use the swatch's muted accent token; accent
   intensity segmented control writes `accentIntensity` and is disabled for Mono because neutral
-  accent mode has fixed strength.
+  accent mode has fixed strength. Text controls write `appFontSize` for Piñata chrome and
+  `terminalFontSize` for the embedded xterm font size.
 - **Shortcuts:** read-only keyboard map for active app shortcuts.
 - **Git & PR:** repository registry only for now. Shows a global worktree base, a Register repo
   action, and compact repo rows that open a repository settings modal. The register modal accepts a
@@ -82,8 +82,7 @@ border, no shadow** - reads by contrast alone; critical in light theme), `SText`
 - **General:** Restore session · Prevent sleep · Confirm before deleting (`confirm_delete`, gates
   spec 03 confirms) · Share anonymous usage.
 - **Terminal:** default shell · default split direction (⌘D) · scrollback · blinking cursor · copy
-  on select. Add Text & Density here when implementing terminal: terminal font size (S/M/L/XL),
-  density, and reduced motion live-wired to the terminal surface.
+  on select. Add density and reduced motion once terminal controls need their own page.
 - **Git & PR additions:** Repo removal, Fetch & worktrees controls, GitHub CLI path, GitHub account,
   and authentication state.
 - **Language servers:** global toggles (enable, format on save, inlay hints) + installed
@@ -102,8 +101,9 @@ border, no shadow** - reads by contrast alone; critical in light theme), `SText`
 
 ## Acceptance criteria
 - [ ] Rail + scoped page; Back to app closes; ⌘, toggles.
-- [ ] Values persist to `pinata.settings.v1`; theme, accent, and accent intensity update the root
-      app theme immediately.
+- [ ] Values persist to `pinata.settings.v1`; theme, accent, accent intensity, and app font size
+      update the root app theme immediately.
+- [ ] Terminal font size updates the active terminal without recreating the task repo session.
 - [ ] Git & PR registers a local git checkout into `appState.repoRegistry` and persists it through
       app state.
 - [ ] Non-git folders fail during inspection and keep Register disabled.

@@ -27,8 +27,12 @@ import {
   type AccentIntensity,
   accentIntensities,
   accents,
+  type AppFontSize,
+  appFontSizes,
   type SettingsSection,
   shortcuts,
+  type TerminalFontSize,
+  terminalFontSizes,
   type Theme,
   themes,
 } from './settings'
@@ -39,6 +43,8 @@ const props = defineProps<{
   theme: Theme
   accent: Accent
   accentIntensity: AccentIntensity
+  appFontSize: AppFontSize
+  terminalFontSize: TerminalFontSize
   appState: AppState
 }>()
 
@@ -47,6 +53,8 @@ const emit = defineEmits<{
   'update-theme': [theme: Theme]
   'update-accent': [accent: Accent]
   'update-accent-intensity': [accentIntensity: AccentIntensity]
+  'update-app-font-size': [appFontSize: AppFontSize]
+  'update-terminal-font-size': [terminalFontSize: TerminalFontSize]
   'update-app-state': [appState: AppState]
 }>()
 
@@ -557,6 +565,55 @@ onBeforeUnmount(() => {
                     :disabled="accentIntensityDisabled"
                     :aria-pressed="item.id === accentIntensity"
                     @click="emit('update-accent-intensity', item.id)"
+                  >
+                    {{ item.name }}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section :class="styles.settingsGroup" aria-labelledby="text-title">
+            <p id="text-title" :class="styles.groupLabel">Text</p>
+            <div :class="styles.card">
+              <div :class="[styles.row, styles.rowFirst]">
+                <div :class="styles.rowCopy">
+                  <h2>App font size</h2>
+                  <p>Side panels, settings and task dialogs</p>
+                </div>
+                <div :class="styles.segment" role="group" aria-label="App font size">
+                  <button
+                    v-for="item in appFontSizes"
+                    :key="item.id"
+                    type="button"
+                    :class="[
+                      styles.segmentButton,
+                      item.id === appFontSize && styles.segmentButtonActive,
+                    ]"
+                    :aria-pressed="item.id === appFontSize"
+                    @click="emit('update-app-font-size', item.id)"
+                  >
+                    {{ item.name }}
+                  </button>
+                </div>
+              </div>
+
+              <div :class="styles.row">
+                <div :class="styles.rowCopy">
+                  <h2>Terminal font size</h2>
+                  <p>Embedded terminal text only</p>
+                </div>
+                <div :class="styles.segment" role="group" aria-label="Terminal font size">
+                  <button
+                    v-for="item in terminalFontSizes"
+                    :key="item.id"
+                    type="button"
+                    :class="[
+                      styles.segmentButton,
+                      item.id === terminalFontSize && styles.segmentButtonActive,
+                    ]"
+                    :aria-pressed="item.id === terminalFontSize"
+                    @click="emit('update-terminal-font-size', item.id)"
                   >
                     {{ item.name }}
                   </button>

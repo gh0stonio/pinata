@@ -10,6 +10,15 @@
 	--font-size-body: 13px;
 	--font-size-meta: 12px;
 	--font-size-label: 11px;
+	--font-size-help: 8.5px;
+
+	--settings-font-display: 24px;
+	--settings-font-title: 15.5px;
+	--settings-font-heading: 12.5px;
+	--settings-font-body: 12px;
+	--settings-font-meta: 10.5px;
+	--settings-font-label: 10px;
+	--settings-font-help: 8.5px;
 
 	--radius-sm: 6px;
 	--radius-md: 9px;
@@ -54,4 +63,42 @@
 	--color-fallback-background: #1d2022;
 	--color-fallback-text: #e8eaeb;
 	--color-fallback-selection: rgba(232, 234, 235, 0.28);
+}
+
+[data-app-font-size="small"] {
+	--font-size-display-min: 23px;
+	--font-size-display-max: 32px;
+	--font-size-title: 16.5px;
+	--font-size-heading: 13px;
+	--font-size-body: 12.5px;
+	--font-size-meta: 11.5px;
+	--font-size-label: 10.5px;
+	--font-size-help: 8px;
+
+	--settings-font-display: 23px;
+	--settings-font-title: 15px;
+	--settings-font-heading: 12px;
+	--settings-font-body: 11.5px;
+	--settings-font-meta: 10px;
+	--settings-font-label: 9.5px;
+	--settings-font-help: 8px;
+}
+
+[data-app-font-size="large"] {
+	--font-size-display-min: 25px;
+	--font-size-display-max: 36px;
+	--font-size-title: 18.5px;
+	--font-size-heading: 15px;
+	--font-size-body: 14px;
+	--font-size-meta: 13px;
+	--font-size-label: 12px;
+	--font-size-help: 9.5px;
+
+	--settings-font-display: 25px;
+	--settings-font-title: 16.5px;
+	--settings-font-heading: 13.5px;
+	--settings-font-body: 13px;
+	--settings-font-meta: 11.5px;
+	--settings-font-label: 10.5px;
+	--settings-font-help: 9px;
 }

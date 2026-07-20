@@ -7,6 +7,7 @@ import styles from './MainSurface.module.css'
 
 const props = defineProps<{
   appState: AppState
+  terminalFontSize: number
 }>()
 
 const selectedTask = computed(() =>
@@ -37,6 +38,7 @@ const selectedRegisteredRepo = computed(() => {
       :key="selectedTaskRepo.id"
       :task-repo="selectedTaskRepo"
       :repo-name="selectedRegisteredRepo.name"
+      :font-size="terminalFontSize"
     />
 
     <section v-else :class="styles.content" aria-labelledby="pinata-empty-title">

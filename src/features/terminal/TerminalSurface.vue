@@ -3,7 +3,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { TaskRepo } from '../app-state/app-state'
 import {
   attachTerminal,
@@ -18,6 +18,7 @@ import styles from './TerminalSurface.module.css'
 const props = defineProps<{
   taskRepo: TaskRepo
   repoName: string
+  fontSize: number
 }>()
 
 const terminalElement = ref<HTMLElement | null>(null)
@@ -118,7 +119,7 @@ async function attach() {
     cursorBlink: true,
     cursorStyle: 'block',
     fontFamily: '"JetBrains Mono", ui-monospace, "SF Mono", Menlo, Monaco, monospace',
-    fontSize: 13,
+    fontSize: props.fontSize,
     letterSpacing: 0,
     lineHeight: 1.35,
     scrollback: 10000,
@@ -209,6 +210,18 @@ function detach() {
 onMounted(() => {
   void attach()
 })
+
+watch(
+  () => props.fontSize,
+  () => {
+    if (!terminal) {
+      return
+    }
+
+    terminal.options.fontSize = props.fontSize
+    void nextTick().then(fitAndResize)
+  },
+)
 
 onBeforeUnmount(detach)
 </script>

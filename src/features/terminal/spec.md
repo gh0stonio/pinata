@@ -19,7 +19,9 @@
 - The terminal keeps tokenized inner padding so shell text does not sit against the panel border.
 - The xterm scrollbar is hidden. Wheel and trackpad scrolling still move through tmux pane history.
 - Terminal colors must not use app accent tokens. ANSI colors, cursor, selection, and shell output
-  stay on terminal/status tokens so accent changes do not repaint terminal content.
+  stay on `--color-terminal-*` tokens so accent changes do not repaint terminal content.
+- Terminal font size comes from Settings `terminalFontSize`; changing it updates xterm options,
+  refits the renderer, and sends the new PTY size to Rust.
 - Session identity is deterministic from `TaskRepo.id`.
 - The shell starts in `TaskRepo.worktreePath`.
 - The default shell is the user's `SHELL`; `zsh`, `bash`, and `fish` run as login shells. Missing

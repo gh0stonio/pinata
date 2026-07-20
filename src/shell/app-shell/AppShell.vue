@@ -37,6 +37,7 @@ import {
   defaultSettings,
   loadSettings,
   saveSettings,
+  terminalFontSizePxById,
 } from '../../features/settings/settings'
 import styles from './AppShell.module.css'
 
@@ -97,6 +98,7 @@ const bootstrapped = ref(false)
 const taskDialogProgress = ref<TaskProgress | null>(null)
 const appState = ref<AppState>(createEmptyAppState())
 const settings = ref<AppSettings>(startsInOnboarding ? { ...defaultSettings } : loadSettings())
+const terminalFontSize = computed(() => terminalFontSizePxById[settings.value.terminalFontSize])
 const editingTask = computed(() =>
   appState.value.tasks.find((task) => task.id === editingTaskId.value),
 )
@@ -898,6 +900,7 @@ onBeforeUnmount(() => {
     :data-theme="settings.theme"
     :data-accent="settings.accent"
     :data-accent-intensity="settings.accentIntensity"
+    :data-app-font-size="settings.appFontSize"
     data-density="regular"
   >
     <template v-if="bootstrapped">
@@ -940,7 +943,7 @@ onBeforeUnmount(() => {
             @keydown="resizeSidePanelWithKeyboard('left', $event)"
             @pointerdown="startSidePanelResize('left', $event)"
           />
-          <MainSurface :app-state="appState" />
+          <MainSurface :app-state="appState" :terminal-font-size="terminalFontSize" />
           <button
             type="button"
             :class="[
@@ -962,11 +965,15 @@ onBeforeUnmount(() => {
           :theme="settings.theme"
           :accent="settings.accent"
           :accent-intensity="settings.accentIntensity"
+          :app-font-size="settings.appFontSize"
+          :terminal-font-size="settings.terminalFontSize"
           :app-state="appState"
           @close="closeSettings"
           @update-theme="(theme) => updateSettings({ theme })"
           @update-accent="(accent) => updateSettings({ accent })"
           @update-accent-intensity="(accentIntensity) => updateSettings({ accentIntensity })"
+          @update-app-font-size="(appFontSize) => updateSettings({ appFontSize })"
+          @update-terminal-font-size="(terminalFontSize) => updateSettings({ terminalFontSize })"
           @update-app-state="persistAppState"
         />
 

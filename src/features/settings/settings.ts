@@ -1,12 +1,16 @@
 export type Theme = 'pinata-dark' | 'pinata-light'
 export type Accent = 'coral' | 'teal' | 'gold' | 'magenta' | 'lime' | 'azure' | 'mono'
 export type AccentIntensity = 'transparent' | 'balanced' | 'vibrant'
+export type AppFontSize = 'small' | 'regular' | 'large'
+export type TerminalFontSize = 'small' | 'regular' | 'large' | 'xl'
 export type SettingsSection = 'appearance' | 'shortcuts' | 'git'
 
 export type AppSettings = {
   theme: Theme
   accent: Accent
   accentIntensity: AccentIntensity
+  appFontSize: AppFontSize
+  terminalFontSize: TerminalFontSize
 }
 
 export const settingsKey = 'pinata.settings.v1'
@@ -32,6 +36,23 @@ export const accentIntensities: Array<{ id: AccentIntensity; name: string }> = [
   { id: 'vibrant', name: 'Vibrant' },
 ]
 
+export const appFontSizes: Array<{ id: AppFontSize; name: string }> = [
+  { id: 'small', name: 'Small' },
+  { id: 'regular', name: 'Default' },
+  { id: 'large', name: 'Large' },
+]
+
+export const terminalFontSizes: Array<{ id: TerminalFontSize; name: string; value: number }> = [
+  { id: 'small', name: '12px', value: 12 },
+  { id: 'regular', name: '13px', value: 13 },
+  { id: 'large', name: '14px', value: 14 },
+  { id: 'xl', name: '15px', value: 15 },
+]
+
+export const terminalFontSizePxById: Record<TerminalFontSize, number> = Object.fromEntries(
+  terminalFontSizes.map((item) => [item.id, item.value]),
+) as Record<TerminalFontSize, number>
+
 export const shortcuts = [
   { keys: '⌘B', label: 'Toggle left side panel' },
   { keys: '⌘L', label: 'Toggle right side panel' },
@@ -42,6 +63,8 @@ export const defaultSettings: AppSettings = {
   theme: 'pinata-dark',
   accent: 'coral',
   accentIntensity: 'balanced',
+  appFontSize: 'regular',
+  terminalFontSize: 'regular',
 }
 
 function pickSetting<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
@@ -67,6 +90,16 @@ export function loadSettings(): AppSettings {
         stored.accentIntensity,
         accentIntensities.map((intensity) => intensity.id),
         defaultSettings.accentIntensity,
+      ),
+      appFontSize: pickSetting(
+        stored.appFontSize,
+        appFontSizes.map((fontSize) => fontSize.id),
+        defaultSettings.appFontSize,
+      ),
+      terminalFontSize: pickSetting(
+        stored.terminalFontSize,
+        terminalFontSizes.map((fontSize) => fontSize.id),
+        defaultSettings.terminalFontSize,
       ),
     }
   } catch {
