@@ -35,6 +35,12 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": {
+      "resources/tmux/bin/tmux-aarch64-apple-darwin": "tmux/bin/tmux-aarch64-apple-darwin",
+      "resources/tmux/lib/libevent_core-2.1.7.dylib": "tmux/lib/libevent_core-2.1.7.dylib",
+      "resources/tmux/lib/libncursesw.6.dylib": "tmux/lib/libncursesw.6.dylib",
+      "resources/tmux/lib/libutf8proc.3.dylib": "tmux/lib/libutf8proc.3.dylib"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

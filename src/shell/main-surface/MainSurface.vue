@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import type { AppState } from '../../features/app-state/app-state'
 import { findRegisteredRepo } from '../../features/app-state/app-state'
+import TerminalSurface from '../../features/terminal/TerminalSurface.vue'
 import styles from './MainSurface.module.css'
 
 const props = defineProps<{
@@ -31,7 +32,14 @@ const selectedRegisteredRepo = computed(() => {
 
 <template>
   <main :class="styles.main">
-    <section :class="styles.content" aria-labelledby="pinata-empty-title">
+    <TerminalSurface
+      v-if="selectedTaskRepo?.worktreePath && selectedRegisteredRepo"
+      :key="selectedTaskRepo.id"
+      :task-repo="selectedTaskRepo"
+      :repo-name="selectedRegisteredRepo.name"
+    />
+
+    <section v-else :class="styles.content" aria-labelledby="pinata-empty-title">
       <div :class="styles.emptyState">
         <h1 id="pinata-empty-title">
           {{ selectedRegisteredRepo ? selectedRegisteredRepo.name : 'No terminal yet' }}

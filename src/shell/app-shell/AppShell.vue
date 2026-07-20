@@ -25,6 +25,7 @@ import {
 import OnboardingFlow from '../../features/onboarding/OnboardingFlow.vue'
 import { onboardingKey } from '../../features/onboarding/onboarding'
 import SettingsView from '../../features/settings/SettingsView.vue'
+import { ensureTerminalSession, killTerminalSession } from '../../features/terminal/terminal'
 import TaskDialog from '../../features/task-sidebar/task-dialog/TaskDialog.vue'
 import TaskSidePanel from '../../features/task-sidebar/TaskSidePanel.vue'
 import {
@@ -338,7 +339,12 @@ function failTaskProgress(error: unknown) {
 }
 
 async function rollbackCreatedWorktrees(plans: TaskRepoGitPlan[]) {
-  await Promise.allSettled(plans.map((plan) => deleteTaskRepoWorktree(plan)))
+  await Promise.allSettled(
+    plans.map(async (plan) => {
+      await killTerminalSession({ taskRepoId: plan.id }).catch(() => undefined)
+      await deleteTaskRepoWorktree(plan)
+    }),
+  )
 }
 
 function rejectedResult<T>(result: PromiseSettledResult<T>): result is PromiseRejectedResult {
@@ -382,10 +388,14 @@ async function runCreatePlans(
           ...plan,
           progressId: `create-${plan.id}`,
         })
+        const createdPlan = { ...plan, worktreePath }
+        createdPlans.push(createdPlan)
+        updateTaskProgressPhase(`create-${plan.id}`, 'Starting terminal')
+        await ensureTerminalSession({ taskRepoId: plan.id, cwd: worktreePath })
         updateTaskProgressStep(`create-${plan.id}`, 'done')
         await flushTaskProgress()
 
-        return { ...plan, worktreePath }
+        return createdPlan
       } catch (error) {
         updateTaskProgressStep(`create-${plan.id}`, 'error')
         await flushTaskProgress()
@@ -395,8 +405,6 @@ async function runCreatePlans(
   )
   const created = results.filter(fulfilledResult).map((result) => result.value)
   const failed = results.find(rejectedResult)
-
-  createdPlans.push(...created)
 
   if (failed) {
     await rollbackCreatedWorktrees(createdPlans)
@@ -427,6 +435,7 @@ async function runCleanupPlans(plans: TaskRepoGitPlan[]) {
   const results = await Promise.allSettled(
     plans.map(async (plan) => {
       try {
+        await killTerminalSession({ taskRepoId: plan.id })
         await deleteTaskRepoWorktree(plan)
         updateTaskProgressStep(`cleanup-${plan.id}`, 'done')
       } catch (error) {

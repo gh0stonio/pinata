@@ -93,7 +93,8 @@ type TaskRepo = {
 - Task deletion removes task-owned worktrees and branches before removing the task, its selection
   entry, and its expanded state. If the deleted task was selected, selection moves to the first
   remaining task.
-- Terminal tabs are not created yet.
+- Terminal sessions are runtime state. `TaskRepo.id` derives the bundled tmux session name and
+  `TaskRepo.worktreePath` gives the shell start directory if the session must be recreated.
 - `selection.taskRepoIdByTaskId` points at `TaskRepo.id`, not `RegisteredRepo.id`.
-- Do not persist derived git state here: diffs, PRs, auth health, ports, terminals, tabs, panes.
-  Add those when their feature ships.
+- Do not persist derived git state here: diffs, PRs, auth health, ports, or live terminal process
+  details. Add durable terminal layout only when tabs and panes ship.

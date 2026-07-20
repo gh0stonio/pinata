@@ -1,10 +1,11 @@
 use tauri::{
     menu::{AboutMetadata, Menu, MenuItemBuilder, PredefinedMenuItem, Submenu},
-    Emitter,
+    Emitter, Listener,
 };
 
 mod app_state;
 mod repository;
+mod terminal;
 
 const OPEN_SETTINGS_MENU_ID: &str = "open-settings";
 const OPEN_SETTINGS_EVENT: &str = "pinata://open-settings";
@@ -13,15 +14,25 @@ const OPEN_SETTINGS_EVENT: &str = "pinata://open-settings";
 pub fn run() {
     if let Err(error) = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .manage(terminal::TerminalState::default())
         .invoke_handler(tauri::generate_handler![
             repository::create_task_repo_worktree,
             repository::delete_task_repo_worktree,
             repository::inspect_repository,
             app_state::load_app_state,
-            app_state::save_app_state
+            app_state::save_app_state,
+            terminal::terminal_attach,
+            terminal::terminal_detach,
+            terminal::terminal_ensure_session,
+            terminal::terminal_kill_session,
+            terminal::terminal_resize
         ])
         .setup(|app| {
             let handle = app.handle();
+            let terminal_handle = handle.clone();
+            app.listen_any(terminal::TERMINAL_INPUT_EVENT, move |event| {
+                terminal::handle_terminal_input_event(terminal_handle.clone(), event);
+            });
             let package_info = handle.package_info();
             let about_metadata = AboutMetadata {
                 name: Some(package_info.name.clone()),

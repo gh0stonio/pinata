@@ -29,7 +29,7 @@ through the Tauri and Vue boundary, and where to start when changing a feature.
 - [Styling System](#styling-system)
 - [Feature Specs](#feature-specs)
 - [Where To Change Things](#where-to-change-things)
-- [Future Terminal Fit](#future-terminal-fit)
+- [Terminal Runtime](#terminal-runtime)
 - [Current High-Impact Operations](#current-high-impact-operations)
 - [Mental Model](#mental-model)
 
@@ -43,19 +43,20 @@ Task
     +-- Registered repository config
     +-- Task-owned git branch
     +-- Task-owned worktree
-    +-- Future terminal tabs and splits
+    +-- Task-owned terminal session
 ```
 
-The app does not own agent output. The future terminal surface should be a real shell where users
-start `pi`, `claude`, `codex`, or any other harness themselves.
+The app does not own agent output. The terminal surface is a real shell where users start `pi`,
+`claude`, `codex`, or any other harness themselves.
 
 ## Runtime Stack
 
 | Layer | Technology | Main files | Owns |
 |---|---|---|---|
 | Native app | Tauri 2 | `src-tauri/src/lib.rs` | macOS menu, command registration, native plugins |
-| Backend | Rust | `src-tauri/src/app_state.rs`, `src-tauri/src/repository.rs` | persisted app state, git inspection, branch and worktree commands |
+| Backend | Rust | `src-tauri/src/app_state.rs`, `src-tauri/src/repository.rs`, `src-tauri/src/terminal.rs` | persisted app state, git inspection, branch and worktree commands, PTY attachment |
 | Frontend | Vue 3 + TypeScript | `src/main.ts`, `src/App.vue`, `src/shell/app-shell/AppShell.vue` | UI tree, product flows, state orchestration |
+| Terminal runtime | xterm.js + bundled tmux | `src/features/terminal/*`, `src-tauri/resources/tmux/*` | embedded terminal rendering, durable shell sessions |
 | Styling | CSS modules + tokens | `src/styles/*`, `*.module.css` | themes, spacing, typography, flat visual system |
 | Shared UI | Vue components | `src/components/*`, `src/icons/*` | reusable controls and icons |
 
@@ -74,10 +75,11 @@ start `pi`, `claude`, `codex`, or any other harness themselves.
 |   |   +-- onboarding/         # first-run setup flow
 |   |   +-- settings/           # full-screen settings surface
 |   |   +-- task-sidebar/       # left task panel and task dialog
+|   |   +-- terminal/           # xterm surface and terminal Tauri wrappers
 |   +-- icons/                  # centralized SVG icon components
 |   +-- shell/
 |   |   +-- app-shell/          # root orchestrator
-|   |   +-- main-surface/       # center placeholder until terminal lands
+|   |   +-- main-surface/       # center selected task repo terminal host
 |   |   +-- side-panel/         # generic right side panel scaffold
 |   |   +-- title-bar/          # custom macOS title bar
 |   +-- styles/                 # design tokens, themes, globals
@@ -87,8 +89,10 @@ start `pi`, `claude`, `codex`, or any other harness themselves.
     +-- src/
     |   +-- app_state.rs        # app-state.json load/save
     |   +-- repository.rs       # git inspection and task worktree commands
+    |   +-- terminal.rs         # bundled tmux sessions and PTY attach
     |   +-- lib.rs              # Tauri setup, menu, command registration
     |   +-- main.rs             # native entrypoint
+    +-- resources/tmux/         # embedded tmux binary and dylibs
     +-- tauri.conf.json
 ```
 
@@ -102,6 +106,8 @@ start `pi`, `claude`, `codex`, or any other harness themselves.
 | First-run onboarding flag | `localStorage['pinata.onboarded.v1']` | Only gates whether onboarding appears |
 | Git repository inspection | Rust | Needs local filesystem and `git` access |
 | Branch and worktree creation/deletion | Rust | High-impact filesystem operations stay native and testable |
+| Terminal session runtime | Rust + bundled tmux | Durable shell processes must survive webview and app restarts |
+| Terminal rendering and keyboard input | Vue + xterm.js | Browser-side terminal emulator owns pixels, input, and fit |
 | Branch/worktree transaction orchestration | Vue `AppShell` | It coordinates UI progress, rollback calls, and final app-state save |
 
 ## App Boot Lifecycle
@@ -266,7 +272,8 @@ State rules:
 - Registered repository removal is blocked while any task references it.
 - Task branch identity is immutable after the row is created.
 - Task rename does not rename existing branches or move existing worktrees.
-- Terminal tabs are not in app state yet.
+- Terminal live process state is not in app state. `TaskRepo.id` derives the tmux session name, and
+  `TaskRepo.worktreePath` lets Piñata recreate the session if the tmux server is gone.
 
 Write behavior:
 
@@ -307,12 +314,12 @@ Theme CSS reads those attributes and exposes semantic tokens like `--color-accen
 
 ## Tauri Command Boundary
 
-Vue calls Rust through typed wrappers in `src/features/app-state/app-state.ts`.
+Vue calls Rust through typed wrappers in feature folders.
 
 ```mermaid
 flowchart LR
     Vue["Vue feature code"]
-    Wrappers["app-state.ts wrappers"]
+    Wrappers["typed TS wrappers"]
     Tauri["Tauri invoke"]
     Rust["Rust commands"]
 
@@ -330,6 +337,11 @@ Registered commands:
 | `inspect_repository` | `repository.rs` | Validate git checkout, infer repo metadata |
 | `create_task_repo_worktree` | `repository.rs` | Create task-owned branch and worktree |
 | `delete_task_repo_worktree` | `repository.rs` | Remove task-owned worktree and branch |
+| `terminal_ensure_session` | `terminal.rs` | Ensure a bundled tmux session exists for a task repo |
+| `terminal_attach` | `terminal.rs` | Attach xterm to the task repo tmux session through a PTY |
+| `terminal_resize` | `terminal.rs` | Resize the PTY to match xterm |
+| `terminal_detach` | `terminal.rs` | Drop the PTY attachment while keeping tmux alive |
+| `terminal_kill_session` | `terminal.rs` | Kill the task repo tmux session before worktree cleanup |
 
 ## Native Menu And Window Behavior
 
@@ -691,6 +703,7 @@ Each feature keeps a local `spec.md` close to its code.
 | `src/features/onboarding/spec.md` | first-run flow |
 | `src/features/settings/spec.md` | settings pages and repo registry |
 | `src/features/task-sidebar/spec.md` | task panel, task dialog, task git work |
+| `src/features/terminal/spec.md` | embedded terminal renderer and tmux runtime |
 | `src/styles/spec.md` | visual design system |
 
 Use this file for the big picture. Use feature specs when changing one feature.
@@ -702,6 +715,7 @@ Use this file for the big picture. Use feature specs when changing one feature.
 | Add a durable app-state field | `src/features/app-state/app-state.ts` | `src-tauri/src/app_state.rs`, app-state spec |
 | Add a Rust command | `src-tauri/src/*.rs` | `src-tauri/src/lib.rs`, TS wrapper in `app-state.ts` |
 | Change task create/edit/delete | `src/shell/app-shell/AppShell.vue` | `TaskDialog.vue`, app-state helpers, task-sidebar spec |
+| Change terminal runtime | `src/features/terminal/*` | `src-tauri/src/terminal.rs`, terminal spec |
 | Change task sidebar visuals | `TaskSidePanel.vue` | `TaskSidePanel.module.css`, task-sidebar spec |
 | Change settings | `SettingsView.vue` | `settings.ts`, settings spec |
 | Change onboarding | `OnboardingFlow.vue` | onboarding spec |
@@ -709,28 +723,58 @@ Use this file for the big picture. Use feature specs when changing one feature.
 | Add reusable visual control | `src/components/<control>` | feature imports |
 | Add icon | `src/icons/<Name>Icon.vue` | consuming component |
 
-## Future Terminal Fit
+## Terminal Runtime
 
-The terminal feature should fit this structure without renaming the current model.
+The current terminal is one embedded shell per `TaskRepo`.
 
-Likely shape:
+```mermaid
+flowchart LR
+    TaskRepo["TaskRepo.id + worktreePath"]
+    MainSurface["MainSurface"]
+    TerminalSurface["TerminalSurface + xterm.js"]
+    RustTerminal["Rust terminal.rs"]
+    PTY["portable-pty attachment"]
+    Tmux["bundled tmux private session"]
+    Shell["user shell in worktree"]
 
-```text
-src/features/terminal/
-+-- spec.md
-+-- terminal-state.ts
-+-- TerminalSurface.vue
-+-- TerminalSurface.module.css
+    TaskRepo --> MainSurface
+    MainSurface --> TerminalSurface
+    TerminalSurface <--> RustTerminal
+    RustTerminal <--> PTY
+    PTY <--> Tmux
+    Tmux <--> Shell
 ```
 
-Expected ownership:
+Runtime rules:
 
-- `AppShell` keeps selecting task and task repo.
-- `MainSurface` becomes the host for selected task repo terminal tabs.
-- Rust owns native process/session plumbing for whatever terminal backend ships.
-- Vue owns tab layout, split panes, focus, and keyboard routing.
-- App state should persist durable terminal layout only when that feature ships.
-- No agent RPC or terminal scraping should be introduced as a product dependency.
+- `xterm.js` is only the terminal renderer and input surface.
+- Rust owns PTY read/write/resize and emits `pinata://terminal-output` with base64-encoded byte
+  chunks.
+- Keystrokes use `pinata://terminal-input`, a fire-and-forget event, so typing does not wait on a
+  command response.
+- Bundled `tmux` owns durability. Closing Piñata detaches from tmux; it does not kill the shell.
+- Piñata uses the embedded `src-tauri/resources/tmux/bin/tmux-*` binary in dev and packaged builds.
+- The `tmux` server uses a private socket under the app data directory.
+- Piñata disables the tmux status bar so the xterm surface owns the full content area.
+- Piñata enables tmux mouse mode so wheel scrolling moves through tmux pane history instead of
+  reaching the shell prompt as Up/Down history input.
+- Session names are deterministic from `TaskRepo.id`.
+- The shell starts in `TaskRepo.worktreePath`.
+- The default shell is the user's `SHELL`; missing or invalid shell falls back to `/bin/zsh`.
+
+Task lifecycle integration:
+
+- Task create: create worktree, ensure terminal session, persist app state.
+- Task edit with added repo: create worktree, ensure terminal session, persist app state.
+- Task edit with removed repo: kill terminal session, delete worktree and branch, persist app state.
+- Task delete: kill each task repo terminal session, delete worktrees and branches, persist app state.
+
+Deferred:
+
+- Multiple terminal tabs per repository.
+- Split panes.
+- Restoring xterm scrollback from `tmux capture-pane` on attach.
+- Durable terminal layout state.
 
 ## Current High-Impact Operations
 

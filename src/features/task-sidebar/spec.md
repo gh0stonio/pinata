@@ -9,7 +9,7 @@ Based on v0 spec 03 and `reference/src/term-sidebar.jsx`.
 - Brand header, task rows, repo rows, and repo hover metadata.
 - New Task button and creation modal for registered repos.
 - Creating a task persists task/repo records, selects the new task, expands it, and selects its
-  first repo after git branch and worktree creation succeeds.
+  first repo after git branch, worktree, and terminal session creation succeeds.
 - Task creation and task edit switch the dialog body to a plain synchronous checklist while setting
   up or cleaning up task-owned repository worktrees. The checklist shows one row per repo, with no
   branch or worktree path detail. The repo name is the row label; the status column carries the live
@@ -24,6 +24,8 @@ Based on v0 spec 03 and `reference/src/term-sidebar.jsx`.
   displayed.
 - Git setup and cleanup run repositories in parallel. Inside each repository operation, branch and
   worktree changes stay sequential in the Rust command.
+- After each task repo worktree is created, Piñata ensures the matching bundled tmux terminal
+  session exists. Terminal setup is part of the same blocking task transaction.
 - Task creation/edit does not show a generated branch preview. Repo hover metadata owns branch
   display after the row exists.
 - Repo hover worktree metadata shows the planned final path:
@@ -53,6 +55,6 @@ Based on v0 spec 03 and `reference/src/term-sidebar.jsx`.
 - Archive task flow: task removal should become archive-first, not destructive delete. Archived
   tasks leave the active sidebar, appear in a Settings archive list, can be restored from there, and
   can be permanently deleted only from the archive view.
-- Terminal spawn after task creation.
+- Multiple terminals, tabs, and splits.
 - Drag reorder.
 - Diff counters, PR glyphs, checks donut.

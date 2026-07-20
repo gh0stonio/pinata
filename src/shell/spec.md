@@ -30,11 +30,12 @@ it.
 
 Today the shell owns `AppShell`, `TitleBar`, `SidePanel`, `MainSurface`, first-run Onboarding, and
 the task side panel host. It renders the three-column frame, left/right panel toggles, app branding
-in the left task side panel, persisted task/repo selection, and the native settings menu bridge. The
-shell waits for persisted app state to bootstrap before mounting app chrome, so startup never
-renders an empty default state for a frame. First-run Onboarding is exclusive and mounts instead of
-the title bar/body until setup finishes. The title bar center stays empty until breadcrumb switchers
-ship. Resizers, pane trees, and right-panel feature content are future work from the sections below.
+in the left task side panel, persisted task/repo selection, the native settings menu bridge, and the
+selected task repo terminal. The shell waits for persisted app state to bootstrap before mounting
+app chrome, so startup never renders an empty default state for a frame. First-run Onboarding is
+exclusive and mounts instead of the title bar/body until setup finishes. The title bar center stays
+empty until breadcrumb switchers ship. Resizers, pane trees, and right-panel feature content are
+future work from the sections below.
 
 ## Layout regions
 
@@ -80,6 +81,14 @@ others).
 
 ## Center column
 
+- **Current scope:** `MainSurface` renders the selected `TaskRepo` terminal once that repo has a
+  persisted `worktreePath`. The terminal feature owns xterm rendering, Rust PTY transport, and the
+  bundled tmux session. See `src/features/terminal/spec.md`.
+- **Empty state:** with no selected task repo, or with a repo that has not finished worktree setup,
+  the center shows a simple empty state.
+
+Future center work from v0:
+
 - **Tab bar** (`.term-tabbar`) - the active repo's tabs + a `+` new-terminal button. Full behaviour
   in spec 08.
 - **Pane area** - the active tab's pane tree (`TabPanes`, spec 04), or an **EmptyRepo** state ("No
@@ -93,7 +102,7 @@ others).
 - `selection.taskId` - current task id. `selection.taskRepoIdByTaskId[taskId]` - current task repo
   per task. `selection.expandedTaskIds` - which tasks are expanded in the left side panel.
 - Clicking a task row toggles expand/collapse only. Clicking a repo row selects that repo and its
-  task. Future tab selection should be remembered per repo once terminals land.
+  task. Future tab selection should be remembered per repo once terminal tabs land.
 
 ## Overlays (z-order, all mounted by `App`)
 

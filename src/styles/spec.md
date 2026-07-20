@@ -110,7 +110,7 @@ deeper companion:
 
 ### Where accent appears (and must not)
 Appears: active tab top-border, active chip tint + accent text, selection/active rings,
-terminal + input caret, text selection, toggle knobs, checkboxes, primary buttons
+input caret, text selection, toggle knobs, checkboxes, primary buttons
 (`--color-accent-primary` fill + `--color-accent-text`), New Task button tint, palette
 selected-row icon, "view diff" chips.
 Must **not**: body text, surfaces, borders, semantic colors, the 16 ANSI terminal colors.
@@ -132,10 +132,10 @@ Higher-contrast, close to a default terminal palette, scoped to `.pane`:
   `#c01818`.
 
 **Terminal renderer mapping (spec 05):** `background←--code-bg`, `foreground←--text`,
-`cursor←--accent`, `selection←translucent --accent`, 16 ANSI slots from the `.pane` values
+`cursor←primary text`, `selection←fallback selection`, 16 ANSI slots from the `.pane` values
 (normals + brights).
-Resolve tokens to hex with `getComputedStyle`. Rebuild on theme change; only bg/fg/cursor/selection
-follow the accent - **never remap the 16 ANSI hues.**
+Resolve tokens to hex with `getComputedStyle`. Rebuild on theme change; bg/fg/cursor/selection
+follow terminal and theme tokens, not the accent. **Never remap the 16 ANSI hues.**
 
 ## Type & motion
 - **Space Grotesk** (UI/head), **JetBrains Mono** (terminal/code/labels). Chrome typography uses
