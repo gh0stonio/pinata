@@ -6,6 +6,8 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   attachTerminal,
+  cancelTerminalScroll,
+  clearTerminal,
   detachTerminal,
   resizeTerminal,
   scrollTerminal,
@@ -34,6 +36,8 @@ let themeObserver: MutationObserver | undefined
 let writeDisposer: { dispose: () => void } | undefined
 let terminalDomElement: HTMLElement | undefined
 let wheelRemainder = 0
+let isBrowsingScrollback = false
+let scrollbackCancel: Promise<void> | undefined
 
 function cssToken(style: CSSStyleDeclaration, name: string, fallback: string) {
   return style.getPropertyValue(name).trim() || style.getPropertyValue(fallback).trim()
@@ -121,12 +125,29 @@ function copyTerminalSelection() {
   return true
 }
 
+function clearTerminalScreen() {
+  terminal?.clearSelection()
+  terminal?.clear()
+  terminal?.scrollToBottom()
+
+  void clearTerminal({ sessionId: props.sessionId }).catch((error: unknown) => {
+    errorMessage.value = error instanceof Error ? error.message : String(error)
+  })
+}
+
 function handleTerminalKey(event: KeyboardEvent) {
   if (!event.metaKey || event.ctrlKey || event.altKey) {
     return true
   }
 
   const key = event.key.toLowerCase()
+
+  if (key === 'k') {
+    event.preventDefault()
+    event.stopPropagation()
+    clearTerminalScreen()
+    return false
+  }
 
   if (key === 'c' && terminal?.hasSelection()) {
     event.preventDefault()
@@ -163,7 +184,7 @@ function wheelDeltaToLines(event: WheelEvent) {
 
 function handleTerminalWheel(event: WheelEvent) {
   if (!terminal || event.deltaY === 0) {
-    return true
+    return false
   }
 
   event.preventDefault()
@@ -173,19 +194,42 @@ function handleTerminalWheel(event: WheelEvent) {
 
   const lines = wheelRemainder > 0 ? Math.floor(wheelRemainder) : Math.ceil(wheelRemainder)
 
-  if (lines !== 0) {
-    const clampedLines = Math.max(-terminal.rows, Math.min(terminal.rows, lines))
-
-    void scrollTerminal({
-      sessionId: props.sessionId,
-      lines: clampedLines,
-    }).catch((error: unknown) => {
-      errorMessage.value = error instanceof Error ? error.message : String(error)
-    })
-    wheelRemainder -= lines
+  if (lines === 0) {
+    return false
   }
 
+  const clampedLines = Math.max(-terminal.rows, Math.min(terminal.rows, lines))
+
+  isBrowsingScrollback = true
+  void scrollTerminal({
+    sessionId: props.sessionId,
+    lines: clampedLines,
+  }).catch((error: unknown) => {
+    errorMessage.value = error instanceof Error ? error.message : String(error)
+  })
+  wheelRemainder -= lines
+
   return false
+}
+
+function leaveScrollbackBeforeInput() {
+  if (!isBrowsingScrollback && !scrollbackCancel) {
+    return Promise.resolve()
+  }
+
+  isBrowsingScrollback = false
+
+  if (!scrollbackCancel) {
+    scrollbackCancel = cancelTerminalScroll({ sessionId: props.sessionId })
+      .catch((error: unknown) => {
+        errorMessage.value = error instanceof Error ? error.message : String(error)
+      })
+      .finally(() => {
+        scrollbackCancel = undefined
+      })
+  }
+
+  return scrollbackCancel
 }
 
 async function attach() {
@@ -210,13 +254,14 @@ async function attach() {
     rightClickSelectsWord: false,
     smoothScrollDuration: 80,
     scrollback: 10000,
+    scrollOnUserInput: true,
     theme: terminalTheme(element),
   })
   fitAddon = new FitAddon()
   terminal.loadAddon(fitAddon)
   terminal.open(element)
   terminal.attachCustomKeyEventHandler(handleTerminalKey)
-  element.addEventListener('wheel', handleTerminalWheel, { capture: true, passive: false })
+  terminal.attachCustomWheelEventHandler(handleTerminalWheel)
   element.addEventListener('contextmenu', handleTerminalContextMenu)
   terminalDomElement = element
   const themeRoot = element.closest('[data-theme]')
@@ -236,11 +281,13 @@ async function attach() {
   writeDisposer = terminal.onData((data) => {
     terminal?.scrollToBottom()
 
-    void writeTerminal({
-      sessionId: props.sessionId,
-      data,
-    }).catch((error: unknown) => {
-      errorMessage.value = error instanceof Error ? error.message : String(error)
+    void leaveScrollbackBeforeInput().then(() => {
+      void writeTerminal({
+        sessionId: props.sessionId,
+        data,
+      }).catch((error: unknown) => {
+        errorMessage.value = error instanceof Error ? error.message : String(error)
+      })
     })
   })
 
@@ -281,10 +328,11 @@ async function attach() {
 }
 
 function detach() {
-  terminalDomElement?.removeEventListener('wheel', handleTerminalWheel, { capture: true })
   terminalDomElement?.removeEventListener('contextmenu', handleTerminalContextMenu)
   terminalDomElement = undefined
   wheelRemainder = 0
+  isBrowsingScrollback = false
+  scrollbackCancel = undefined
   resizeObserver?.disconnect()
   resizeObserver = undefined
   themeObserver?.disconnect()

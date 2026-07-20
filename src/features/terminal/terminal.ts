@@ -62,6 +62,14 @@ export function scrollTerminal(input: TerminalScrollInput): Promise<void> {
   return invoke('terminal_scroll', { input })
 }
 
+export function cancelTerminalScroll(input: TerminalSessionOnlyInput): Promise<void> {
+  return invoke('terminal_cancel_scroll', { input })
+}
+
+export function clearTerminal(input: TerminalSessionOnlyInput): Promise<void> {
+  return invoke('terminal_clear', { input })
+}
+
 export function detachTerminal(input: TerminalSessionOnlyInput): Promise<void> {
   return invoke('terminal_detach', { input })
 }

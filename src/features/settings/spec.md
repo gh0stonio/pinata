@@ -56,7 +56,7 @@ border, no shadow** - reads by contrast alone; critical in light theme), `SText`
   intensity segmented control writes `accentIntensity` and is disabled for Mono because neutral
   accent mode has fixed strength. Text controls write `appFontSize` for Piñata chrome and
   `terminalFontSize` for the embedded xterm font size.
-- **Shortcuts:** read-only keyboard map for active app shortcuts.
+- **Shortcuts:** read-only keyboard map for active app shortcuts, including terminal `⌘K` clear.
 - **Git & PR:** repository registry only for now. Shows a global worktree base, a Register repo
   action, and compact repo rows that open a repository settings modal. The register modal accepts a
   local path with a native directory picker plus optional name, default branch, and worktree override.

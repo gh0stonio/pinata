@@ -56,6 +56,7 @@ export const terminalFontSizePxById: Record<TerminalFontSize, number> = Object.f
 export const shortcuts = [
   { keys: '⌘B', label: 'Toggle left side panel' },
   { keys: '⌘L', label: 'Toggle right side panel' },
+  { keys: '⌘K', label: 'Clear terminal' },
   { keys: '⌘,', label: 'Open settings' },
 ]
 

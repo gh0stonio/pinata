@@ -17,11 +17,12 @@
 - The `tmux` server uses a private Piñata socket under the app data directory, not the user's
   default tmux server.
 - Piñata disables the tmux status bar and leaves tmux mouse mode off. xterm owns normal text
-  selection, while Piñata bridges wheel scrolling to tmux copy-mode history without exposing tmux
-  mouse UX.
+  selection, while tmux owns durable pane history.
 - The terminal keeps tokenized inner padding so shell text does not sit against the panel border.
-- The xterm scrollbar is hidden. Wheel and trackpad scrolling are intercepted by Piñata and mapped
-  to tmux pane history. They must never fall through as up/down input into the shell prompt history.
+- The xterm scrollbar is hidden. Wheel and trackpad gestures are stopped before they can reach the
+  shell and are mapped to tmux pane history. The next user input exits tmux scrollback before sending
+  bytes to the shell, so typing snaps back to the live cursor.
+- `⌘K` clears the visible xterm buffer and asks tmux to clear pane history for the selected session.
 - `⌘C` copies the active xterm selection. `⌘V` stays on xterm/webview's native paste path so paste
   input is not duplicated.
 - Right-click never falls through to tmux or the browser context menu. If text is selected, it
@@ -52,6 +53,7 @@ flowchart TD
     Rust["terminal.rs PTY"]
     Xterm["TerminalSurface xterm.js"]
     Input["pinata://terminal-input"]
+    Clear["terminal_clear"]
     Detach["terminal_detach"]
     Kill["terminal_kill_session"]
 
@@ -59,8 +61,10 @@ flowchart TD
     Ensure --> Tmux
     Xterm --> Attach
     Xterm --> Input
+    Xterm --> Clear
     Attach --> Rust
     Input --> Rust
+    Clear --> Tmux
     Rust --> Tmux
     Xterm --> Detach
     Detach --> Tmux

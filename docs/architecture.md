@@ -378,6 +378,8 @@ Registered commands:
 | `terminal_attach` | `terminal.rs` | Attach xterm to the selected tmux session through a PTY |
 | `terminal_resize` | `terminal.rs` | Resize the selected terminal PTY to match xterm |
 | `terminal_scroll` | `terminal.rs` | Bridge wheel scrolling to tmux pane history |
+| `terminal_cancel_scroll` | `terminal.rs` | Leave tmux scrollback before sending shell input |
+| `terminal_clear` | `terminal.rs` | Clear the selected xterm buffer and tmux pane history |
 | `terminal_detach` | `terminal.rs` | Drop the PTY attachment while keeping tmux alive |
 | `terminal_kill_session` | `terminal.rs` | Kill a selected task or repo terminal session during cleanup |
 
@@ -803,9 +805,9 @@ Runtime rules:
 - Piñata uses the embedded `src-tauri/resources/tmux/bin/tmux-*` binary in dev and packaged builds.
 - The `tmux` server uses a private socket under the app data directory.
 - Piñata disables the tmux status bar so the xterm surface owns the full content area.
-- Piñata keeps tmux mouse mode off so xterm owns selection. Wheel scrolling is intercepted by the
-  webview and bridged to tmux copy-mode history instead of reaching the shell prompt as Up/Down
-  history input.
+- Piñata keeps tmux mouse mode off so xterm owns selection. Wheel gestures are stopped before they
+  can reach the shell and are mapped to tmux pane history. The next user input exits tmux scrollback
+  before sending bytes to the shell, so typing snaps back to the live cursor.
 - Session names are deterministic from `Task.terminal.id` or `TaskRepo.id`.
 - The shell starts in `Task.terminal.cwd` for task terminals and `TaskRepo.worktreePath` for repo
   terminals.

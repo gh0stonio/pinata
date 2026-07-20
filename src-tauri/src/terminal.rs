@@ -6,7 +6,7 @@ use std::{
     env, fs,
     io::{Read, Write},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
     sync::Mutex,
     thread,
 };
@@ -252,10 +252,43 @@ pub fn terminal_scroll(app: AppHandle, input: TerminalScrollInput) -> Result<(),
             return Err("failed to enter terminal scrollback".into());
         }
 
-        send_tmux_copy_mode_command(&app, &session_name, &count, "scroll-up")
+        send_tmux_copy_mode_command(&app, &session_name, &count, "scroll-up", false)
     } else {
-        send_tmux_copy_mode_command(&app, &session_name, &count, "scroll-down").or(Ok(()))
+        send_tmux_copy_mode_command(&app, &session_name, &count, "scroll-down", true).or(Ok(()))
     }
+}
+
+#[tauri::command]
+pub fn terminal_cancel_scroll(
+    app: AppHandle,
+    input: TerminalSessionOnlyInput,
+) -> Result<(), String> {
+    if !has_session(&app, &input.session_id)? {
+        return Ok(());
+    }
+
+    let session_name = tmux_session_name(&input.session_id);
+    send_tmux_copy_mode_command(&app, &session_name, "1", "cancel", true).or(Ok(()))
+}
+
+#[tauri::command]
+pub fn terminal_clear(app: AppHandle, input: TerminalSessionOnlyInput) -> Result<(), String> {
+    if !has_session(&app, &input.session_id)? {
+        return Ok(());
+    }
+
+    let session_name = tmux_session_name(&input.session_id);
+    let _ = send_tmux_copy_mode_command(&app, &session_name, "1", "cancel", true);
+    let status = tmux_command(&app)?
+        .args(["clear-history", "-t", &session_name])
+        .status()
+        .map_err(|error| format!("failed to run bundled tmux: {error}"))?;
+
+    if status.success() {
+        return Ok(());
+    }
+
+    Err("failed to clear terminal history".into())
 }
 
 #[tauri::command]
@@ -352,9 +385,17 @@ fn send_tmux_copy_mode_command(
     target: &str,
     count: &str,
     command: &str,
+    quiet: bool,
 ) -> Result<(), String> {
-    let status = tmux_command(app)?
-        .args(["send-keys", "-t", target, "-N", count, "-X", command])
+    let mut tmux = tmux_command(app)?;
+
+    tmux.args(["send-keys", "-t", target, "-N", count, "-X", command]);
+
+    if quiet {
+        tmux.stderr(Stdio::null());
+    }
+
+    let status = tmux
         .status()
         .map_err(|error| format!("failed to run bundled tmux: {error}"))?;
 
