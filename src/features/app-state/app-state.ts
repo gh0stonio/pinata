@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 
 export type AppState = {
   version: 1
+  layout: AppLayout
   repositoryDefaults: RepositoryDefaults
   repoRegistry: RegisteredRepo[]
   tasks: Task[]
@@ -9,6 +10,43 @@ export type AppState = {
 }
 
 export const DEFAULT_WORKTREE_BASE_PATH = '~/.pinata/worktrees'
+export const DEFAULT_APP_LAYOUT: AppLayout = {
+  window: {
+    width: 1200,
+    height: 780,
+  },
+  sidePanels: {
+    leftWidth: 264,
+    rightWidth: 300,
+  },
+}
+export const SIDE_PANEL_WIDTH_LIMITS = {
+  left: {
+    min: 200,
+    max: 440,
+  },
+  right: {
+    min: 260,
+    max: 520,
+  },
+} as const
+
+export type AppLayout = {
+  window: AppWindowLayout
+  sidePanels: AppSidePanelLayout
+}
+
+export type AppWindowLayout = {
+  width: number
+  height: number
+  x?: number
+  y?: number
+}
+
+export type AppSidePanelLayout = {
+  leftWidth: number
+  rightWidth: number
+}
 
 export type RepositoryDefaults = {
   worktreeBasePath: string
@@ -92,6 +130,10 @@ export type AppSelection = {
 export function createEmptyAppState(): AppState {
   return {
     version: 1,
+    layout: {
+      window: { ...DEFAULT_APP_LAYOUT.window },
+      sidePanels: { ...DEFAULT_APP_LAYOUT.sidePanels },
+    },
     repositoryDefaults: {
       worktreeBasePath: DEFAULT_WORKTREE_BASE_PATH,
     },

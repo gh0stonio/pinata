@@ -41,6 +41,7 @@ Implemented:
 - custom macOS title bar
 - left task side panel, main content, right side panel
 - Rust-backed app state persisted in the macOS app data directory
+- persisted window size/position and resizable side panel widths
 - task/repo schema for registered repos, task repo instances, selection, and expanded tasks
 - task side panel with task rows, repo rows, selected repo state, and repo metadata hover
 - main surface reflects the selected repo until terminal spawn lands

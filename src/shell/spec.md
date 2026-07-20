@@ -34,8 +34,9 @@ in the left task side panel, persisted task/repo selection, the native settings 
 selected task repo terminal. The shell waits for persisted app state to bootstrap before mounting
 app chrome, so startup never renders an empty default state for a frame. First-run Onboarding is
 exclusive and mounts instead of the title bar/body until setup finishes. The title bar center stays
-empty until breadcrumb switchers ship. Resizers, pane trees, and right-panel feature content are
-future work from the sections below.
+empty until breadcrumb switchers ship. The left and right panels collapse independently and drag
+resize inside persisted width clamps. Pane trees and right-panel feature content are future work
+from the sections below.
 
 ## Layout regions
 
@@ -49,10 +50,16 @@ The window fills the viewport. Left and right panels are independently collapsib
 drag-resizable; the center flexes to fill.
 
 ### Panel sizing
-- `leftW` default 293, clamp **200-440**. `rightW` default 479, clamp **260-520**.
-- Resizers (`SideResizer`) are thin hit targets *between* regions; on hover they show a 1px accent-
-  neutral line; drag updates the width. They sit outside the scaled content so they stay usable.
-- `leftCollapsed` / `rightCollapsed` fully hide a panel (width → 0, resizer hidden).
+- `leftWidth` default 264, clamp **200-440**. `rightWidth` default 300, clamp **260-520**.
+- Resizers are invisible overlay hit targets on the panel edges. Hover, focus, and active drag show
+  one neutral 1px line. Drag updates the in-memory width and persists it on release.
+- Keyboard resizing is available when a resizer is focused: Arrow keys adjust by 12px, Home sets the
+  minimum, End sets the maximum.
+- `leftCollapsed` / `rightCollapsed` fully hide a panel and its resizer. Collapsed state is runtime
+  shell state. Widths persist in `app-state.json`.
+- Normal app window width, height, and optional position persist in `app-state.json`. Tauri restores
+  the saved layout during startup, and fullscreen window events do not replace the saved normal
+  window layout.
 
 ## Title bar (left → right)
 

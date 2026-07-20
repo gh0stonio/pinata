@@ -224,6 +224,18 @@ The TypeScript and Rust schemas mirror each other.
 ```ts
 type AppState = {
   version: 1
+  layout: {
+    window: {
+      width: number
+      height: number
+      x?: number
+      y?: number
+    }
+    sidePanels: {
+      leftWidth: number
+      rightWidth: number
+    }
+  }
   repositoryDefaults: {
     worktreeBasePath: string
   }
@@ -266,6 +278,10 @@ type TaskRepo = {
 
 State rules:
 
+- `layout.window` stores the normal logical app window size and optional logical window position.
+  Rust restores both during startup, and fullscreen window events are ignored by the shell saver.
+- `layout.sidePanels` stores the left and right panel widths. Panel visibility is runtime shell
+  state for now.
 - `repoRegistry` is global repository config.
 - `TaskRepo` is a repository instance inside one task.
 - Selection points to `TaskRepo.id`, not `RegisteredRepo.id`.
@@ -513,6 +529,8 @@ Interaction rules:
 - New Task opens `TaskDialog` in create mode.
 - Clicking a task row toggles expand or collapse, it does not select the first repo.
 - Clicking a repo row selects that `TaskRepo`.
+- Dragging a side panel edge resizes that panel inside its clamp and persists the new width on
+  pointer release.
 - Expanded task ids and selected task repo ids persist in app state.
 - Repo hover metadata shows branch, base branch, and planned or persisted worktree path.
 - During blocking task git work, the working task shows progress and repo selection highlight is

@@ -2,8 +2,8 @@
 
 ## Purpose
 
-Persist the durable product state that should survive app restarts: registered repositories, tasks,
-and selection. Settings still own theme and accent separately.
+Persist the durable product state that should survive app restarts: window layout, registered
+repositories, tasks, and selection. Settings still own theme and accent separately.
 
 ## Storage
 
@@ -22,6 +22,18 @@ checkouts and task creation can create or delete task-owned branches and worktre
 ```ts
 type AppState = {
   version: 1
+  layout: {
+    window: {
+      width: number
+      height: number
+      x?: number
+      y?: number
+    }
+    sidePanels: {
+      leftWidth: number
+      rightWidth: number
+    }
+  }
   repositoryDefaults: {
     worktreeBasePath: string
   }
@@ -65,6 +77,11 @@ type TaskRepo = {
 ## Rules
 
 - Use `task` in product code, not `workspace`.
+- `layout.window` persists the normal logical window size and optional logical window position.
+  Tauri restores both during startup, and the shell saves later resize or move events. Fullscreen
+  resize and move events must not overwrite it.
+- `layout.sidePanels` persists the left and right panel widths. Open or closed panel visibility is
+  runtime shell state for now.
 - `repoRegistry` is global repo config. `TaskRepo` is the repo instance inside a task.
 - `repositoryDefaults.worktreeBasePath` is the shared worktree base. Per-repo
   `worktreeBasePath` is an optional override only.

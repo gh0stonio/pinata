@@ -10,6 +10,7 @@
 }
 
 .body {
+	position: relative;
 	display: grid;
 	grid-template-columns: var(--left-side-panel-width) minmax(
 			var(--main-min-width),
@@ -19,6 +20,10 @@
 	min-height: 0;
 	flex: 1;
 	transition: grid-template-columns 250ms ease;
+}
+
+.sidePanelResizing {
+	transition: none;
 }
 
 .leftSidePanelHidden {
@@ -36,4 +41,59 @@
 	grid-template-columns: 0 minmax(var(--main-min-width), 1fr) var(
 			--right-side-panel-width
 		);
+}
+
+.sideResizer {
+	position: absolute;
+	z-index: 3;
+	top: 0;
+	bottom: 0;
+	width: var(--space-lg);
+	min-width: 0;
+	padding: 0;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	cursor: col-resize;
+}
+
+.sideResizer:focus-visible {
+	outline: none;
+}
+
+.sideResizer::after {
+	content: "";
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 50%;
+	width: 1px;
+	transform: translateX(-50%);
+	background: transparent;
+	transition: background-color 150ms ease;
+}
+
+.sideResizer:hover::after,
+.sideResizer:focus-visible::after,
+.sideResizerActive::after {
+	background: var(--color-border-primary);
+}
+
+.leftSideResizer {
+	left: var(--left-side-panel-width);
+	transform: translateX(-50%);
+}
+
+.leftSidePanelHidden .leftSideResizer {
+	display: none;
+}
+
+.rightSideResizer {
+	right: var(--right-side-panel-width);
+	display: none;
+	transform: translateX(50%);
+}
+
+.rightSidePanelVisible .rightSideResizer {
+	display: block;
 }

@@ -45,6 +45,18 @@
 	background: var(--color-background) !important;
 }
 
+.terminal :global(.xterm-viewport),
+.terminal :global(.xterm-scrollable-element) {
+	scrollbar-width: none;
+}
+
+.terminal :global(.xterm-viewport::-webkit-scrollbar),
+.terminal :global(.xterm-scrollable-element::-webkit-scrollbar),
+.terminal :global(.xterm-scrollable-element > .scrollbar),
+.terminal :global(.xterm-scrollable-element > .shadow) {
+	display: none;
+}
+
 .error {
 	position: absolute;
 	right: var(--space-3xl);

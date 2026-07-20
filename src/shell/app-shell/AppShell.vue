@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, type CSSProperties } from 'vue'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { getCurrentWindow, type PhysicalPosition, type PhysicalSize } from '@tauri-apps/api/window'
 import MainSurface from '../main-surface/MainSurface.vue'
 import SidePanel from '../side-panel/SidePanel.vue'
 import TitleBar from '../title-bar/TitleBar.vue'
 import {
   createTaskRepoWorktree,
   createTask,
+  DEFAULT_APP_LAYOUT,
   createEmptyAppState,
   deleteTaskRepoWorktree,
   findRegisteredRepo,
@@ -14,7 +16,9 @@ import {
   loadAppState,
   plannedTaskRepoWorktreePath,
   saveAppState,
+  SIDE_PANEL_WIDTH_LIMITS,
   updateTask,
+  type AppLayout,
   type AppState,
   type NewTaskInput,
   type RegisteredRepo,
@@ -64,9 +68,27 @@ type GitProgressEvent = {
   phase: string
 }
 
+type SidePanelSide = 'left' | 'right'
+
+type SidePanelResizeStart = {
+  side: SidePanelSide
+  startX: number
+  startWidth: number
+}
+
+const MIN_WINDOW_WIDTH = 900
+const MIN_WINDOW_HEIGHT = 600
+const MAX_WINDOW_WIDTH = 4000
+const MAX_WINDOW_HEIGHT = 3000
+const WINDOW_LAYOUT_SAVE_DELAY = 300
+
+const appWindow = getCurrentWindow()
 const startsInOnboarding = !localStorage.getItem(onboardingKey)
 const leftSidePanelVisible = ref(true)
 const rightSidePanelVisible = ref(false)
+const leftSidePanelWidth = ref(DEFAULT_APP_LAYOUT.sidePanels.leftWidth)
+const rightSidePanelWidth = ref(DEFAULT_APP_LAYOUT.sidePanels.rightWidth)
+const resizingSidePanel = ref<SidePanelSide | null>(null)
 const settingsVisible = ref(false)
 const newTaskVisible = ref(false)
 const editingTaskId = ref<string | null>(null)
@@ -89,9 +111,218 @@ const taskDialogBusy = computed(() =>
   ),
 )
 const workingTaskId = computed(() => (taskDialogBusy.value ? editingTask.value?.id ?? null : null))
+const bodyLayoutStyle = computed<CSSProperties>(() => ({
+  '--left-side-panel-width': `${leftSidePanelWidth.value}px`,
+  '--right-side-panel-width': `${rightSidePanelWidth.value}px`,
+}))
 let unlistenOpenSettings: UnlistenFn | undefined
 let unlistenGitProgress: UnlistenFn | undefined
+let unlistenWindowResized: UnlistenFn | undefined
+let unlistenWindowMoved: UnlistenFn | undefined
 let appStateTouched = false
+let appStateSaveQueue: Promise<void> = Promise.resolve()
+let sidePanelResizeStart: SidePanelResizeStart | undefined
+let windowLayoutSaveTimer: number | undefined
+let pendingWindowSize: PhysicalSize | undefined
+let pendingWindowPosition: PhysicalPosition | undefined
+
+function clamp(value: number, min: number, max: number) {
+  return Math.round(Math.min(max, Math.max(min, value)))
+}
+
+function clampSidePanelWidth(side: SidePanelSide, width: number) {
+  const limits = SIDE_PANEL_WIDTH_LIMITS[side]
+
+  return clamp(width, limits.min, limits.max)
+}
+
+function appLayout(state: AppState): AppLayout {
+  return state.layout ?? DEFAULT_APP_LAYOUT
+}
+
+function applyStoredSidePanelWidths(state: AppState) {
+  const layout = appLayout(state)
+
+  leftSidePanelWidth.value = clampSidePanelWidth(
+    'left',
+    layout.sidePanels?.leftWidth ?? DEFAULT_APP_LAYOUT.sidePanels.leftWidth,
+  )
+  rightSidePanelWidth.value = clampSidePanelWidth(
+    'right',
+    layout.sidePanels?.rightWidth ?? DEFAULT_APP_LAYOUT.sidePanels.rightWidth,
+  )
+}
+
+function persistSidePanelWidths() {
+  persistAppState({
+    ...appState.value,
+    layout: {
+      ...appLayout(appState.value),
+      sidePanels: {
+        leftWidth: leftSidePanelWidth.value,
+        rightWidth: rightSidePanelWidth.value,
+      },
+    },
+  })
+}
+
+function startSidePanelResize(side: SidePanelSide, event: PointerEvent) {
+  if (event.button !== 0) {
+    return
+  }
+
+  event.preventDefault()
+  event.stopPropagation()
+
+  sidePanelResizeStart = {
+    side,
+    startX: event.clientX,
+    startWidth: side === 'left' ? leftSidePanelWidth.value : rightSidePanelWidth.value,
+  }
+  resizingSidePanel.value = side
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+  window.addEventListener('pointermove', resizeSidePanel)
+  window.addEventListener('pointerup', stopSidePanelResize)
+}
+
+function resizeSidePanel(event: PointerEvent) {
+  if (!sidePanelResizeStart) {
+    return
+  }
+
+  const delta = event.clientX - sidePanelResizeStart.startX
+  const width =
+    sidePanelResizeStart.side === 'left'
+      ? sidePanelResizeStart.startWidth + delta
+      : sidePanelResizeStart.startWidth - delta
+
+  if (sidePanelResizeStart.side === 'left') {
+    leftSidePanelWidth.value = clampSidePanelWidth('left', width)
+  } else {
+    rightSidePanelWidth.value = clampSidePanelWidth('right', width)
+  }
+}
+
+function stopSidePanelResize() {
+  if (!sidePanelResizeStart) {
+    return
+  }
+
+  sidePanelResizeStart = undefined
+  resizingSidePanel.value = null
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+  window.removeEventListener('pointermove', resizeSidePanel)
+  window.removeEventListener('pointerup', stopSidePanelResize)
+  persistSidePanelWidths()
+}
+
+function resizeSidePanelWithKeyboard(side: SidePanelSide, event: KeyboardEvent) {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+    return
+  }
+
+  event.preventDefault()
+
+  const limits = SIDE_PANEL_WIDTH_LIMITS[side]
+  const currentWidth = side === 'left' ? leftSidePanelWidth.value : rightSidePanelWidth.value
+  const step = 12
+  let nextWidth = currentWidth
+
+  if (event.key === 'Home') {
+    nextWidth = limits.min
+  } else if (event.key === 'End') {
+    nextWidth = limits.max
+  } else if (side === 'left') {
+    nextWidth = currentWidth + (event.key === 'ArrowRight' ? step : -step)
+  } else {
+    nextWidth = currentWidth + (event.key === 'ArrowLeft' ? step : -step)
+  }
+
+  if (side === 'left') {
+    leftSidePanelWidth.value = clampSidePanelWidth(side, nextWidth)
+  } else {
+    rightSidePanelWidth.value = clampSidePanelWidth(side, nextWidth)
+  }
+
+  persistSidePanelWidths()
+}
+
+async function persistPendingWindowLayout() {
+  const size = pendingWindowSize
+  const position = pendingWindowPosition
+
+  pendingWindowSize = undefined
+  pendingWindowPosition = undefined
+
+  if ((!size && !position) || !bootstrapped.value) {
+    return
+  }
+
+  const fullscreen = await appWindow.isFullscreen()
+
+  if (fullscreen) {
+    return
+  }
+
+  const scaleFactor = await appWindow.scaleFactor()
+  const nextWindow = {
+    ...(appLayout(appState.value).window ?? DEFAULT_APP_LAYOUT.window),
+  }
+
+  if (size) {
+    const logicalSize = size.toLogical(scaleFactor)
+
+    nextWindow.width = clamp(logicalSize.width, MIN_WINDOW_WIDTH, MAX_WINDOW_WIDTH)
+    nextWindow.height = clamp(logicalSize.height, MIN_WINDOW_HEIGHT, MAX_WINDOW_HEIGHT)
+  }
+
+  if (position) {
+    const logicalPosition = position.toLogical(scaleFactor)
+
+    nextWindow.x = Math.round(logicalPosition.x)
+    nextWindow.y = Math.round(logicalPosition.y)
+  }
+
+  persistAppState({
+    ...appState.value,
+    layout: {
+      ...appLayout(appState.value),
+      window: nextWindow,
+    },
+  })
+}
+
+function scheduleWindowLayoutSave(next: { size?: PhysicalSize; position?: PhysicalPosition }) {
+  if (next.size) {
+    pendingWindowSize = next.size
+  }
+
+  if (next.position) {
+    pendingWindowPosition = next.position
+  }
+
+  if (windowLayoutSaveTimer) {
+    window.clearTimeout(windowLayoutSaveTimer)
+  }
+
+  windowLayoutSaveTimer = window.setTimeout(() => {
+    windowLayoutSaveTimer = undefined
+    void persistPendingWindowLayout().catch((error: unknown) => {
+      console.error('Failed to save window layout', error)
+    })
+  }, WINDOW_LAYOUT_SAVE_DELAY)
+}
+
+async function startWindowLayoutPersistence() {
+  unlistenWindowResized = await appWindow.onResized(({ payload }) => {
+    scheduleWindowLayoutSave({ size: payload })
+  })
+  unlistenWindowMoved = await appWindow.onMoved(({ payload }) => {
+    scheduleWindowLayoutSave({ position: payload })
+  })
+}
 
 function updateSettings(next: Partial<AppSettings>) {
   settings.value = { ...settings.value, ...next }
@@ -177,7 +408,11 @@ function persistAppState(next: AppState) {
 async function persistAppStateAsync(next: AppState) {
   appStateTouched = true
   appState.value = next
-  await saveAppState(next)
+
+  const save = appStateSaveQueue.catch(() => undefined).then(() => saveAppState(next))
+  appStateSaveQueue = save
+
+  await save
 }
 
 function selectTaskRepo(task: Task, taskRepo: TaskRepo) {
@@ -619,12 +854,16 @@ onMounted(() => {
       }
 
       appState.value = state
+      applyStoredSidePanelWidths(state)
     })
     .catch((error: unknown) => {
       console.error('Failed to load app state', error)
     })
     .finally(() => {
       bootstrapped.value = true
+      void startWindowLayoutPersistence().catch((error: unknown) => {
+        console.error('Failed to listen for window layout changes', error)
+      })
     })
   void listen('pinata://open-settings', openSettings).then((unlisten) => {
     unlistenOpenSettings = unlisten
@@ -638,8 +877,18 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleKeydown)
+  stopSidePanelResize()
+  if (windowLayoutSaveTimer) {
+    window.clearTimeout(windowLayoutSaveTimer)
+    windowLayoutSaveTimer = undefined
+  }
+  void persistPendingWindowLayout().catch((error: unknown) => {
+    console.error('Failed to save window layout', error)
+  })
   unlistenOpenSettings?.()
   unlistenGitProgress?.()
+  unlistenWindowResized?.()
+  unlistenWindowMoved?.()
 })
 </script>
 
@@ -665,7 +914,9 @@ onBeforeUnmount(() => {
             styles.body,
             !leftSidePanelVisible && styles.leftSidePanelHidden,
             rightSidePanelVisible && styles.rightSidePanelVisible,
+            resizingSidePanel && styles.sidePanelResizing,
           ]"
+          :style="bodyLayoutStyle"
         >
           <TaskSidePanel
             :app-state="appState"
@@ -676,7 +927,33 @@ onBeforeUnmount(() => {
             @select-task-repo="selectTaskRepo"
             @toggle-task="toggleTask"
           />
+          <button
+            type="button"
+            :class="[
+              styles.sideResizer,
+              styles.leftSideResizer,
+              resizingSidePanel === 'left' && styles.sideResizerActive,
+            ]"
+            :aria-hidden="!leftSidePanelVisible"
+            :tabindex="leftSidePanelVisible ? 0 : -1"
+            aria-label="Resize left side panel"
+            @keydown="resizeSidePanelWithKeyboard('left', $event)"
+            @pointerdown="startSidePanelResize('left', $event)"
+          />
           <MainSurface :app-state="appState" />
+          <button
+            type="button"
+            :class="[
+              styles.sideResizer,
+              styles.rightSideResizer,
+              resizingSidePanel === 'right' && styles.sideResizerActive,
+            ]"
+            :aria-hidden="!rightSidePanelVisible"
+            :tabindex="rightSidePanelVisible ? 0 : -1"
+            aria-label="Resize right side panel"
+            @keydown="resizeSidePanelWithKeyboard('right', $event)"
+            @pointerdown="startSidePanelResize('right', $event)"
+          />
           <SidePanel title="Side panel" empty="Nothing here yet." side="right" :visible="rightSidePanelVisible" />
         </div>
 

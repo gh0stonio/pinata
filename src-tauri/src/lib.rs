@@ -29,6 +29,10 @@ pub fn run() {
         ])
         .setup(|app| {
             let handle = app.handle();
+            if let Err(error) = app_state::restore_window_layout(handle) {
+                eprintln!("failed to restore window layout: {error}");
+            }
+
             let terminal_handle = handle.clone();
             app.listen_any(terminal::TERMINAL_INPUT_EVENT, move |event| {
                 terminal::handle_terminal_input_event(terminal_handle.clone(), event);

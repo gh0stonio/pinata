@@ -17,6 +17,7 @@
 - Piñata disables the tmux status bar and enables tmux mouse mode. Wheel scrolling must move through
   tmux pane history, not through shell prompt history.
 - The terminal keeps tokenized inner padding so shell text does not sit against the panel border.
+- The xterm scrollbar is hidden. Wheel and trackpad scrolling still move through tmux pane history.
 - Terminal colors must not use app accent tokens. ANSI colors, cursor, selection, and shell output
   stay on terminal/status tokens so accent changes do not repaint terminal content.
 - Session identity is deterministic from `TaskRepo.id`.
