@@ -5,8 +5,8 @@
 <h1 align="center">Piñata</h1>
 
 <p align="center">
-  <strong>One task. Many repos. Real terminals.</strong><br />
-  A native macOS workbench for coding agents, worktrees, reviews, and PRs before your desktop turns into confetti.
+  <strong>Start anywhere. Keep it moving.</strong><br />
+  A native workspace for coding work in motion.
 </p>
 
 <p align="center">
@@ -18,11 +18,10 @@
 
 ## What It Is
 
-Piñata is a terminal-first workspace for tasks that may start as pure investigation, then grow into
-one or many repositories.
+Piñata is a native workspace for coding work in motion.
 
-Each task gets a home terminal for planning, agent runs, or scratch work. When code needs to move,
-attach repos to the task and Piñata gives each repo its own branch, worktree, and terminal.
+Start with a task and a real terminal. Investigate with your AI agent harness of choice, bring in
+repos when code needs to move, and keep the whole path to shipping together.
 
 Piñata does not pretend to be the agent. It gives `pi`, `claude`, `codex`, and plain shell sessions
 a durable native home.
