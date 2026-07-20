@@ -302,6 +302,7 @@ fn configure_session(app: &AppHandle, task_repo_id: &str) -> Result<(), String> 
 
     set_tmux_option(app, &session_name, "status", "off")?;
     set_tmux_option(app, &session_name, "mouse", "on")?;
+    set_tmux_option(app, &session_name, "window-size", "latest")?;
     set_tmux_option(app, &session_name, "history-limit", "10000")
 }
 

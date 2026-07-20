@@ -87,6 +87,14 @@ function nextAnimationFrame() {
   })
 }
 
+function isScrolledToBottom() {
+  if (!terminal) {
+    return true
+  }
+
+  return terminal.buffer.active.viewportY >= terminal.buffer.active.baseY
+}
+
 async function attach() {
   const element = terminalElement.value
   const cwd = props.taskRepo.worktreePath
@@ -115,6 +123,8 @@ async function attach() {
   fitAddon.fit()
 
   writeDisposer = terminal.onData((data) => {
+    terminal?.scrollToBottom()
+
     void writeTerminal({
       taskRepoId: props.taskRepo.id,
       data,
@@ -128,7 +138,12 @@ async function attach() {
       return
     }
 
-    terminal?.write(decodeOutput(event.payload.data))
+    const shouldStickToBottom = isScrolledToBottom()
+    terminal?.write(decodeOutput(event.payload.data), () => {
+      if (shouldStickToBottom) {
+        terminal?.scrollToBottom()
+      }
+    })
   })
   unlistenExit = await listen<TerminalExitEvent>('pinata://terminal-exit', (event) => {
     if (event.payload.taskRepoId === props.taskRepo.id) {
@@ -147,6 +162,7 @@ async function attach() {
       rows: terminal.rows,
     })
     fitAndResize()
+    terminal.scrollToBottom()
     terminal.focus()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : String(error)
