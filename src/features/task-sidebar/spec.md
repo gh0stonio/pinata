@@ -42,8 +42,8 @@ Based on v0 spec 03 and `reference/src/term-sidebar.jsx`.
   id hash plus current task slug. Repos with an existing worktree keep their base branch too, and
   the base branch control is disabled in task edit.
 - Selection and expanded tasks persist through app state.
-- Clicking a task row selects the task terminal. Clicking the chevron expands or collapses attached
-  repos. Clicking a repo row selects that repo terminal.
+- Clicking a task row selects the task terminal and expands or collapses attached repos. Clicking a
+  repo row selects that repo terminal.
 - Repo-less task rows do not reserve caret space. They read as a plain selectable task terminal row.
 - Task label uses the shared meta scale: `--font-ui`, `--font-size-meta`, 0.08em tracking,
   weight 700.

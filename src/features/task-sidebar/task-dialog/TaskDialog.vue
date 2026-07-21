@@ -505,7 +505,7 @@ onMounted(() => {
         </footer>
       </div>
 
-      <div v-else :class="styles.body">
+      <form v-else :class="styles.body" @submit.prevent="saveTask">
         <label :class="styles.field">
           <span>Task name</span>
           <input
@@ -626,16 +626,15 @@ onMounted(() => {
             Cancel
           </button>
           <button
-            type="button"
+            type="submit"
             class="uiButton uiButtonSmall uiButtonPrimary"
             :disabled="isWorking || !canSave"
-            @click="saveTask"
           >
             <LayersIcon />
             {{ isWorking ? 'Working' : isEditing ? 'Save changes' : 'Create task' }}
           </button>
         </footer>
-      </div>
+      </form>
     </section>
 
     <div

@@ -137,6 +137,7 @@
 	--task-row-background: transparent;
 	--task-row-action-fade: 72px;
 	--task-row-action-solid: 32px;
+	--task-row-action-color: var(--color-text-placeholder);
 
 	position: relative;
 	display: grid;
@@ -151,6 +152,7 @@
 	overflow: visible;
 	background: var(--task-row-background);
 	color: inherit;
+	cursor: pointer;
 	transition: background 150ms ease;
 }
 
@@ -165,6 +167,11 @@
 
 .taskRowActive {
 	--task-row-background: var(--color-accent-subtle);
+	--task-row-action-color: color-mix(
+		in srgb,
+		var(--color-text-primary) 70%,
+		transparent
+	);
 }
 
 .taskRowActive:hover {
@@ -174,6 +181,10 @@
 .taskRowActive .taskName {
 	color: var(--color-text-primary);
 	font-weight: 700;
+}
+
+.taskRowActive .chevron {
+	color: var(--color-text-primary);
 }
 
 .taskRow[data-working="true"] {
@@ -231,14 +242,15 @@
 	transition: opacity 150ms ease;
 }
 
-.taskAction {
+.taskRow .taskAction {
 	--ui-button-height: 18px;
 
-	color: var(--color-text-secondary);
+	color: var(--task-row-action-color);
 }
 
-.taskAction:hover,
-.taskAction:focus-visible {
+.taskRow .taskAction:hover,
+.taskActionTooltip:hover .taskAction,
+.taskRow .taskAction:focus-visible {
 	color: var(--color-text-primary);
 }
 
@@ -276,15 +288,11 @@
 	place-items: center;
 	padding: 0;
 	background: transparent;
-	color: var(--color-text-placeholder);
+	color: var(--color-text-secondary);
 	transform: rotate(-90deg);
 	transition:
 		color 150ms ease,
 		transform 150ms ease;
-}
-
-.chevron:hover {
-	color: var(--color-text-secondary);
 }
 
 .chevronOpen {

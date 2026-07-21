@@ -87,6 +87,9 @@
 }
 
 .paneHeader {
+	--pane-header-action-color: var(--color-text-placeholder);
+	--pane-header-title-color: var(--color-text-tertiary);
+
 	display: flex;
 	align-items: center;
 	gap: var(--space-md);
@@ -96,7 +99,6 @@
 	color: var(--color-text-tertiary);
 	background: color-mix(in srgb, var(--color-background) 55%, var(--color-terminal-background));
 	border-bottom: 1px solid var(--color-border-primary);
-	transition: opacity 120ms ease;
 }
 
 .paneTitle {
@@ -104,11 +106,12 @@
 	align-items: center;
 	gap: var(--space-sm);
 	min-width: 0;
-	color: var(--color-text-tertiary);
+	color: var(--pane-header-title-color);
 	font-family: var(--font-ui);
 	font-size: var(--font-size-body);
 	font-weight: 700;
 	line-height: 1;
+	transition: color 120ms ease;
 }
 
 .paneTitle span {
@@ -130,7 +133,7 @@
 	width: 22px;
 	height: 22px;
 	padding: 0;
-	color: var(--color-text-placeholder);
+	color: var(--pane-header-action-color);
 	background: transparent;
 	border: 1px solid transparent;
 	border-radius: var(--radius-sm);
@@ -159,7 +162,16 @@
 }
 
 .paneDim .paneHeader {
-	opacity: 0.6;
+	--pane-header-action-color: color-mix(
+		in srgb,
+		var(--color-text-placeholder) 72%,
+		var(--color-terminal-background)
+	);
+	--pane-header-title-color: color-mix(
+		in srgb,
+		var(--color-text-placeholder) 72%,
+		var(--color-terminal-background)
+	);
 }
 
 .paneDim .paneBody {

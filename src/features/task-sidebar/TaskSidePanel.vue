@@ -105,6 +105,14 @@ function taskRepoPath(task: Task, taskRepo: TaskRepo) {
     registeredRepo,
   )
 }
+
+function selectAndToggleTask(task: Task) {
+  emit('select-task', task)
+
+  if (task.repos.length) {
+    emit('toggle-task', task)
+  }
+}
 </script>
 
 <template>
@@ -146,6 +154,7 @@ function taskRepoPath(task: Task, taskRepo: TaskRepo) {
             :class="[styles.taskRow, isTaskTerminalSelected(task) && styles.taskRowActive]"
             :data-working="isTaskWorking(task.id)"
             :data-has-repos="Boolean(task.repos.length)"
+            @click="selectAndToggleTask(task)"
           >
             <button
               type="button"
@@ -153,7 +162,6 @@ function taskRepoPath(task: Task, taskRepo: TaskRepo) {
               :aria-expanded="isTaskExpanded(task.id)"
               :aria-label="isTaskExpanded(task.id) ? `Collapse ${task.name}` : `Expand ${task.name}`"
               :disabled="!task.repos.length"
-              @click="emit('toggle-task', task)"
             >
               <span
                 v-if="task.repos.length"
@@ -164,7 +172,7 @@ function taskRepoPath(task: Task, taskRepo: TaskRepo) {
               </span>
             </button>
 
-            <button type="button" :class="styles.taskButton" @click="emit('select-task', task)">
+            <button type="button" :class="styles.taskButton">
               <span :class="styles.taskName">{{ task.name }}</span>
             </button>
 
@@ -184,7 +192,7 @@ function taskRepoPath(task: Task, taskRepo: TaskRepo) {
                   class="uiButton uiButtonIcon uiButtonNaked"
                   :class="styles.taskAction"
                   :aria-label="`Edit ${task.name}`"
-                  @click="emit('edit-task', task)"
+                  @click.stop="emit('edit-task', task)"
                 >
                   <PencilIcon />
                 </button>
