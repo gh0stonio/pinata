@@ -45,6 +45,7 @@ const props = defineProps<{
   accentIntensity: AccentIntensity
   appFontSize: AppFontSize
   terminalFontSize: TerminalFontSize
+  closeAppOnLastPane: boolean
   appState: AppState
 }>()
 
@@ -55,6 +56,7 @@ const emit = defineEmits<{
   'update-accent-intensity': [accentIntensity: AccentIntensity]
   'update-app-font-size': [appFontSize: AppFontSize]
   'update-terminal-font-size': [terminalFontSize: TerminalFontSize]
+  'update-close-app-on-last-pane': [closeAppOnLastPane: boolean]
   'update-app-state': [appState: AppState]
 }>()
 
@@ -1048,6 +1050,43 @@ onBeforeUnmount(() => {
                   <h2>{{ shortcut.label }}</h2>
                 </div>
                 <kbd :class="styles.key">{{ shortcut.keys }}</kbd>
+              </div>
+            </div>
+          </section>
+
+          <section :class="styles.settingsGroup" aria-labelledby="pane-behavior-title">
+            <p id="pane-behavior-title" :class="styles.groupLabel">Pane behavior</p>
+            <div :class="styles.card">
+              <div :class="[styles.row, styles.rowFirst]">
+                <div :class="styles.rowCopy">
+                  <h2>Closing the last pane</h2>
+                  <p>Choose what ⌘W does when only one terminal pane remains.</p>
+                </div>
+
+                <div :class="styles.segment" role="group" aria-label="Closing the last pane">
+                  <button
+                    type="button"
+                    :class="[
+                      styles.segmentButton,
+                      !closeAppOnLastPane && styles.segmentButtonActive,
+                    ]"
+                    :aria-pressed="!closeAppOnLastPane"
+                    @click="emit('update-close-app-on-last-pane', false)"
+                  >
+                    Show empty state
+                  </button>
+                  <button
+                    type="button"
+                    :class="[
+                      styles.segmentButton,
+                      closeAppOnLastPane && styles.segmentButtonActive,
+                    ]"
+                    :aria-pressed="closeAppOnLastPane"
+                    @click="emit('update-close-app-on-last-pane', true)"
+                  >
+                    Close app
+                  </button>
+                </div>
               </div>
             </div>
           </section>

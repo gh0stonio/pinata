@@ -85,6 +85,13 @@ struct TerminalExitEvent {
     session_id: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalProcessStatus {
+    busy: bool,
+    command: Option<String>,
+}
+
 #[tauri::command]
 pub fn terminal_ensure_session(app: AppHandle, input: TerminalSessionInput) -> Result<(), String> {
     ensure_session(&app, &input.session_id, &input.cwd)
@@ -324,6 +331,114 @@ pub fn terminal_kill_session(
     Err("failed to kill terminal session".into())
 }
 
+#[tauri::command]
+pub fn terminal_process_status(
+    app: AppHandle,
+    input: TerminalSessionOnlyInput,
+) -> Result<TerminalProcessStatus, String> {
+    if !has_session(&app, &input.session_id)? {
+        return Ok(TerminalProcessStatus {
+            busy: false,
+            command: None,
+        });
+    }
+
+    let output = tmux_command(&app)?
+        .args([
+            "display-message",
+            "-p",
+            "-t",
+            &tmux_session_name(&input.session_id),
+            "#{pane_current_command}\t#{pane_tty}",
+        ])
+        .output()
+        .map_err(|error| format!("failed to run bundled tmux: {error}"))?;
+
+    if !output.status.success() {
+        return Err("failed to inspect terminal process".into());
+    }
+
+    let status = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let (current_command, pane_tty) = status
+        .split_once('\t')
+        .map(|(command, tty)| (command.trim(), tty.trim()))
+        .unwrap_or((status.trim(), ""));
+    let command = foreground_command_for_tty(pane_tty)
+        .or_else(|| command_label(current_command, current_command));
+    let busy = command
+        .as_deref()
+        .is_some_and(|command| !is_idle_terminal_command(command));
+
+    Ok(TerminalProcessStatus { busy, command })
+}
+
+fn foreground_command_for_tty(tty_path: &str) -> Option<String> {
+    let tty = Path::new(tty_path).file_name()?.to_str()?;
+    let output = Command::new("ps")
+        .args(["-t", tty, "-o", "pid=,ppid=,stat=,comm=,command="])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(parse_ps_process)
+        .filter(|process| process.stat.contains('+'))
+        .filter_map(|process| command_label(&process.comm, &process.command))
+        .filter(|command| !is_idle_terminal_command(command))
+        .last()
+}
+
+struct PsProcess {
+    stat: String,
+    comm: String,
+    command: String,
+}
+
+fn parse_ps_process(line: &str) -> Option<PsProcess> {
+    let mut fields = line.split_whitespace();
+    fields.next()?;
+    fields.next()?;
+    let stat = fields.next()?.to_string();
+    let comm = fields.next()?.to_string();
+    let command = fields.collect::<Vec<_>>().join(" ");
+
+    Some(PsProcess {
+        stat,
+        comm,
+        command,
+    })
+}
+
+fn command_label(comm: &str, command: &str) -> Option<String> {
+    let comm = command_name(comm);
+
+    if !is_shim_command(&comm) {
+        return (!comm.is_empty()).then_some(comm);
+    }
+
+    command
+        .split_whitespace()
+        .map(command_name)
+        .find(|name| !name.is_empty() && !is_shim_command(name))
+        .or_else(|| (!comm.is_empty()).then_some(comm))
+}
+
+fn command_name(command: &str) -> String {
+    Path::new(command)
+        .file_name()
+        .and_then(|file_name| file_name.to_str())
+        .unwrap_or(command)
+        .to_string()
+}
+
+fn is_shim_command(command: &str) -> bool {
+    matches!(command, "volta-shim")
+}
+
 fn ensure_session(app: &AppHandle, session_id: &str, cwd: &str) -> Result<(), String> {
     let cwd = expand_home(cwd.trim())?;
 
@@ -413,6 +528,15 @@ fn has_session(app: &AppHandle, session_id: &str) -> Result<bool, String> {
         .map_err(|error| format!("failed to run bundled tmux: {error}"))?;
 
     Ok(status.success())
+}
+
+fn is_idle_terminal_command(command: &str) -> bool {
+    let name = Path::new(command)
+        .file_name()
+        .and_then(|file_name| file_name.to_str())
+        .unwrap_or(command);
+
+    matches!(name, "bash" | "fish" | "sh" | "tmux" | "zsh")
 }
 
 fn tmux_command(app: &AppHandle) -> Result<Command, String> {
@@ -544,7 +668,10 @@ fn expand_home(path: &str) -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{login_shell_command, tmux_session_name};
+    use super::{
+        command_label, is_idle_terminal_command, login_shell_command, parse_ps_process,
+        tmux_session_name,
+    };
     use std::path::Path;
 
     #[test]
@@ -558,5 +685,28 @@ mod tests {
     #[test]
     fn zsh_runs_as_login_shell() {
         assert_eq!(login_shell_command(Path::new("/bin/zsh")), "/bin/zsh -l");
+    }
+
+    #[test]
+    fn foreground_shells_are_idle() {
+        assert!(is_idle_terminal_command("/bin/zsh"));
+        assert!(!is_idle_terminal_command("node"));
+    }
+
+    #[test]
+    fn shim_command_uses_invoked_command_label() {
+        assert_eq!(
+            command_label("/Users/me/.volta/bin/volta-shim", "volta-shim pi"),
+            Some("pi".into())
+        );
+    }
+
+    #[test]
+    fn parses_foreground_process_rows() {
+        let process = parse_ps_process("84146 84002 S+   pi       pi").expect("row parses");
+
+        assert_eq!(process.stat, "S+");
+        assert_eq!(process.comm, "pi");
+        assert_eq!(process.command, "pi");
     }
 }

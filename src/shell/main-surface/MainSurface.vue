@@ -1,86 +1,73 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { AppState } from '../../features/app-state/app-state'
+import type { AppState, TaskTerminalPane } from '../../features/app-state/app-state'
 import {
-  findRegisteredRepo,
-  selectedTaskRepo as selectedTaskRepoForTask,
+  effectiveTerminalLayout,
+  selectedTerminalTarget,
 } from '../../features/app-state/app-state'
-import TerminalSurface from '../../features/terminal/TerminalSurface.vue'
 import styles from './MainSurface.module.css'
+import TerminalSplitNode from './TerminalSplitNode.vue'
 
 const props = defineProps<{
   appState: AppState
   terminalFontSize: number
 }>()
 
+const emit = defineEmits<{
+  'select-terminal-pane': [taskId: string, paneId: string]
+}>()
+
 const selectedTask = computed(() =>
   props.appState.tasks.find((task) => task.id === props.appState.selection.taskId),
 )
 
-const selectedTaskRepo = computed(() => {
-  const task = selectedTask.value
-
-  if (!task) {
-    return undefined
-  }
-
-  return selectedTaskRepoForTask(task, props.appState.selection)
-})
-
-const selectedRegisteredRepo = computed(() => {
-  const taskRepo = selectedTaskRepo.value
-  return taskRepo ? findRegisteredRepo(props.appState, taskRepo.registeredRepoId) : undefined
-})
-
 const selectedTerminal = computed(() => {
   const task = selectedTask.value
-  const taskRepo = selectedTaskRepo.value
-  const registeredRepo = selectedRegisteredRepo.value
 
-  if (!task) {
-    return undefined
+  return task ? selectedTerminalTarget(props.appState, task) : undefined
+})
+
+const terminalLayout = computed(() => {
+  const task = selectedTask.value
+  const terminal = selectedTerminal.value
+
+  return task && terminal ? effectiveTerminalLayout(task, terminal) : undefined
+})
+
+const panesById = computed<Record<string, TaskTerminalPane>>(() => {
+  const layout = terminalLayout.value
+
+  if (!layout) {
+    return {}
   }
 
-  if (taskRepo) {
-    return taskRepo.worktreePath && registeredRepo
-      ? {
-          id: taskRepo.id,
-          cwd: taskRepo.worktreePath,
-          label: registeredRepo.name,
-        }
-      : undefined
-  }
-
-  return {
-    id: task.terminal.id,
-    cwd: task.terminal.cwd,
-    label: task.name,
-  }
+  return Object.fromEntries(layout.panes.map((pane) => [pane.id, pane]))
 })
 </script>
 
 <template>
   <main :class="styles.main">
-    <TerminalSurface
-      v-if="selectedTerminal"
-      :key="selectedTerminal.id"
-      :session-id="selectedTerminal.id"
-      :cwd="selectedTerminal.cwd"
-      :label="selectedTerminal.label"
-      :font-size="terminalFontSize"
+    <TerminalSplitNode
+      v-if="selectedTask && terminalLayout"
+      :node="terminalLayout.root"
+      :panes="panesById"
+      :active-pane-id="terminalLayout.activePaneId"
+      :terminal-font-size="terminalFontSize"
+      @select-pane="emit('select-terminal-pane', selectedTask.id, $event)"
     />
 
     <section v-else :class="styles.content" aria-labelledby="pinata-empty-title">
       <div :class="styles.emptyState">
         <h1 id="pinata-empty-title">
-          {{ selectedRegisteredRepo ? selectedRegisteredRepo.name : 'No terminal yet' }}
+          {{ selectedTask ? 'No pane open' : 'No terminal yet' }}
         </h1>
         <p>
-          {{
-            selectedTask
-              ? 'Repository terminal is not ready yet.'
-              : 'Create a task to open a terminal.'
-          }}
+          <template v-if="selectedTask">
+            Press <kbd :class="styles.key">⌘T</kbd> to reopen a pane.
+          </template>
+          <template v-else>
+            Create a task to open a terminal.
+          </template>
         </p>
       </div>
     </section>

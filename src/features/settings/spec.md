@@ -10,14 +10,16 @@
     registry (`registerRepo` / `loadRepoRegistry`, `APP.md` §4.6).
   - **Settings state** - the **Appearance** page writes `theme`, `accent`, `accentIntensity`,
     `appFontSize`, and `terminalFontSize` to `localStorage['pinata.settings.v1']`.
+    **Shortcuts** writes the `closeAppOnLastPane` pane behavior flag.
   - **Spec 15** - all controls are tokens; the accent swatches are the 7 accents.
 - **Used by / links to:**
   - **Spec 01** - Onboarding writes the same `theme`, `accent`, and `accentIntensity` settings.
   - **Spec 03** - the New Task dialog can deep-link into Settings once repo setup ships.
   - **Spec 05** - terminal font size live-wires to the embedded terminal and refits xterm.
 - **Shared contract:** `SettingsView({ theme, accent, accentIntensity, appFontSize,
-  terminalFontSize, appState, onClose, onUpdateTheme, onUpdateAccent, onUpdateAccentIntensity,
-  onUpdateAppFontSize, onUpdateTerminalFontSize, onUpdateAppState })`; settings object persisted at
+  terminalFontSize, closeAppOnLastPane, appState, onClose, onUpdateTheme, onUpdateAccent,
+  onUpdateAccentIntensity, onUpdateAppFontSize, onUpdateTerminalFontSize,
+  onUpdateCloseAppOnLastPane, onUpdateAppState })`; settings object persisted at
   `localStorage['pinata.settings.v1']`; repo registration writes through app state; future settings
   keys stay in `features/settings/settings.ts`; accent swatches use
   `src/components/accent-swatch-picker`.
@@ -42,8 +44,8 @@ Connections stay latent.
 ## Persistence
 - One object → `localStorage['pinata.settings.v1']`, merged over `S_DEFAULTS`; `set(key, value)`
   writes through immediately.
-- Theme, accent, accent intensity, app font size, and terminal font size are settings today. If
-  onboarding returns, it must read/write the same object.
+- Theme, accent, accent intensity, app font size, terminal font size, and last-pane close behavior
+  are settings today. If onboarding returns, it must read/write the same object.
 
 ## Controls (reusable)
 `SToggle` (accent-fill switch), `SSelect`, `SSegment` (**selected segment = `--surface` fill, no
@@ -56,7 +58,10 @@ border, no shadow** - reads by contrast alone; critical in light theme), `SText`
   intensity segmented control writes `accentIntensity` and is disabled for Mono because neutral
   accent mode has fixed strength. Text controls write `appFontSize` for Piñata chrome and
   `terminalFontSize` for the embedded xterm font size.
-- **Shortcuts:** read-only keyboard map for active app shortcuts, including terminal `⌘K` clear.
+- **Shortcuts:** read-only keyboard map for active app shortcuts, including terminal `⌘T` open,
+  `⌘K` clear, `⌘W` close active pane, and `⌘D` / `⌘⇧D` split commands. The page also owns the
+  `closeAppOnLastPane` behavior option for the final pane: default is empty state, optional mode is
+  close Piñata after stopping the pane session.
 - **Git & PR:** repository registry only for now. Shows a global worktree base, a Register repo
   action, and compact repo rows that open a repository settings modal. The register modal accepts a
   local path with a native directory picker plus optional name, default branch, and worktree override.
@@ -81,7 +86,7 @@ border, no shadow** - reads by contrast alone; critical in light theme), `SText`
 - **Search:** filter settings nav once enough pages exist to justify it.
 - **General:** Restore session · Prevent sleep · Confirm before deleting (`confirm_delete`, gates
   spec 03 confirms) · Share anonymous usage.
-- **Terminal:** default shell · default split direction (⌘D) · scrollback · blinking cursor · copy
+- **Terminal:** default shell · scrollback · blinking cursor · copy
   on select. Add density and reduced motion once terminal controls need their own page.
 - **Git & PR additions:** Repo removal, Fetch & worktrees controls, GitHub CLI path, GitHub account,
   and authentication state.
@@ -104,6 +109,8 @@ border, no shadow** - reads by contrast alone; critical in light theme), `SText`
 - [ ] Values persist to `pinata.settings.v1`; theme, accent, accent intensity, and app font size
       update the root app theme immediately.
 - [ ] Terminal font size updates the active terminal without recreating the tmux session.
+- [ ] `⌘T` and `⌘W` appear in Shortcuts, and last-pane close behavior persists to
+      `pinata.settings.v1`.
 - [ ] Git & PR registers a local git checkout into `appState.repoRegistry` and persists it through
       app state.
 - [ ] Non-git folders fail during inspection and keep Register disabled.

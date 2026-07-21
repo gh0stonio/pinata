@@ -64,6 +64,8 @@ type Task = {
   color: string
   terminal: TaskTerminal
   repos: TaskRepo[]
+  terminalClosed?: boolean
+  terminalLayout?: TaskTerminalLayout
 }
 
 type TaskTerminal = {
@@ -78,6 +80,29 @@ type TaskRepo = {
   branch: string
   worktreePath?: string
 }
+
+type TaskTerminalLayout = {
+  activePaneId: string
+  panes: TaskTerminalPane[]
+  root: TerminalLayoutNode
+}
+
+type TaskTerminalPane = {
+  id: string
+  sessionId: string
+  cwd: string
+  label: string
+  source: TaskSurfaceSelection
+}
+
+type TerminalLayoutNode =
+  | { kind: 'pane'; paneId: string }
+  | {
+      kind: 'split'
+      direction: 'vertical' | 'horizontal'
+      first: TerminalLayoutNode
+      second: TerminalLayoutNode
+    }
 
 type TaskSurfaceSelection =
   | { kind: 'task-terminal' }
@@ -95,6 +120,15 @@ type TaskSurfaceSelection =
 - `repoRegistry` is global repo config. `TaskRepo` is the repo instance inside a task.
 - Every `Task` owns a default `TaskTerminal`. It starts in `~` and is the task's scratch or
   orchestration surface when no repo is selected.
+- `Task.terminalLayout` is optional. Missing layout means "render the selected task surface as one
+  pane". Once the user splits, Piñata persists the pane tree, active pane id, and each pane's
+  `sessionId`, `cwd`, label, and source.
+- `Task.terminalClosed` is optional. When true and no `Task.terminalLayout` exists, the selected
+  task shows an empty main surface instead of auto-opening the default pane. Selecting the task,
+  selecting a repo, pressing `⌘T`, or splitting clears it and reopens a pane.
+- `TaskTerminalPane.source` records whether the pane was created from the task terminal or a
+  specific task repo. Sidebar selection uses that source to focus a matching pane before replacing
+  the active pane.
 - Tasks may have zero repos. Repo-less tasks are valid and open their task terminal immediately.
 - `repositoryDefaults.worktreeBasePath` is the shared worktree base. Per-repo
   `worktreeBasePath` is an optional override only.
@@ -118,6 +152,8 @@ type TaskSurfaceSelection =
   `origin/<base branch>` when only the remote ref exists.
 - Task editing can update task name, repo membership, and base branches. Existing `TaskRepo.id`,
   `branch`, and `worktreePath` are preserved when the registered repo stays in the task.
+- Task editing that adds or removes repos resets the task terminal split layout and kills stale
+  split-only sessions. This avoids panes pointing at deleted or newly hidden worktrees.
 - Branch identity is immutable after a task repo row is created. Renaming a task must not rename
   existing planned or materialized branches; newly added repos use the existing task id hash plus
   the current task slug. If `worktreePath` exists, preserve the existing `TaskRepo.baseBranch` too
@@ -125,12 +161,12 @@ type TaskSurfaceSelection =
 - Task deletion kills the task terminal, removes task-owned worktrees and branches, then removes the
   task, its surface selection entry, and its expanded state. If the deleted task was selected,
   selection moves to the first remaining task terminal.
-- Terminal sessions are runtime state. `Task.terminal.id` and `TaskRepo.id` derive bundled tmux
-  session names. `Task.terminal.cwd` and `TaskRepo.worktreePath` give the shell start directory if
-  the session must be recreated.
+- Terminal processes are runtime state. `Task.terminal.id`, `TaskRepo.id`, and
+  `TaskTerminalPane.sessionId` derive bundled tmux session names. Their persisted `cwd` values give
+  the shell start directory if the session must be recreated.
 - `selection.surfaceByTaskId` points at either the task terminal or a `TaskRepo.id`, not a
   `RegisteredRepo.id`.
 - Rust and Vue normalize legacy state where `selection.taskRepoIdByTaskId` existed. `null` legacy
   repo selections become task-terminal selections.
-- Do not persist derived git state here: diffs, PRs, auth health, ports, or live terminal process
-  details. Add durable terminal layout only when tabs and panes ship.
+- Do not persist derived git state here: diffs, PRs, auth health, ports, live terminal process
+  details, or terminal scrollback.

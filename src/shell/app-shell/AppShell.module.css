@@ -97,3 +97,74 @@
 .rightSidePanelVisible .rightSideResizer {
 	display: block;
 }
+
+.confirmLayer {
+	position: fixed;
+	inset: 0;
+	z-index: 20;
+	display: grid;
+	place-items: center;
+	padding: var(--space-5xl);
+	background: var(--color-overlay-scrim);
+}
+
+.dragRegion {
+	position: fixed;
+	top: 0;
+	right: 0;
+	left: 0;
+	z-index: 21;
+	height: var(--titlebar-height);
+	user-select: none;
+	-webkit-user-select: none;
+	app-region: drag;
+	-webkit-app-region: drag;
+}
+
+.confirmDialog {
+	width: min(430px, calc(100vw - 64px));
+	color: var(--color-text-primary);
+	background: var(--color-surface-primary);
+	border: 1px solid var(--color-border-primary);
+	border-radius: var(--radius-lg);
+}
+
+.confirmHeader {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--space-lg);
+	padding: var(--space-xl);
+}
+
+.confirmIcon {
+	display: grid;
+	width: 34px;
+	height: 34px;
+	flex: 0 0 auto;
+	place-items: center;
+	color: var(--color-status-warning);
+	background: color-mix(in srgb, var(--color-status-warning) 18%, transparent);
+	border-radius: var(--radius-md);
+}
+
+.confirmHeader h2 {
+	margin: 0;
+	color: var(--color-text-primary);
+	font-size: var(--font-size-heading);
+	font-weight: 700;
+	line-height: 1.25;
+}
+
+.confirmHeader p {
+	margin: var(--space-xs) 0 0;
+	color: var(--color-text-tertiary);
+	font-size: var(--font-size-body);
+	line-height: 1.45;
+}
+
+.confirmActions {
+	display: flex;
+	justify-content: flex-end;
+	gap: var(--space-sm);
+	padding: 0 var(--space-xl) var(--space-xl);
+}

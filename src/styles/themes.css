@@ -48,6 +48,7 @@
 
 	--color-code-background: #1a1c1e;
 	--color-terminal-background: #151719;
+	--color-pane-dim-overlay: rgba(21, 23, 25, 0.52);
 	--color-terminal-foreground: #dfe3e5;
 	--color-terminal-black: #0f1113;
 	--color-terminal-red: #ff6f82;
@@ -116,6 +117,7 @@
 
 	--color-code-background: #ffffff;
 	--color-terminal-background: #eef1f3;
+	--color-pane-dim-overlay: rgba(238, 241, 243, 0.62);
 	--color-terminal-foreground: #1a1f23;
 	--color-terminal-black: #1a1f23;
 	--color-terminal-red: #b42338;

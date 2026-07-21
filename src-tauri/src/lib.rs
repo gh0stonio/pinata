@@ -28,7 +28,8 @@ pub fn run() {
             terminal::terminal_resize,
             terminal::terminal_scroll,
             terminal::terminal_cancel_scroll,
-            terminal::terminal_clear
+            terminal::terminal_clear,
+            terminal::terminal_process_status
         ])
         .setup(|app| {
             let handle = app.handle();
@@ -94,8 +95,6 @@ pub fn run() {
                 &[
                     &PredefinedMenuItem::minimize(handle, None)?,
                     &PredefinedMenuItem::maximize(handle, None)?,
-                    &PredefinedMenuItem::separator(handle)?,
-                    &PredefinedMenuItem::close_window(handle, None)?,
                 ],
             )?;
             let menu =

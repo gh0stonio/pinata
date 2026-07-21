@@ -42,6 +42,11 @@ export type TerminalExitEvent = {
   sessionId: string
 }
 
+export type TerminalProcessStatus = {
+  busy: boolean
+  command?: string
+}
+
 export function ensureTerminalSession(input: TerminalSessionInput): Promise<void> {
   return invoke('terminal_ensure_session', { input })
 }
@@ -76,4 +81,10 @@ export function detachTerminal(input: TerminalSessionOnlyInput): Promise<void> {
 
 export function killTerminalSession(input: TerminalSessionOnlyInput): Promise<void> {
   return invoke('terminal_kill_session', { input })
+}
+
+export function terminalProcessStatus(
+  input: TerminalSessionOnlyInput,
+): Promise<TerminalProcessStatus> {
+  return invoke('terminal_process_status', { input })
 }

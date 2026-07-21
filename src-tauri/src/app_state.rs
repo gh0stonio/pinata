@@ -132,6 +132,10 @@ pub struct Task {
     #[serde(default)]
     pub terminal: TaskTerminal,
     pub repos: Vec<TaskRepo>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub terminal_closed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_layout: Option<TaskTerminalLayout>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,6 +152,46 @@ impl Default for TaskTerminal {
             cwd: "~".into(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TerminalSplitDirection {
+    Vertical,
+    Horizontal,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskTerminalPane {
+    pub id: String,
+    pub session_id: String,
+    pub cwd: String,
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<TaskSurfaceSelection>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum TerminalLayoutNode {
+    Pane {
+        #[serde(rename = "paneId")]
+        pane_id: String,
+    },
+    Split {
+        direction: TerminalSplitDirection,
+        first: Box<TerminalLayoutNode>,
+        second: Box<TerminalLayoutNode>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskTerminalLayout {
+    pub active_pane_id: String,
+    pub panes: Vec<TaskTerminalPane>,
+    pub root: TerminalLayoutNode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -291,6 +335,10 @@ fn normalize_app_state(mut state: AppState) -> AppState {
             task.terminal.cwd = "~".into();
         }
 
+        if task.terminal_layout.is_some() {
+            task.terminal_closed = false;
+        }
+
         let repo_ids: Vec<&str> = task.repos.iter().map(|repo| repo.id.as_str()).collect();
         let legacy_repo_id = state
             .selection
@@ -339,6 +387,10 @@ fn default_worktree_base_path() -> String {
 
 fn default_window_width() -> u16 {
     1200
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 fn default_window_height() -> u16 {

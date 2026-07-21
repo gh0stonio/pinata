@@ -95,11 +95,45 @@ export type Task = {
   color: string
   terminal: TaskTerminal
   repos: TaskRepo[]
+  terminalClosed?: boolean
+  terminalLayout?: TaskTerminalLayout
 }
 
 export type TaskTerminal = {
   id: string
   cwd: string
+}
+
+export type TerminalSplitDirection = 'vertical' | 'horizontal'
+
+export type TerminalTarget = {
+  id: string
+  cwd: string
+  label: string
+  source: TaskSurfaceSelection
+}
+
+export type TaskTerminalPane = {
+  id: string
+  sessionId: string
+  cwd: string
+  label: string
+  source: TaskSurfaceSelection
+}
+
+export type TerminalLayoutNode =
+  | { kind: 'pane'; paneId: string }
+  | {
+      kind: 'split'
+      direction: TerminalSplitDirection
+      first: TerminalLayoutNode
+      second: TerminalLayoutNode
+    }
+
+export type TaskTerminalLayout = {
+  activePaneId: string
+  panes: TaskTerminalPane[]
+  root: TerminalLayoutNode
 }
 
 export type TaskRepo = {
@@ -283,6 +317,218 @@ export function selectedTaskRepo(task: Task, selection: AppSelection) {
     : undefined
 }
 
+export function terminalTargetForTaskSurface(
+  state: Pick<AppState, 'repoRegistry'>,
+  task: Task,
+  surface: TaskSurfaceSelection,
+): TerminalTarget | undefined {
+  if (surface.kind === 'repo') {
+    const taskRepo = task.repos.find((repo) => repo.id === surface.taskRepoId)
+    const registeredRepo = taskRepo
+      ? state.repoRegistry.find((repo) => repo.id === taskRepo.registeredRepoId)
+      : undefined
+
+    return taskRepo?.worktreePath && registeredRepo
+      ? {
+          id: taskRepo.id,
+          cwd: taskRepo.worktreePath,
+          label: registeredRepo.name,
+          source: surface,
+        }
+      : undefined
+  }
+
+  return {
+    id: task.terminal.id,
+    cwd: task.terminal.cwd,
+    label: task.name,
+    source: surface,
+  }
+}
+
+export function selectedTerminalTarget(state: AppState, task: Task) {
+  return terminalTargetForTaskSurface(state, task, taskSelectedSurface(task, state.selection))
+}
+
+export function effectiveTerminalLayout(
+  task: Task,
+  fallbackTarget: TerminalTarget,
+): TaskTerminalLayout | undefined {
+  if (task.terminalClosed) {
+    return undefined
+  }
+
+  const layout = normalizeTerminalLayout(task.terminalLayout)
+
+  if (layout) {
+    return layout
+  }
+
+  const pane = terminalPaneForTarget(fallbackTarget)
+
+  return {
+    activePaneId: pane.id,
+    panes: [pane],
+    root: { kind: 'pane', paneId: pane.id },
+  }
+}
+
+export function splitTaskTerminalLayout(
+  task: Task,
+  fallbackTarget: TerminalTarget,
+  direction: TerminalSplitDirection,
+): Task {
+  const layout = normalizeTerminalLayout(task.terminalLayout) ?? defaultTerminalLayout(fallbackTarget)
+  const activePane =
+    layout.panes.find((pane) => pane.id === layout.activePaneId) ?? layout.panes[0]
+  const newPaneId = `terminal-pane-${crypto.randomUUID()}`
+  const newPane = {
+    ...activePane,
+    id: newPaneId,
+    sessionId: newPaneId,
+  }
+
+  return {
+    ...task,
+    terminalClosed: false,
+    terminalLayout: {
+      activePaneId: newPane.id,
+      panes: [...layout.panes, newPane],
+      root: splitTerminalNode(layout.root, activePane.id, direction, newPane.id),
+    },
+  }
+}
+
+export function activateTaskTerminalPane(task: Task, paneId: string): Task {
+  const layout = normalizeTerminalLayout(task.terminalLayout)
+
+  if (!layout?.panes.some((pane) => pane.id === paneId)) {
+    return task
+  }
+
+  if (layout.activePaneId === paneId) {
+    return task
+  }
+
+  return {
+    ...task,
+    terminalClosed: false,
+    terminalLayout: {
+      ...layout,
+      activePaneId: paneId,
+    },
+  }
+}
+
+export function focusTaskTerminalTarget(task: Task, target: TerminalTarget): Task {
+  const layout = normalizeTerminalLayout(task.terminalLayout)
+
+  if (!layout) {
+    return task.terminalClosed ? { ...task, terminalClosed: false } : task
+  }
+
+  const activePane =
+    layout.panes.find((pane) => pane.id === layout.activePaneId) ?? layout.panes[0]
+
+  if (activePane && sameTerminalSource(activePane.source, target.source)) {
+    return task
+  }
+
+  const existingPane = layout.panes.find((pane) => sameTerminalSource(pane.source, target.source))
+
+  if (existingPane) {
+    return activateTaskTerminalPane(task, existingPane.id)
+  }
+
+  const nextPane = terminalPaneForTarget(target)
+
+  return {
+    ...task,
+    terminalClosed: false,
+    terminalLayout: {
+      activePaneId: nextPane.id,
+      panes: layout.panes.map((pane) => (pane.id === activePane.id ? nextPane : pane)),
+      root: replaceTerminalPaneId(layout.root, activePane.id, nextPane.id),
+    },
+  }
+}
+
+export type CloseTaskTerminalPaneResult = {
+  task: Task
+  closedPane?: TaskTerminalPane
+  closedLast: boolean
+}
+
+export function closeTaskTerminalPane(
+  task: Task,
+  fallbackTarget: TerminalTarget,
+  paneId: string,
+): CloseTaskTerminalPaneResult {
+  const layout = effectiveTerminalLayout(task, fallbackTarget)
+  const closedPane = layout?.panes.find((pane) => pane.id === paneId)
+
+  if (!layout || !closedPane) {
+    return { task, closedLast: false }
+  }
+
+  if (layout.panes.length === 1) {
+    return {
+      task: {
+        ...task,
+        terminalClosed: true,
+        terminalLayout: undefined,
+      },
+      closedPane,
+      closedLast: true,
+    }
+  }
+
+  const panes = layout.panes.filter((pane) => pane.id !== paneId)
+  const paneIds = new Set(panes.map((pane) => pane.id))
+  const root = removeTerminalPaneNode(layout.root, paneId)
+  const activePaneId = paneIds.has(layout.activePaneId)
+    ? layout.activePaneId
+    : root
+      ? firstTerminalPaneId(root)
+      : panes[0]?.id
+
+  if (!root || !activePaneId) {
+    return {
+      task: {
+        ...task,
+        terminalClosed: true,
+        terminalLayout: undefined,
+      },
+      closedPane,
+      closedLast: true,
+    }
+  }
+
+  return {
+    task: {
+      ...task,
+      terminalClosed: false,
+      terminalLayout: {
+        activePaneId,
+        panes,
+        root,
+      },
+    },
+    closedPane,
+    closedLast: false,
+  }
+}
+
+export function terminalSessionIdsForTask(task: Task) {
+  return Array.from(
+    new Set([
+      task.terminal.id,
+      ...task.repos.map((repo) => repo.id),
+      ...(task.terminalLayout?.panes.map((pane) => pane.sessionId) ?? []),
+    ]),
+  )
+}
+
 export function normalizeAppState(state: AppState): AppState {
   const tasks = state.tasks.map(normalizeTask)
   const taskIds = new Set(tasks.map((task) => task.id))
@@ -366,12 +612,15 @@ export function createTask(input: NewTaskInput): Task {
 }
 
 function normalizeTask(task: Task): Task {
+  const terminal =
+    task.terminal?.id && task.terminal.cwd ? task.terminal : taskTerminalForTaskId(task.id)
+  const terminalLayout = normalizeTerminalLayout(task.terminalLayout, terminal, task.repos)
+
   return {
     ...task,
-    terminal:
-      task.terminal?.id && task.terminal.cwd
-        ? task.terminal
-        : taskTerminalForTaskId(task.id),
+    terminal,
+    terminalClosed: terminalLayout ? false : Boolean(task.terminalClosed),
+    terminalLayout,
   }
 }
 
@@ -395,5 +644,174 @@ export function updateTask(task: Task, input: NewTaskInput): Task {
         worktreePath: existingRepo?.worktreePath,
       }
     }),
+  }
+}
+
+function terminalPaneForTarget(target: TerminalTarget): TaskTerminalPane {
+  return {
+    id: target.id,
+    sessionId: target.id,
+    cwd: target.cwd,
+    label: target.label,
+    source: target.source,
+  }
+}
+
+function defaultTerminalLayout(fallbackTarget: TerminalTarget): TaskTerminalLayout {
+  const pane = terminalPaneForTarget(fallbackTarget)
+
+  return {
+    activePaneId: pane.id,
+    panes: [pane],
+    root: { kind: 'pane', paneId: pane.id },
+  }
+}
+
+function normalizeTerminalLayout(
+  layout: TaskTerminalLayout | undefined,
+  terminal?: TaskTerminal,
+  repos: TaskRepo[] = [],
+): TaskTerminalLayout | undefined {
+  if (!layout?.panes.length) {
+    return undefined
+  }
+
+  const panes = layout.panes
+    .filter((pane) => pane.id.trim() && pane.sessionId.trim() && pane.cwd.trim())
+    .map((pane) => ({
+      ...pane,
+      source: terminalPaneSource(pane, terminal, repos),
+    }))
+  const paneIds = new Set(panes.map((pane) => pane.id))
+  const root = normalizeTerminalNode(layout.root, paneIds)
+
+  if (!panes.length || !root) {
+    return undefined
+  }
+
+  return {
+    activePaneId: paneIds.has(layout.activePaneId) ? layout.activePaneId : panes[0].id,
+    panes,
+    root,
+  }
+}
+
+function normalizeTerminalNode(
+  node: TerminalLayoutNode | undefined,
+  paneIds: Set<string>,
+): TerminalLayoutNode | undefined {
+  if (!node) {
+    return undefined
+  }
+
+  if (node.kind === 'pane') {
+    return paneIds.has(node.paneId) ? node : undefined
+  }
+
+  const first = normalizeTerminalNode(node.first, paneIds)
+  const second = normalizeTerminalNode(node.second, paneIds)
+
+  if (first && second) {
+    return { ...node, first, second }
+  }
+
+  return first ?? second
+}
+
+function splitTerminalNode(
+  node: TerminalLayoutNode,
+  paneId: string,
+  direction: TerminalSplitDirection,
+  newPaneId: string,
+): TerminalLayoutNode {
+  if (node.kind === 'pane') {
+    return node.paneId === paneId
+      ? {
+          kind: 'split',
+          direction,
+          first: node,
+          second: { kind: 'pane', paneId: newPaneId },
+        }
+      : node
+  }
+
+  return {
+    ...node,
+    first: splitTerminalNode(node.first, paneId, direction, newPaneId),
+    second: splitTerminalNode(node.second, paneId, direction, newPaneId),
+  }
+}
+
+function removeTerminalPaneNode(
+  node: TerminalLayoutNode,
+  paneId: string,
+): TerminalLayoutNode | undefined {
+  if (node.kind === 'pane') {
+    return node.paneId === paneId ? undefined : node
+  }
+
+  const first = removeTerminalPaneNode(node.first, paneId)
+  const second = removeTerminalPaneNode(node.second, paneId)
+
+  if (first && second) {
+    return { ...node, first, second }
+  }
+
+  return first ?? second
+}
+
+function firstTerminalPaneId(node: TerminalLayoutNode): string | undefined {
+  return node.kind === 'pane' ? node.paneId : firstTerminalPaneId(node.first)
+}
+
+function terminalPaneSource(
+  pane: TaskTerminalPane,
+  terminal: TaskTerminal | undefined,
+  repos: TaskRepo[],
+): TaskSurfaceSelection {
+  const source = pane.source
+
+  if (source?.kind === 'repo' && repos.some((repo) => repo.id === source.taskRepoId)) {
+    return source
+  }
+
+  if (source?.kind === 'task-terminal') {
+    return source
+  }
+
+  if (terminal && (pane.sessionId === terminal.id || pane.id === terminal.id)) {
+    return { kind: 'task-terminal' }
+  }
+
+  const repo = repos.find((item) => item.id === pane.sessionId || item.id === pane.id)
+
+  return repo ? { kind: 'repo', taskRepoId: repo.id } : { kind: 'task-terminal' }
+}
+
+function sameTerminalSource(left: TaskSurfaceSelection, right: TaskSurfaceSelection) {
+  if (left.kind !== right.kind) {
+    return false
+  }
+
+  if (left.kind === 'task-terminal') {
+    return true
+  }
+
+  return right.kind === 'repo' && left.taskRepoId === right.taskRepoId
+}
+
+function replaceTerminalPaneId(
+  node: TerminalLayoutNode,
+  fromPaneId: string,
+  toPaneId: string,
+): TerminalLayoutNode {
+  if (node.kind === 'pane') {
+    return node.paneId === fromPaneId ? { kind: 'pane', paneId: toPaneId } : node
+  }
+
+  return {
+    ...node,
+    first: replaceTerminalPaneId(node.first, fromPaneId, toPaneId),
+    second: replaceTerminalPaneId(node.second, fromPaneId, toPaneId),
   }
 }

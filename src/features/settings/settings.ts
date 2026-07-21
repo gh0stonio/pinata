@@ -11,6 +11,7 @@ export type AppSettings = {
   accentIntensity: AccentIntensity
   appFontSize: AppFontSize
   terminalFontSize: TerminalFontSize
+  closeAppOnLastPane: boolean
 }
 
 export const settingsKey = 'pinata.settings.v1'
@@ -56,6 +57,10 @@ export const terminalFontSizePxById: Record<TerminalFontSize, number> = Object.f
 export const shortcuts = [
   { keys: '⌘B', label: 'Toggle left side panel' },
   { keys: '⌘L', label: 'Toggle right side panel' },
+  { keys: '⌘T', label: 'Open terminal pane' },
+  { keys: '⌘D', label: 'Split terminal vertically' },
+  { keys: '⌘⇧D', label: 'Split terminal horizontally' },
+  { keys: '⌘W', label: 'Close active pane' },
   { keys: '⌘K', label: 'Clear terminal' },
   { keys: '⌘,', label: 'Open settings' },
 ]
@@ -66,6 +71,7 @@ export const defaultSettings: AppSettings = {
   accentIntensity: 'balanced',
   appFontSize: 'regular',
   terminalFontSize: 'regular',
+  closeAppOnLastPane: false,
 }
 
 function pickSetting<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
@@ -102,6 +108,10 @@ export function loadSettings(): AppSettings {
         terminalFontSizes.map((fontSize) => fontSize.id),
         defaultSettings.terminalFontSize,
       ),
+      closeAppOnLastPane:
+        typeof stored.closeAppOnLastPane === 'boolean'
+          ? stored.closeAppOnLastPane
+          : defaultSettings.closeAppOnLastPane,
     }
   } catch {
     return { ...defaultSettings }

@@ -4,8 +4,21 @@
 
 - One embedded task terminal per `Task`.
 - One embedded repo terminal per attached `TaskRepo`.
-- The terminal renders in `MainSurface` for the selected task surface. Task terminals start in `~`.
-  Repo terminals render once the selected repo has a persisted `worktreePath`.
+- `MainSurface` renders the selected task surface as one pane until the user splits. Split panes
+  are persisted on the task as a small layout tree.
+- `⌘D` splits the active terminal vertically into side-by-side panes. `⌘⇧D` splits it
+  horizontally into stacked panes. The new pane starts in the same cwd as the active pane and owns
+  a separate tmux session.
+- A pane stores both a tmux `sessionId` and a source, either task terminal or one task repo. Split
+  panes inherit the active pane source, so sidebar clicks can focus or retarget the active pane
+  without guessing from cwd.
+- Clicking a pane makes it active and updates the task sidebar selection to that pane source.
+- `⌘W` closes the active pane. If tmux reports a foreground command that is not the user's shell,
+  Piñata shows a warning before killing that pane's session.
+- Closing the final pane stores `Task.terminalClosed` and shows an empty main surface. If Settings
+  `closeAppOnLastPane` is enabled, closing that final pane closes Piñata after the session is
+  stopped.
+- `⌘T` reopens the selected task's current terminal target after the final pane was closed.
 - `xterm.js` owns rendering, keyboard input, cursor, and resize fitting in the webview.
 - Rust owns PTY attachment and byte transport. Output crosses the webview as base64 chunks so
   terminal bytes do not expand into large JSON arrays.
@@ -23,6 +36,8 @@
   shell and are mapped to tmux pane history. The next user input exits tmux scrollback before sending
   bytes to the shell, so typing snaps back to the live cursor.
 - `⌘K` clears the visible xterm buffer and asks tmux to clear pane history for the selected session.
+- `terminal_process_status` asks tmux for the pane command and tty, then prefers the tty foreground
+  process list so shim wrappers like `volta-shim` display as the command the user launched.
 - `⌘C` copies the active xterm selection. `⌘V` stays on xterm/webview's native paste path so paste
   input is not duplicated.
 - Right-click never falls through to tmux or the browser context menu. If text is selected, it
@@ -33,8 +48,9 @@
   stay on `--color-terminal-*` tokens so accent changes do not repaint terminal content.
 - Terminal font size comes from Settings `terminalFontSize`; changing it updates xterm options,
   refits the renderer, and sends the new PTY size to Rust.
-- Session identity is deterministic from the selected surface id: `Task.terminal.id` for task
-  terminals, `TaskRepo.id` for repo terminals.
+- Session identity is deterministic from the selected surface id for the first pane:
+  `Task.terminal.id` for task terminals, `TaskRepo.id` for repo terminals. Split-created panes use
+  persisted `terminal-pane-*` session ids.
 - Terminal command and event payloads call that value `sessionId`. Do not name it `taskRepoId`,
   because task terminals use the same transport.
 - The shell starts in `Task.terminal.cwd` for task terminals and `TaskRepo.worktreePath` for repo
@@ -83,17 +99,19 @@ flowchart TD
 
 ## App state
 
-- Do not add a terminal mapping for v1.
-- `Task.terminal.id` and `TaskRepo.id` are enough to rederive `tmux` session names.
-- `Task.terminal.cwd` and `TaskRepo.worktreePath` are enough to reopen shells in the correct folder
-  if a session does not already exist.
-- Future tabs and splits may add durable layout state, but live process details remain outside
-  app-state JSON.
+- `Task.terminalLayout` persists split topology, active pane id, pane session targets, and pane
+  source.
+- Missing `Task.terminalLayout` means the selected task surface renders as one pane.
+- `Task.terminalClosed` suppresses that implicit single pane after the user closes the final pane.
+  Explicit task/repo selection, `⌘T`, or splitting reopens a pane.
+- Live process handles, terminal scrollback, and PTY readers remain outside app-state JSON.
+- Task edits that add or remove repos reset the task split layout so stale panes do not keep
+  pointing at removed worktrees.
 
 ## Deferred
 
 - Multiple terminal tabs per repository.
-- Split panes.
+- Resizing split dividers.
 - Terminal title/status bar.
 - Explicit kill/restart terminal action.
 - Restoring xterm scrollback from `tmux capture-pane` on attach.

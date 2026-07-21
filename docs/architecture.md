@@ -304,6 +304,8 @@ State rules:
 - Terminal live process state is not in app state. `Task.terminal.id` and `TaskRepo.id` derive tmux
   session names. Their `cwd` or `worktreePath` values let Piñata recreate sessions if the tmux
   server is gone.
+- `Task.terminalClosed` records that the user closed the final pane for a task. This suppresses the
+  implicit default pane until the user explicitly selects the task, selects a repo, or splits again.
 
 Write behavior:
 
@@ -332,6 +334,7 @@ type AppSettings = {
   accentIntensity: 'transparent' | 'balanced' | 'vibrant'
   appFontSize: 'small' | 'regular' | 'large'
   terminalFontSize: 'small' | 'regular' | 'large' | 'xl'
+  closeAppOnLastPane: boolean
 }
 ```
 
@@ -382,6 +385,7 @@ Registered commands:
 | `terminal_clear` | `terminal.rs` | Clear the selected xterm buffer and tmux pane history |
 | `terminal_detach` | `terminal.rs` | Drop the PTY attachment while keeping tmux alive |
 | `terminal_kill_session` | `terminal.rs` | Kill a selected task or repo terminal session during cleanup |
+| `terminal_process_status` | `terminal.rs` | Ask tmux and the pane tty whether a foreground process is running |
 
 ## Native Menu And Window Behavior
 
@@ -391,6 +395,8 @@ Registered commands:
 - Installs the dialog plugin used by Settings and Onboarding folder pickers.
 - Builds the macOS app menu, including `Settings...` with `CmdOrCtrl+,`.
 - Emits `pinata://open-settings` when the native Settings menu item is selected.
+- The native Window menu does not include Close Window, so `Cmd+W` stays available for Piñata pane
+  closing.
 
 `AppShell` listens for `pinata://open-settings` and opens `SettingsView`.
 
@@ -402,6 +408,7 @@ Window dragging is handled in every top-level surface that can cover the title b
 | Settings | `SettingsView.vue` drag region |
 | Onboarding | `OnboardingFlow.vue` drag region |
 | Task dialog, including blocking git progress | `TaskDialog.vue` drag region |
+| Pane close warning | `AppShell.vue` drag region |
 
 Default rule: future full-screen or modal surfaces must keep the top title-bar height draggable.
 
@@ -773,13 +780,16 @@ Use this file for the big picture. Use feature specs when changing one feature.
 
 ## Terminal Runtime
 
-The current terminal is one embedded shell per selected task surface. A task surface is either the
-task terminal or one attached repo terminal.
+The terminal starts as one embedded shell for the selected task surface. A task surface is either
+the task terminal or one attached repo terminal. When the user splits, the task stores a durable
+pane tree. Each pane owns its own tmux-backed session and remembers the task surface it came from.
 
 ```mermaid
 flowchart LR
     Surface["Task.terminal or TaskRepo"]
+    Layout["Task.terminalLayout"]
     MainSurface["MainSurface"]
+    SplitNode["TerminalSplitNode"]
     TerminalSurface["TerminalSurface + xterm.js"]
     RustTerminal["Rust terminal.rs"]
     PTY["portable-pty attachment"]
@@ -787,7 +797,9 @@ flowchart LR
     Shell["user shell in cwd"]
 
     Surface --> MainSurface
-    MainSurface --> TerminalSurface
+    Layout --> MainSurface
+    MainSurface --> SplitNode
+    SplitNode --> TerminalSurface
     TerminalSurface <--> RustTerminal
     RustTerminal <--> PTY
     PTY <--> Tmux
@@ -808,10 +820,25 @@ Runtime rules:
 - Piñata keeps tmux mouse mode off so xterm owns selection. Wheel gestures are stopped before they
   can reach the shell and are mapped to tmux pane history. The next user input exits tmux scrollback
   before sending bytes to the shell, so typing snaps back to the live cursor.
-- Session names are deterministic from `Task.terminal.id` or `TaskRepo.id`.
-- The shell starts in `Task.terminal.cwd` for task terminals and `TaskRepo.worktreePath` for repo
-  terminals.
+- The first pane uses deterministic session names from `Task.terminal.id` or `TaskRepo.id`.
+  Split-created panes use persisted `terminal-pane-*` session ids.
+- Each pane stores a source, either task terminal or one task repo. Split-created panes inherit the
+  active pane source. Sidebar clicks focus a matching source pane first; if none exists, Piñata
+  retargets the active pane.
+- Clicking a pane makes it active and updates the task sidebar selection to that pane source.
+- The shell starts in `Task.terminal.cwd` for task terminals, `TaskRepo.worktreePath` for repo
+  terminals, and the stored pane `cwd` for split-created panes.
 - The default shell is the user's `SHELL`; missing or invalid shell falls back to `/bin/zsh`.
+- `Cmd+D` creates a vertical split. `Cmd+Shift+D` creates a horizontal split. The new pane opens in
+  the same cwd as the active pane and becomes active.
+- `Cmd+W` closes the active pane. If tmux and the pane tty report a foreground command that is not
+  the user's shell, Piñata asks before stopping that pane session. Shim wrappers like `volta-shim`
+  are resolved to the launched command when possible.
+- Closing the last pane stores `Task.terminalClosed` and shows an empty main surface. If
+  `closeAppOnLastPane` is enabled in Settings, Piñata closes after stopping that final pane session.
+- `Cmd+T` reopens the selected task's current terminal target from that empty surface.
+- Task edits that add or remove repos reset the task split layout and kill split-only sessions so
+  stale panes do not point at removed worktrees.
 
 Task lifecycle integration:
 
@@ -819,15 +846,14 @@ Task lifecycle integration:
   state.
 - Task edit with added repo: create worktree, ensure terminal session, persist app state.
 - Task edit with removed repo: kill terminal session, delete worktree and branch, persist app state.
-- Task delete: kill the task terminal session and each task repo terminal session, delete worktrees
-  and branches, persist app state.
+- Task delete: kill the task terminal session, each task repo terminal session, and any split pane
+  sessions, delete worktrees and branches, persist app state.
 
 Deferred:
 
 - Multiple terminal tabs per repository.
-- Split panes.
+- Resizing split dividers.
 - Restoring xterm scrollback from `tmux capture-pane` on attach.
-- Durable terminal layout state.
 
 ## Current High-Impact Operations
 
@@ -838,6 +864,7 @@ Deferred:
 | Replace saved repo in task | Deletes old task repo branch and worktree when present | Confirmation modal |
 | Remove registered repo from Settings | Could orphan tasks | Disabled while referenced by any task |
 | Change repo worktree base | Affects future task worktrees | Help copy, no existing worktrees moved |
+| Close terminal pane with foreground command | Stops the pane's tmux session | Confirmation modal |
 
 ## Mental Model
 
