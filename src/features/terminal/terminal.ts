@@ -45,6 +45,7 @@ export type TerminalExitEvent = {
 export type TerminalProcessStatus = {
   busy: boolean
   command?: string
+  currentPath?: string
 }
 
 export function ensureTerminalSession(input: TerminalSessionInput): Promise<void> {

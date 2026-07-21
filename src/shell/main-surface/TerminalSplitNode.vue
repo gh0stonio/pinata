@@ -30,6 +30,7 @@ const emit = defineEmits<{
   'select-pane': [paneId: string]
   'split-pane': [paneId: string, direction: TerminalSplitDirection]
   'close-pane': [paneId: string]
+  'terminal-output': [sessionId: string]
 }>()
 
 const pane = computed(() => (props.node.kind === 'pane' ? props.panes[props.node.paneId] : undefined))
@@ -58,6 +59,7 @@ const paneTitle = computed(() => {
       @select-pane="emit('select-pane', $event)"
       @split-pane="(paneId, direction) => emit('split-pane', paneId, direction)"
       @close-pane="emit('close-pane', $event)"
+      @terminal-output="emit('terminal-output', $event)"
     />
     <div :class="styles.splitDivider" aria-hidden="true" />
     <TerminalSplitNode
@@ -70,6 +72,7 @@ const paneTitle = computed(() => {
       @select-pane="emit('select-pane', $event)"
       @split-pane="(paneId, direction) => emit('split-pane', paneId, direction)"
       @close-pane="emit('close-pane', $event)"
+      @terminal-output="emit('terminal-output', $event)"
     />
   </div>
 
@@ -125,6 +128,7 @@ const paneTitle = computed(() => {
         :cwd="pane.cwd"
         :label="pane.label"
         :font-size="terminalFontSize"
+        @output="emit('terminal-output', $event)"
       />
     </div>
   </section>

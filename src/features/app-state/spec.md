@@ -142,8 +142,9 @@ type TaskSurfaceSelection =
 - Missing tabs for an open surface means "render that surface as one shell tab with one pane". Once
   the user opens tabs or splits panes, Piñata persists the surface tab set, active tab id, active
   pane id, and each pane's `sessionId`, `cwd`, label, and source.
-- A tab title is user-editable. The default shell title may be rendered as the current shell name,
-  but renamed titles persist literally.
+- A tab title is user-editable. The internal default title stays `shell`, but the UI renders it as
+  the active pane's current folder name from tmux. Renamed titles persist literally. Submitting an
+  empty title restores the automatic folder title.
 - `Task.terminalLayout` and `Task.terminalLayouts` are legacy migration state. New writes use
   `Task.terminalTabs`.
 - `Task.terminalClosedBySurface` suppresses the implicit single tab for one surface after the user

@@ -82,10 +82,12 @@
 .tabItem {
 	position: relative;
 	display: inline-grid;
+	flex: 0 1 210px;
 	grid-template-columns: minmax(0, 1fr) 28px;
 	align-items: center;
 	min-width: 144px;
-	max-width: 260px;
+	max-width: 210px;
+	overflow: hidden;
 	border-right: 1px solid var(--color-border-subtle);
 }
 
@@ -115,10 +117,12 @@
 }
 
 .tabButton {
+	width: 100%;
 	grid-template-columns: 16px minmax(0, 1fr) auto;
 	justify-content: start;
 	gap: var(--space-sm);
 	min-width: 0;
+	overflow: hidden;
 	padding: 0 var(--space-sm) 0 var(--space-xl);
 	font-family: var(--font-ui);
 	font-size: var(--font-size-body);
@@ -153,6 +157,9 @@
 }
 
 .tabButton span {
+	display: block;
+	min-width: 0;
+	max-width: 100%;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;

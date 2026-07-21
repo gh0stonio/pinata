@@ -24,6 +24,10 @@ const props = defineProps<{
   fontSize: number
 }>()
 
+const emit = defineEmits<{
+  output: [sessionId: string]
+}>()
+
 const terminalElement = ref<HTMLElement | null>(null)
 const errorMessage = ref<string | null>(null)
 
@@ -120,7 +124,6 @@ function copyTerminalSelection() {
   }
 
   void globalThis.navigator.clipboard?.writeText(selection).catch(() => undefined)
-  terminal?.clearSelection()
 
   return true
 }
@@ -302,6 +305,7 @@ async function attach() {
         terminal?.scrollToBottom()
       }
     })
+    emit('output', props.sessionId)
   })
   unlistenExit = await listen<TerminalExitEvent>('pinata://terminal-exit', (event) => {
     if (event.payload.sessionId === props.sessionId) {

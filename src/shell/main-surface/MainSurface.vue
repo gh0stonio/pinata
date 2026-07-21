@@ -22,6 +22,7 @@ import TerminalSplitNode from './TerminalSplitNode.vue'
 const props = defineProps<{
   appState: AppState
   terminalFontSize: number
+  terminalCurrentPaths: Record<string, string>
   terminalProcessNames: Record<string, string>
 }>()
 
@@ -33,6 +34,7 @@ const emit = defineEmits<{
   'rename-terminal-tab': [taskId: string, tabId: string, title: string]
   'split-terminal-pane': [taskId: string, paneId: string, direction: TerminalSplitDirection]
   'close-terminal-pane': [taskId: string, paneId: string]
+  'terminal-output': [sessionId: string]
 }>()
 
 const shellName = ref('shell')
@@ -74,8 +76,40 @@ const panesById = computed<Record<string, TaskTerminalPane>>(() => {
   return Object.fromEntries(layout.panes.map((pane) => [pane.id, pane]))
 })
 
+function folderNameFromPath(path: string) {
+  const trimmedPath = path.trim()
+
+  if (!trimmedPath) {
+    return shellName.value
+  }
+
+  if (trimmedPath === '~') {
+    return '~'
+  }
+
+  const normalizedPath = trimmedPath.replace(/\/+$/, '')
+  const pathParts = normalizedPath.split('/').filter(Boolean)
+  const folderName = pathParts[pathParts.length - 1]
+
+  return folderName || normalizedPath
+}
+
+function activePaneForTab(tab: TaskTerminalTab) {
+  return tab.layout.panes.find((pane) => pane.id === tab.layout.activePaneId) ?? tab.layout.panes[0]
+}
+
+function defaultTabTitle(tab: TaskTerminalTab) {
+  const activePane = activePaneForTab(tab)
+
+  if (!activePane) {
+    return shellName.value
+  }
+
+  return folderNameFromPath(props.terminalCurrentPaths[activePane.sessionId] ?? activePane.cwd)
+}
+
 function tabTitle(tab: TaskTerminalTab) {
-  return tab.kind === 'shell' && tab.title === 'shell' ? shellName.value : tab.title
+  return tab.kind === 'shell' && tab.title === 'shell' ? defaultTabTitle(tab) : tab.title
 }
 
 function emitSelectTerminalPane(paneId: string) {
@@ -145,7 +179,19 @@ function commitRenameTab(tab: TaskTerminalTab) {
   editingTabId.value = null
   focusedRenameTabId.value = null
 
-  if (task && title && title !== tabTitle(tab)) {
+  if (!task) {
+    return
+  }
+
+  if (!title) {
+    if (tab.title !== 'shell') {
+      emit('rename-terminal-tab', task.id, tab.id, '')
+    }
+
+    return
+  }
+
+  if (title !== tabTitle(tab)) {
     emit('rename-terminal-tab', task.id, tab.id, title)
   }
 }
@@ -265,6 +311,7 @@ onMounted(() => {
         @select-pane="emitSelectTerminalPane"
         @split-pane="emitSplitTerminalPane"
         @close-pane="emitCloseTerminalPane"
+        @terminal-output="emit('terminal-output', $event)"
       />
     </section>
 

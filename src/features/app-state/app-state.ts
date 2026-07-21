@@ -432,13 +432,15 @@ export function renameTaskTerminalTab(
   const tabs = effectiveTerminalTabs(task, fallbackTarget)
   const nextTitle = title.trim()
 
-  if (!tabs || !nextTitle) {
+  if (!tabs) {
     return task
   }
 
   return withTerminalTabsForTarget(task, fallbackTarget, {
     ...tabs,
-    tabs: tabs.tabs.map((tab) => (tab.id === tabId ? { ...tab, title: nextTitle } : tab)),
+    tabs: tabs.tabs.map((tab) =>
+      tab.id === tabId ? { ...tab, title: nextTitle || 'shell' } : tab,
+    ),
   })
 }
 

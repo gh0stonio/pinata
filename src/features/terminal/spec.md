@@ -12,11 +12,12 @@
 - `⌘T` creates a new shell tab in the selected surface. If that surface was closed, it reopens it
   with one shell tab.
 - Terminal tabs use the shell icon, show the editable tab title, and show a small naked count pill
-  when the tab contains more than one pane.
+  when the tab contains more than one pane. Until a user renames a tab, the UI renders the tab title
+  as the active pane's current folder name from tmux.
 - Pane headers show the shell name while idle. When the pane is running a foreground command, the
   pane header temporarily shows that command label.
 - Double-clicking a tab title edits it inline. Enter or blur saves the persisted tab title. Escape
-  cancels.
+  cancels. Submitting an empty title restores the automatic current-folder title.
 - `⌘D` splits the active terminal vertically into side-by-side panes. `⌘⇧D` splits it
   horizontally into stacked panes. The new pane starts in the same cwd as the active pane and owns
   a separate tmux session.

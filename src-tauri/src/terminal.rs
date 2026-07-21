@@ -90,6 +90,7 @@ struct TerminalExitEvent {
 pub struct TerminalProcessStatus {
     busy: bool,
     command: Option<String>,
+    current_path: Option<String>,
 }
 
 #[tauri::command]
@@ -160,7 +161,6 @@ pub fn terminal_attach(
     let session_id = input.session_id.clone();
     let event_session_id = input.session_id.clone();
     let app_for_reader = app.clone();
-
     thread::spawn(move || {
         let mut buffer = [0_u8; 8192];
 
@@ -354,6 +354,7 @@ pub fn terminal_process_status(
         return Ok(TerminalProcessStatus {
             busy: false,
             command: None,
+            current_path: None,
         });
     }
 
@@ -363,7 +364,7 @@ pub fn terminal_process_status(
             "-p",
             "-t",
             &tmux_session_name(&input.session_id),
-            "#{pane_current_command}\t#{pane_tty}",
+            "#{pane_current_command}\t#{pane_tty}\t#{pane_current_path}",
         ])
         .output()
         .map_err(|error| format!("failed to run bundled tmux: {error}"))?;
@@ -373,17 +374,25 @@ pub fn terminal_process_status(
     }
 
     let status = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let (current_command, pane_tty) = status
-        .split_once('\t')
-        .map(|(command, tty)| (command.trim(), tty.trim()))
-        .unwrap_or((status.trim(), ""));
+    let mut status_parts = status.splitn(3, '\t');
+    let current_command = status_parts.next().unwrap_or_default().trim();
+    let pane_tty = status_parts.next().unwrap_or_default().trim();
+    let current_path = status_parts
+        .next()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(ToOwned::to_owned);
     let command = foreground_command_for_tty(pane_tty)
         .or_else(|| command_label(current_command, current_command));
     let busy = command
         .as_deref()
         .is_some_and(|command| !is_idle_terminal_command(command));
 
-    Ok(TerminalProcessStatus { busy, command })
+    Ok(TerminalProcessStatus {
+        busy,
+        command,
+        current_path,
+    })
 }
 
 fn foreground_command_for_tty(tty_path: &str) -> Option<String> {

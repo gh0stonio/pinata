@@ -114,6 +114,8 @@ const MIN_WINDOW_HEIGHT = 600
 const MAX_WINDOW_WIDTH = 4000
 const MAX_WINDOW_HEIGHT = 3000
 const WINDOW_LAYOUT_SAVE_DELAY = 300
+const TERMINAL_PROCESS_REFRESH_DELAY = 0
+const TERMINAL_PROCESS_POLL_INTERVAL = 5000
 
 const appWindow = getCurrentWindow()
 const startsInOnboarding = !localStorage.getItem(onboardingKey)
@@ -133,6 +135,7 @@ const appCloseConfirmation = ref(false)
 const appState = ref<AppState>(createEmptyAppState())
 const settings = ref<AppSettings>(startsInOnboarding ? { ...defaultSettings } : loadSettings())
 const terminalProcessNames = ref<Record<string, string>>({})
+const terminalCurrentPaths = ref<Record<string, string>>({})
 const terminalFontSize = computed(() => terminalFontSizePxById[settings.value.terminalFontSize])
 const editingTask = computed(() =>
   appState.value.tasks.find((task) => task.id === editingTaskId.value),
@@ -165,6 +168,8 @@ let windowLayoutSaveTimer: number | undefined
 let pendingWindowSize: PhysicalSize | undefined
 let pendingWindowPosition: PhysicalPosition | undefined
 let terminalProcessPollTimer: number | undefined
+let terminalProcessRefreshTimer: number | undefined
+let terminalProcessPollInFlight = false
 
 function clamp(value: number, min: number, max: number) {
   return Math.round(Math.min(max, Math.max(min, value)))
@@ -588,6 +593,7 @@ function splitSelectedTerminal(direction: TerminalSplitDirection) {
   updateStoredTask(task.id, (currentTask) =>
     splitTaskTerminalLayout(currentTask, terminal, direction),
   )
+  queueTerminalProcessRefresh()
 }
 
 function splitTerminalPane(
@@ -614,6 +620,7 @@ function splitTerminalPane(
       direction,
     ),
   )
+  queueTerminalProcessRefresh()
 }
 
 function openSelectedTerminalTab() {
@@ -640,6 +647,7 @@ function openTerminalTab(taskId: string) {
   }
 
   updateStoredTask(task.id, (currentTask) => createTaskTerminalTab(currentTask, terminal))
+  queueTerminalProcessRefresh()
 }
 
 function selectedTaskTerminalLayout(task: Task) {
@@ -662,28 +670,45 @@ function selectedTaskTerminalSessionIds() {
 }
 
 async function refreshTerminalProcessNames() {
+  if (terminalProcessPollInFlight) {
+    return
+  }
+
   const sessionIds = Array.from(new Set(selectedTaskTerminalSessionIds()))
 
   if (!sessionIds.length) {
     terminalProcessNames.value = {}
+    terminalCurrentPaths.value = {}
     return
   }
 
-  const statuses = await Promise.all(
-    sessionIds.map(async (sessionId) => ({
-      sessionId,
-      status: await terminalProcessStatus({ sessionId }).catch(() => ({
-        busy: false,
-        command: undefined,
-      })),
-    })),
-  )
+  terminalProcessPollInFlight = true
 
-  terminalProcessNames.value = Object.fromEntries(
-    statuses
-      .filter(({ status }) => status.busy && status.command)
-      .map(({ sessionId, status }) => [sessionId, status.command as string]),
-  )
+  try {
+    const statuses = await Promise.all(
+      sessionIds.map(async (sessionId) => ({
+        sessionId,
+        status: await terminalProcessStatus({ sessionId }).catch(() => ({
+          busy: false,
+          command: undefined,
+          currentPath: undefined,
+        })),
+      })),
+    )
+
+    terminalProcessNames.value = Object.fromEntries(
+      statuses
+        .filter(({ status }) => status.busy && status.command)
+        .map(({ sessionId, status }) => [sessionId, status.command as string]),
+    )
+    terminalCurrentPaths.value = Object.fromEntries(
+      statuses
+        .filter(({ status }) => status.currentPath)
+        .map(({ sessionId, status }) => [sessionId, status.currentPath as string]),
+    )
+  } finally {
+    terminalProcessPollInFlight = false
+  }
 }
 
 function startTerminalProcessPolling() {
@@ -691,7 +716,24 @@ function startTerminalProcessPolling() {
   void refreshTerminalProcessNames()
   terminalProcessPollTimer = window.setInterval(() => {
     void refreshTerminalProcessNames()
-  }, 1500)
+  }, TERMINAL_PROCESS_POLL_INTERVAL)
+}
+
+function queueTerminalProcessRefresh() {
+  if (terminalProcessRefreshTimer) {
+    return
+  }
+
+  terminalProcessRefreshTimer = window.setTimeout(() => {
+    terminalProcessRefreshTimer = undefined
+    void refreshTerminalProcessNames()
+  }, TERMINAL_PROCESS_REFRESH_DELAY)
+}
+
+function handleTerminalOutput(sessionId: string) {
+  if (selectedTaskTerminalSessionIds().includes(sessionId)) {
+    queueTerminalProcessRefresh()
+  }
 }
 
 function paneSessionUsedByOtherPane(sessionId: string, paneId: string, tasks: Task[]) {
@@ -947,6 +989,7 @@ function selectTerminalTab(taskId: string, tabId: string) {
 
     return terminal ? selectTaskTerminalTab(task, terminal, tabId) : task
   })
+  queueTerminalProcessRefresh()
 }
 
 function renameTerminalTab(taskId: string, tabId: string, title: string) {
@@ -999,6 +1042,7 @@ function selectTerminalPane(taskId: string, paneId: string) {
         }
       : appState.value.selection,
   })
+  queueTerminalProcessRefresh()
 }
 
 function toggleTask(task: Task) {
@@ -1520,6 +1564,7 @@ onBeforeUnmount(() => {
     windowLayoutSaveTimer = undefined
   }
   window.clearInterval(terminalProcessPollTimer)
+  window.clearTimeout(terminalProcessRefreshTimer)
   void persistPendingWindowLayout().catch((error: unknown) => {
     console.error('Failed to save window layout', error)
   })
@@ -1585,6 +1630,7 @@ onBeforeUnmount(() => {
           <MainSurface
             :app-state="appState"
             :terminal-font-size="terminalFontSize"
+            :terminal-current-paths="terminalCurrentPaths"
             :terminal-process-names="terminalProcessNames"
             @close-terminal-tab="(taskId, tabId) => void closeTerminalTab(taskId, tabId)"
             @close-terminal-pane="requestCloseTerminalPane"
@@ -1593,6 +1639,7 @@ onBeforeUnmount(() => {
             @select-terminal-pane="selectTerminalPane"
             @select-terminal-tab="selectTerminalTab"
             @split-terminal-pane="splitTerminalPane"
+            @terminal-output="handleTerminalOutput"
           />
           <button
             type="button"
