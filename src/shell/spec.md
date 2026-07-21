@@ -60,6 +60,8 @@ drag-resizable; the center flexes to fill.
 - Normal app window width, height, and optional position persist in `app-state.json`. Tauri restores
   the saved layout during startup, and fullscreen window events do not replace the saved normal
   window layout.
+- Native app close requests, including window close, menu Quit, and ⌘Q, open a Piñata
+  confirmation modal before the app exits when `confirmBeforeAppClose` is enabled.
 
 ## Title bar (left → right)
 

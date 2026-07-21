@@ -4,6 +4,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import ArrowLeftIcon from '../../icons/ArrowLeftIcon.vue'
 import ChevronDownIcon from '../../icons/ChevronDownIcon.vue'
+import CogIcon from '../../icons/CogIcon.vue'
 import CommandIcon from '../../icons/CommandIcon.vue'
 import GitBranchIcon from '../../icons/GitBranchIcon.vue'
 import HelpIcon from '../../icons/HelpIcon.vue'
@@ -45,6 +46,7 @@ const props = defineProps<{
   accentIntensity: AccentIntensity
   appFontSize: AppFontSize
   terminalFontSize: TerminalFontSize
+  confirmBeforeAppClose: boolean
   closeAppOnLastPane: boolean
   appState: AppState
 }>()
@@ -56,11 +58,13 @@ const emit = defineEmits<{
   'update-accent-intensity': [accentIntensity: AccentIntensity]
   'update-app-font-size': [appFontSize: AppFontSize]
   'update-terminal-font-size': [terminalFontSize: TerminalFontSize]
+  'update-confirm-before-app-close': [confirmBeforeAppClose: boolean]
   'update-close-app-on-last-pane': [closeAppOnLastPane: boolean]
   'update-app-state': [appState: AppState]
+  'reset-settings': []
 }>()
 
-const section = ref<SettingsSection>('appearance')
+const section = ref<SettingsSection>('general')
 const registering = ref(false)
 const registeringBusy = ref(false)
 const registerPath = ref('')
@@ -467,6 +471,15 @@ onBeforeUnmount(() => {
           <p :class="styles.navLabel">Personal</p>
           <button
             type="button"
+            :class="[styles.navItem, section === 'general' && styles.navItemActive]"
+            :aria-current="section === 'general' ? 'page' : undefined"
+            @click="selectSection('general')"
+          >
+            <CogIcon :class="styles.navIcon" />
+            <span>General</span>
+          </button>
+          <button
+            type="button"
             :class="[styles.navItem, section === 'appearance' && styles.navItemActive]"
             :aria-current="section === 'appearance' ? 'page' : undefined"
             @click="selectSection('appearance')"
@@ -502,7 +515,99 @@ onBeforeUnmount(() => {
 
     <main :class="styles.content">
       <div :class="styles.inner">
-        <template v-if="section === 'appearance'">
+        <template v-if="section === 'general'">
+          <h1 :class="styles.title">General</h1>
+
+          <section :class="styles.settingsGroup" aria-labelledby="behavior-title">
+            <p id="behavior-title" :class="styles.groupLabel">Behavior</p>
+            <div :class="styles.card">
+              <div :class="[styles.row, styles.rowFirst]">
+                <div :class="styles.rowCopy">
+                  <h2>Closing the last pane</h2>
+                  <p>Choose what ⌘W does when only one terminal pane remains.</p>
+                </div>
+
+                <div :class="styles.segment" role="group" aria-label="Closing the last pane">
+                  <button
+                    type="button"
+                    :class="[
+                      styles.segmentButton,
+                      !closeAppOnLastPane && styles.segmentButtonActive,
+                    ]"
+                    :aria-pressed="!closeAppOnLastPane"
+                    @click="emit('update-close-app-on-last-pane', false)"
+                  >
+                    Show empty state
+                  </button>
+                  <button
+                    type="button"
+                    :class="[
+                      styles.segmentButton,
+                      closeAppOnLastPane && styles.segmentButtonActive,
+                    ]"
+                    :aria-pressed="closeAppOnLastPane"
+                    @click="emit('update-close-app-on-last-pane', true)"
+                  >
+                    Close app
+                  </button>
+                </div>
+              </div>
+
+              <div :class="styles.row">
+                <div :class="styles.rowCopy">
+                  <h2>Closing Piñata</h2>
+                  <p>Choose whether app close asks before stopping terminal sessions.</p>
+                </div>
+
+                <div :class="styles.segment" role="group" aria-label="Closing Piñata">
+                  <button
+                    type="button"
+                    :class="[
+                      styles.segmentButton,
+                      confirmBeforeAppClose && styles.segmentButtonActive,
+                    ]"
+                    :aria-pressed="confirmBeforeAppClose"
+                    @click="emit('update-confirm-before-app-close', true)"
+                  >
+                    Ask first
+                  </button>
+                  <button
+                    type="button"
+                    :class="[
+                      styles.segmentButton,
+                      !confirmBeforeAppClose && styles.segmentButtonActive,
+                    ]"
+                    :aria-pressed="!confirmBeforeAppClose"
+                    @click="emit('update-confirm-before-app-close', false)"
+                  >
+                    Close directly
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section :class="styles.dangerZone" aria-labelledby="settings-danger-title">
+            <h3 id="settings-danger-title">Danger Zone</h3>
+            <div :class="styles.dangerPanel">
+              <div :class="styles.configRow">
+                <div :class="styles.configCopy">
+                  <h2>Reset settings</h2>
+                  <p>Restore the default theme, accent, fonts, and close behavior.</p>
+                </div>
+                <button
+                  type="button"
+                  class="uiButton uiButtonSmall uiButtonDanger"
+                  @click="emit('reset-settings')"
+                >
+                  Reset
+                </button>
+              </div>
+            </div>
+          </section>
+        </template>
+
+        <template v-else-if="section === 'appearance'">
           <h1 :class="styles.title">Appearance</h1>
 
           <section :class="styles.settingsGroup" aria-labelledby="theme-title">
@@ -1054,42 +1159,6 @@ onBeforeUnmount(() => {
             </div>
           </section>
 
-          <section :class="styles.settingsGroup" aria-labelledby="pane-behavior-title">
-            <p id="pane-behavior-title" :class="styles.groupLabel">Pane behavior</p>
-            <div :class="styles.card">
-              <div :class="[styles.row, styles.rowFirst]">
-                <div :class="styles.rowCopy">
-                  <h2>Closing the last pane</h2>
-                  <p>Choose what ⌘W does when only one terminal pane remains.</p>
-                </div>
-
-                <div :class="styles.segment" role="group" aria-label="Closing the last pane">
-                  <button
-                    type="button"
-                    :class="[
-                      styles.segmentButton,
-                      !closeAppOnLastPane && styles.segmentButtonActive,
-                    ]"
-                    :aria-pressed="!closeAppOnLastPane"
-                    @click="emit('update-close-app-on-last-pane', false)"
-                  >
-                    Show empty state
-                  </button>
-                  <button
-                    type="button"
-                    :class="[
-                      styles.segmentButton,
-                      closeAppOnLastPane && styles.segmentButtonActive,
-                    ]"
-                    :aria-pressed="closeAppOnLastPane"
-                    @click="emit('update-close-app-on-last-pane', true)"
-                  >
-                    Close app
-                  </button>
-                </div>
-              </div>
-            </div>
-          </section>
         </template>
       </div>
     </main>

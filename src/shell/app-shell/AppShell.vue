@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, type CSSProperties } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow, type PhysicalPosition, type PhysicalSize } from '@tauri-apps/api/window'
+import ConfirmationDialog from './ConfirmationDialog.vue'
 import MainSurface from '../main-surface/MainSurface.vue'
 import SidePanel from '../side-panel/SidePanel.vue'
 import TitleBar from '../title-bar/TitleBar.vue'
@@ -44,7 +46,6 @@ import {
   type TaskSurfaceSelection,
   type TerminalSplitDirection,
 } from '../../features/app-state/app-state'
-import LayersIcon from '../../icons/LayersIcon.vue'
 import OnboardingFlow from '../../features/onboarding/OnboardingFlow.vue'
 import { onboardingKey } from '../../features/onboarding/onboarding'
 import SettingsView from '../../features/settings/SettingsView.vue'
@@ -128,6 +129,7 @@ const onboardingVisible = ref(startsInOnboarding)
 const bootstrapped = ref(false)
 const taskDialogProgress = ref<TaskProgress | null>(null)
 const paneCloseConfirmation = ref<PaneCloseConfirmation | null>(null)
+const appCloseConfirmation = ref(false)
 const appState = ref<AppState>(createEmptyAppState())
 const settings = ref<AppSettings>(startsInOnboarding ? { ...defaultSettings } : loadSettings())
 const terminalProcessNames = ref<Record<string, string>>({})
@@ -152,8 +154,10 @@ const bodyLayoutStyle = computed<CSSProperties>(() => ({
 }))
 let unlistenOpenSettings: UnlistenFn | undefined
 let unlistenGitProgress: UnlistenFn | undefined
+let unlistenAppCloseRequested: UnlistenFn | undefined
 let unlistenWindowResized: UnlistenFn | undefined
 let unlistenWindowMoved: UnlistenFn | undefined
+let unlistenWindowClose: UnlistenFn | undefined
 let appStateTouched = false
 let appStateSaveQueue: Promise<void> = Promise.resolve()
 let sidePanelResizeStart: SidePanelResizeStart | undefined
@@ -358,6 +362,22 @@ async function startWindowLayoutPersistence() {
   unlistenWindowMoved = await appWindow.onMoved(({ payload }) => {
     scheduleWindowLayoutSave({ position: payload })
   })
+}
+
+async function startWindowCloseConfirmation() {
+  unlistenWindowClose = await appWindow.onCloseRequested((event) => {
+    event.preventDefault()
+    requestAppClose()
+  })
+}
+
+function requestAppClose() {
+  if (settings.value.confirmBeforeAppClose) {
+    appCloseConfirmation.value = true
+    return
+  }
+
+  void confirmAppClose()
 }
 
 function updateSettings(next: Partial<AppSettings>) {
@@ -889,6 +909,15 @@ function cancelPaneClose() {
   paneCloseConfirmation.value = null
 }
 
+function cancelAppClose() {
+  appCloseConfirmation.value = false
+}
+
+async function confirmAppClose() {
+  appCloseConfirmation.value = false
+  await invoke('confirm_app_close')
+}
+
 async function confirmPaneClose() {
   const confirmation = paneCloseConfirmation.value
 
@@ -1375,6 +1404,15 @@ async function deleteExistingTask(task: Task) {
 }
 
 function handleKeydown(event: KeyboardEvent) {
+  if (appCloseConfirmation.value) {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      cancelAppClose()
+    }
+
+    return
+  }
+
   if (!bootstrapped.value) {
     return
   }
@@ -1439,6 +1477,9 @@ function handleKeydown(event: KeyboardEvent) {
 
 onMounted(() => {
   window.addEventListener('keydown', handleKeydown)
+  void startWindowCloseConfirmation().catch((error: unknown) => {
+    console.error('Failed to listen for window close', error)
+  })
   void loadAppState()
     .then((state) => {
       if (appStateTouched) {
@@ -1461,6 +1502,9 @@ onMounted(() => {
   void listen('pinata://open-settings', openSettings).then((unlisten) => {
     unlistenOpenSettings = unlisten
   })
+  void listen('pinata://request-app-close', requestAppClose).then((unlisten) => {
+    unlistenAppCloseRequested = unlisten
+  })
   void listen<GitProgressEvent>('pinata://git-progress', (event) => {
     updateTaskProgressPhase(event.payload.progressId, event.payload.phase)
   }).then((unlisten) => {
@@ -1481,8 +1525,10 @@ onBeforeUnmount(() => {
   })
   unlistenOpenSettings?.()
   unlistenGitProgress?.()
+  unlistenAppCloseRequested?.()
   unlistenWindowResized?.()
   unlistenWindowMoved?.()
+  unlistenWindowClose?.()
 })
 </script>
 
@@ -1571,6 +1617,7 @@ onBeforeUnmount(() => {
           :accent-intensity="settings.accentIntensity"
           :app-font-size="settings.appFontSize"
           :terminal-font-size="settings.terminalFontSize"
+          :confirm-before-app-close="settings.confirmBeforeAppClose"
           :close-app-on-last-pane="settings.closeAppOnLastPane"
           :app-state="appState"
           @close="closeSettings"
@@ -1579,10 +1626,14 @@ onBeforeUnmount(() => {
           @update-accent-intensity="(accentIntensity) => updateSettings({ accentIntensity })"
           @update-app-font-size="(appFontSize) => updateSettings({ appFontSize })"
           @update-terminal-font-size="(terminalFontSize) => updateSettings({ terminalFontSize })"
+          @update-confirm-before-app-close="
+            (confirmBeforeAppClose) => updateSettings({ confirmBeforeAppClose })
+          "
           @update-close-app-on-last-pane="
             (closeAppOnLastPane) => updateSettings({ closeAppOnLastPane })
           "
           @update-app-state="persistAppState"
+          @reset-settings="updateSettings(defaultSettings)"
         />
 
         <TaskDialog
@@ -1597,45 +1648,36 @@ onBeforeUnmount(() => {
           @update="updateExistingTask"
         />
 
-        <div
+        <ConfirmationDialog
           v-if="paneCloseConfirmation"
-          :class="styles.confirmLayer"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="pane-close-title"
+          title-id="pane-close-title"
+          @drag="startWindowDrag"
         >
-          <div :class="styles.dragRegion" data-tauri-drag-region @mousedown="startWindowDrag" />
+          <template #body>
+            <h2 id="pane-close-title">
+              {{ paneCloseConfirmation.tabId ? 'Close terminal tab?' : 'Close active pane?' }}
+            </h2>
+            <p>
+              This {{ paneCloseConfirmation.tabId ? 'tab' : 'pane' }} is running
+              <strong>{{ paneCloseConfirmation.command || 'a process' }}</strong>. Closing it
+              will stop
+              {{ paneCloseConfirmation.tabId ? 'its terminal sessions' : 'that terminal session' }}.
+            </p>
+            <p v-if="paneCloseConfirmation.closeAppAfterClose">
+              This is the last pane, so Piñata will close too.
+            </p>
+          </template>
 
-          <section :class="styles.confirmDialog">
-            <div :class="styles.confirmHeader">
-              <span :class="styles.confirmIcon" aria-hidden="true">
-                <LayersIcon :size="18" />
-              </span>
-              <div>
-                <h2 id="pane-close-title">
-                  {{ paneCloseConfirmation.tabId ? 'Close terminal tab?' : 'Close active pane?' }}
-                </h2>
-                <p>
-                  This {{ paneCloseConfirmation.tabId ? 'tab' : 'pane' }} is running
-                  <strong>{{ paneCloseConfirmation.command || 'a process' }}</strong>. Closing it
-                  will stop {{ paneCloseConfirmation.tabId ? 'its terminal sessions' : 'that terminal session' }}.
-                </p>
-                <p v-if="paneCloseConfirmation.closeAppAfterClose">
-                  This is the last pane, so Piñata will close too.
-                </p>
-              </div>
-            </div>
+          <template #actions>
+            <button type="button" class="uiButton" @click="cancelPaneClose">
+              Keep {{ paneCloseConfirmation.tabId ? 'tab' : 'pane' }}
+            </button>
+            <button type="button" class="uiButton uiButtonDanger" @click="confirmPaneClose">
+              Close {{ paneCloseConfirmation.tabId ? 'tab' : 'pane' }}
+            </button>
+          </template>
+        </ConfirmationDialog>
 
-            <div :class="styles.confirmActions">
-              <button type="button" class="uiButton" @click="cancelPaneClose">
-                Keep {{ paneCloseConfirmation.tabId ? 'tab' : 'pane' }}
-              </button>
-              <button type="button" class="uiButton uiButtonDanger" @click="confirmPaneClose">
-                Close {{ paneCloseConfirmation.tabId ? 'tab' : 'pane' }}
-              </button>
-            </div>
-          </section>
-        </div>
       </template>
 
       <OnboardingFlow
@@ -1646,5 +1688,25 @@ onBeforeUnmount(() => {
         @finish="finishOnboarding"
       />
     </template>
+
+    <ConfirmationDialog
+      v-if="appCloseConfirmation"
+      title-id="app-close-title"
+      @drag="startWindowDrag"
+    >
+      <template #body>
+        <h2 id="app-close-title">Close Piñata?</h2>
+        <p>Terminal sessions will stop when the app closes.</p>
+      </template>
+
+      <template #actions>
+        <button type="button" class="uiButton" @click="cancelAppClose">
+          Keep open
+        </button>
+        <button type="button" class="uiButton uiButtonDanger" @click="confirmAppClose">
+          Close app
+        </button>
+      </template>
+    </ConfirmationDialog>
   </div>
 </template>

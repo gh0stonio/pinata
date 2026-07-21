@@ -1,6 +1,7 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{
     menu::{AboutMetadata, Menu, MenuItemBuilder, PredefinedMenuItem, Submenu},
-    Emitter, Listener,
+    Emitter, Listener, Manager, State,
 };
 
 mod app_state;
@@ -8,14 +9,29 @@ mod repository;
 mod terminal;
 
 const OPEN_SETTINGS_MENU_ID: &str = "open-settings";
+const REQUEST_APP_CLOSE_MENU_ID: &str = "request-app-close";
 const OPEN_SETTINGS_EVENT: &str = "pinata://open-settings";
+const REQUEST_APP_CLOSE_EVENT: &str = "pinata://request-app-close";
+
+#[derive(Default)]
+struct AppCloseState {
+    confirmed: AtomicBool,
+}
+
+#[tauri::command]
+fn confirm_app_close(app: tauri::AppHandle, state: State<AppCloseState>) {
+    state.confirmed.store(true, Ordering::SeqCst);
+    app.exit(0);
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    if let Err(error) = tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .manage(AppCloseState::default())
         .manage(terminal::TerminalState::default())
         .invoke_handler(tauri::generate_handler![
+            confirm_app_close,
             repository::create_task_repo_worktree,
             repository::delete_task_repo_worktree,
             repository::inspect_repository,
@@ -51,6 +67,9 @@ pub fn run() {
             let settings = MenuItemBuilder::with_id(OPEN_SETTINGS_MENU_ID, "Settings...")
                 .accelerator("CmdOrCtrl+,")
                 .build(handle)?;
+            let quit = MenuItemBuilder::with_id(REQUEST_APP_CLOSE_MENU_ID, "Quit Piñata")
+                .accelerator("CmdOrCtrl+Q")
+                .build(handle)?;
 
             let app_menu = Submenu::with_items(
                 handle,
@@ -66,7 +85,7 @@ pub fn run() {
                     &PredefinedMenuItem::hide(handle, None)?,
                     &PredefinedMenuItem::hide_others(handle, None)?,
                     &PredefinedMenuItem::separator(handle)?,
-                    &PredefinedMenuItem::quit(handle, None)?,
+                    &quit,
                 ],
             )?;
             let edit_menu = Submenu::with_items(
@@ -107,10 +126,23 @@ pub fn run() {
         .on_menu_event(|app, event| {
             if event.id().0 == OPEN_SETTINGS_MENU_ID {
                 let _ = app.emit(OPEN_SETTINGS_EVENT, ());
+            } else if event.id().0 == REQUEST_APP_CLOSE_MENU_ID {
+                let _ = app.emit(REQUEST_APP_CLOSE_EVENT, ());
             }
         })
-        .run(tauri::generate_context!())
-    {
-        eprintln!("error while running Tauri application: {error}");
+        .build(tauri::generate_context!());
+
+    match app {
+        Ok(app) => app.run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                let close_state = app.state::<AppCloseState>();
+
+                if !close_state.confirmed.load(Ordering::SeqCst) {
+                    api.prevent_exit();
+                    let _ = app.emit(REQUEST_APP_CLOSE_EVENT, ());
+                }
+            }
+        }),
+        Err(error) => eprintln!("error while building Tauri application: {error}"),
     }
 }

@@ -3,7 +3,7 @@ export type Accent = 'coral' | 'teal' | 'gold' | 'magenta' | 'lime' | 'azure' | 
 export type AccentIntensity = 'transparent' | 'balanced' | 'vibrant'
 export type AppFontSize = 'small' | 'regular' | 'large'
 export type TerminalFontSize = 'small' | 'regular' | 'large' | 'xl'
-export type SettingsSection = 'appearance' | 'shortcuts' | 'git'
+export type SettingsSection = 'general' | 'appearance' | 'shortcuts' | 'git'
 
 export type AppSettings = {
   theme: Theme
@@ -11,6 +11,7 @@ export type AppSettings = {
   accentIntensity: AccentIntensity
   appFontSize: AppFontSize
   terminalFontSize: TerminalFontSize
+  confirmBeforeAppClose: boolean
   closeAppOnLastPane: boolean
 }
 
@@ -71,6 +72,7 @@ export const defaultSettings: AppSettings = {
   accentIntensity: 'balanced',
   appFontSize: 'regular',
   terminalFontSize: 'regular',
+  confirmBeforeAppClose: true,
   closeAppOnLastPane: false,
 }
 
@@ -108,6 +110,10 @@ export function loadSettings(): AppSettings {
         terminalFontSizes.map((fontSize) => fontSize.id),
         defaultSettings.terminalFontSize,
       ),
+      confirmBeforeAppClose:
+        typeof stored.confirmBeforeAppClose === 'boolean'
+          ? stored.confirmBeforeAppClose
+          : defaultSettings.confirmBeforeAppClose,
       closeAppOnLastPane:
         typeof stored.closeAppOnLastPane === 'boolean'
           ? stored.closeAppOnLastPane
