@@ -5,19 +5,18 @@
 - One embedded task terminal per `Task`.
 - One embedded repo terminal per attached `TaskRepo`.
 - `MainSurface` renders the selected task surface as one pane until the user splits. Split panes
-  are persisted on the task as a small layout tree.
+  are persisted per task surface as small layout trees.
 - `⌘D` splits the active terminal vertically into side-by-side panes. `⌘⇧D` splits it
   horizontally into stacked panes. The new pane starts in the same cwd as the active pane and owns
   a separate tmux session.
 - A pane stores both a tmux `sessionId` and a source, either task terminal or one task repo. Split
-  panes inherit the active pane source, so sidebar clicks can focus or retarget the active pane
-  without guessing from cwd.
+  panes inherit the active pane source. Sidebar clicks switch to that source's own layout.
 - Clicking a pane makes it active and updates the task sidebar selection to that pane source.
 - `⌘W` closes the active pane. If tmux reports a foreground command that is not the user's shell,
   Piñata shows a warning before killing that pane's session.
-- Closing the final pane stores `Task.terminalClosed` and shows an empty main surface. If Settings
-  `closeAppOnLastPane` is enabled, closing that final pane closes Piñata after the session is
-  stopped.
+- Closing the final pane for one surface stores `Task.terminalClosedBySurface` and shows an empty
+  main surface. If Settings `closeAppOnLastPane` is enabled, closing that final pane closes Piñata
+  after the session is stopped.
 - `⌘T` reopens the selected task's current terminal target after the final pane was closed.
 - `xterm.js` owns rendering, keyboard input, cursor, and resize fitting in the webview.
 - Rust owns PTY attachment and byte transport. Output crosses the webview as base64 chunks so
@@ -99,13 +98,13 @@ flowchart TD
 
 ## App state
 
-- `Task.terminalLayout` persists split topology, active pane id, pane session targets, and pane
-  source.
-- Missing `Task.terminalLayout` means the selected task surface renders as one pane.
-- `Task.terminalClosed` suppresses that implicit single pane after the user closes the final pane.
-  Explicit task/repo selection, `⌘T`, or splitting reopens a pane.
+- `Task.terminalLayouts` persists split topology, active pane id, pane session targets, and pane
+  source per task surface. Keys are `task-terminal` or `repo:<TaskRepo.id>`.
+- Missing layout for the selected surface means that surface renders as one pane.
+- `Task.terminalClosedBySurface` suppresses that implicit single pane after the user closes the
+  final pane for one surface. `⌘T` or splitting reopens that surface.
 - Live process handles, terminal scrollback, and PTY readers remain outside app-state JSON.
-- Task edits that add or remove repos reset the task split layout so stale panes do not keep
+- Task edits that add or remove repos reset the task split layouts so stale panes do not keep
   pointing at removed worktrees.
 
 ## Deferred

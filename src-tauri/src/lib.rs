@@ -29,7 +29,8 @@ pub fn run() {
             terminal::terminal_scroll,
             terminal::terminal_cancel_scroll,
             terminal::terminal_clear,
-            terminal::terminal_process_status
+            terminal::terminal_process_status,
+            terminal::terminal_shell_name
         ])
         .setup(|app| {
             let handle = app.handle();

@@ -88,3 +88,7 @@ export function terminalProcessStatus(
 ): Promise<TerminalProcessStatus> {
   return invoke('terminal_process_status', { input })
 }
+
+export function terminalShellName(): Promise<string> {
+  return invoke('terminal_shell_name')
+}

@@ -25,6 +25,7 @@ import {
   splitTaskTerminalLayout,
   taskSelectedSurface,
   terminalTargetForTaskSurface,
+  terminalPanesForTask,
   terminalSessionIdsForTask,
   updateTask,
   type AppLayout,
@@ -560,6 +561,32 @@ function splitSelectedTerminal(direction: TerminalSplitDirection) {
   )
 }
 
+function splitTerminalPane(
+  taskId: string,
+  paneId: string,
+  direction: TerminalSplitDirection,
+) {
+  const task = appState.value.tasks.find((item) => item.id === taskId)
+
+  if (!task) {
+    return
+  }
+
+  const terminal = selectedTerminalTarget(appState.value, task)
+
+  if (!terminal) {
+    return
+  }
+
+  updateStoredTask(task.id, (currentTask) =>
+    splitTaskTerminalLayout(
+      activateTaskTerminalPane(currentTask, terminal, paneId),
+      terminal,
+      direction,
+    ),
+  )
+}
+
 function openSelectedTerminalPane() {
   const task = appState.value.tasks.find((item) => item.id === appState.value.selection.taskId)
 
@@ -584,7 +611,7 @@ function selectedTaskTerminalLayout(task: Task) {
 
 function paneSessionUsedByOtherPane(sessionId: string, paneId: string, tasks: Task[]) {
   return tasks.some((task) =>
-    task.terminalLayout?.panes.some(
+    terminalPanesForTask(task).some(
       (pane) => pane.id !== paneId && pane.sessionId === sessionId,
     ),
   )
@@ -620,10 +647,11 @@ async function closeTerminalPane(
     closedPaneSessionId = result.closedPane.sessionId
     closedLast = result.closedLast
     changed = result.task !== task
+    const nextLayout = effectiveTerminalLayout(result.task, terminal)
+
     nextSurface =
-      result.task.terminalLayout?.panes.find(
-        (pane) => pane.id === result.task.terminalLayout?.activePaneId,
-      )?.source ?? appState.value.selection.surfaceByTaskId[task.id]
+      nextLayout?.panes.find((pane) => pane.id === nextLayout.activePaneId)?.source ??
+      appState.value.selection.surfaceByTaskId[task.id]
 
     return result.task
   })
@@ -683,6 +711,35 @@ async function closeActiveTerminalPane() {
   await closeTerminalPane(task.id, activePane.id, closeAppAfterClose)
 }
 
+async function requestCloseTerminalPane(taskId: string, paneId: string) {
+  const task = appState.value.tasks.find((item) => item.id === taskId)
+  const terminal = task ? selectedTerminalTarget(appState.value, task) : undefined
+  const layout = task && terminal ? effectiveTerminalLayout(task, terminal) : undefined
+  const pane = layout?.panes.find((item) => item.id === paneId)
+
+  if (!task || !layout || !pane) {
+    return
+  }
+
+  const closeAppAfterClose = layout.panes.length === 1 && settings.value.closeAppOnLastPane
+  const status = await terminalProcessStatus({ sessionId: pane.sessionId }).catch(() => ({
+    busy: false,
+    command: undefined,
+  }))
+
+  if (status.busy) {
+    paneCloseConfirmation.value = {
+      taskId: task.id,
+      paneId: pane.id,
+      command: status.command,
+      closeAppAfterClose,
+    }
+    return
+  }
+
+  await closeTerminalPane(task.id, pane.id, closeAppAfterClose)
+}
+
 function cancelPaneClose() {
   paneCloseConfirmation.value = null
 }
@@ -710,8 +767,15 @@ function selectTerminalPane(taskId: string, paneId: string) {
       return task
     }
 
-    const nextTask = activateTaskTerminalPane(task, paneId)
-    const pane = nextTask.terminalLayout?.panes.find((item) => item.id === paneId)
+    const terminal = selectedTerminalTarget(appState.value, task)
+
+    if (!terminal) {
+      return task
+    }
+
+    const nextTask = activateTaskTerminalPane(task, terminal, paneId)
+    const layout = effectiveTerminalLayout(nextTask, terminal)
+    const pane = layout?.panes.find((item) => item.id === paneId)
 
     selectedSurface = pane?.source
     changed ||= nextTask !== task
@@ -1059,7 +1123,12 @@ async function updateExistingTask(task: Task, input: NewTaskInput) {
 
     const resetTerminalLayout = createPlans.length > 0 || cleanupPlans.length > 0
     const nextMaterializedTask = resetTerminalLayout
-      ? { ...materializedTask, terminalLayout: undefined }
+      ? {
+          ...materializedTask,
+          terminalClosedBySurface: undefined,
+          terminalLayout: undefined,
+          terminalLayouts: undefined,
+        }
       : materializedTask
 
     if (resetTerminalLayout) {
@@ -1298,7 +1367,9 @@ onBeforeUnmount(() => {
           <MainSurface
             :app-state="appState"
             :terminal-font-size="terminalFontSize"
+            @close-terminal-pane="requestCloseTerminalPane"
             @select-terminal-pane="selectTerminalPane"
+            @split-terminal-pane="splitTerminalPane"
           />
           <button
             type="button"

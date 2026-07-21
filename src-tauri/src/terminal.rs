@@ -98,6 +98,20 @@ pub fn terminal_ensure_session(app: AppHandle, input: TerminalSessionInput) -> R
 }
 
 #[tauri::command]
+pub fn terminal_shell_name() -> String {
+    env::var("SHELL")
+        .ok()
+        .and_then(|shell| {
+            Path::new(&shell)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_owned)
+        })
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| "shell".into())
+}
+
+#[tauri::command]
 pub fn terminal_attach(
     app: AppHandle,
     state: State<TerminalState>,

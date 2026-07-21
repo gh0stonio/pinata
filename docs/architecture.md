@@ -304,8 +304,10 @@ State rules:
 - Terminal live process state is not in app state. `Task.terminal.id` and `TaskRepo.id` derive tmux
   session names. Their `cwd` or `worktreePath` values let Piñata recreate sessions if the tmux
   server is gone.
-- `Task.terminalClosed` records that the user closed the final pane for a task. This suppresses the
-  implicit default pane until the user explicitly selects the task, selects a repo, or splits again.
+- `Task.terminalLayouts` stores pane trees per task surface. Keys are `task-terminal` or
+  `repo:<TaskRepo.id>`, so each task terminal and each repo owns its own split layout.
+- `Task.terminalClosedBySurface` records that the user closed the final pane for one surface. This
+  suppresses that surface's implicit default pane until the user explicitly reopens it.
 
 Write behavior:
 
@@ -782,12 +784,13 @@ Use this file for the big picture. Use feature specs when changing one feature.
 
 The terminal starts as one embedded shell for the selected task surface. A task surface is either
 the task terminal or one attached repo terminal. When the user splits, the task stores a durable
-pane tree. Each pane owns its own tmux-backed session and remembers the task surface it came from.
+pane tree for that selected surface. Each pane owns its own tmux-backed session and remembers the
+task surface it came from.
 
 ```mermaid
 flowchart LR
     Surface["Task.terminal or TaskRepo"]
-    Layout["Task.terminalLayout"]
+    Layout["Task.terminalLayouts[surface]"]
     MainSurface["MainSurface"]
     SplitNode["TerminalSplitNode"]
     TerminalSurface["TerminalSurface + xterm.js"]
@@ -820,12 +823,15 @@ Runtime rules:
 - Piñata keeps tmux mouse mode off so xterm owns selection. Wheel gestures are stopped before they
   can reach the shell and are mapped to tmux pane history. The next user input exits tmux scrollback
   before sending bytes to the shell, so typing snaps back to the live cursor.
-- The first pane uses deterministic session names from `Task.terminal.id` or `TaskRepo.id`.
+- The first pane for a surface uses deterministic session names from `Task.terminal.id` or
+  `TaskRepo.id`.
   Split-created panes use persisted `terminal-pane-*` session ids.
 - Each pane stores a source, either task terminal or one task repo. Split-created panes inherit the
-  active pane source. Sidebar clicks focus a matching source pane first; if none exists, Piñata
-  retargets the active pane.
+  active pane source. Sidebar clicks switch to that source's own pane tree, so layouts do not leak
+  across task terminal and repo surfaces.
 - Clicking a pane makes it active and updates the task sidebar selection to that pane source.
+- Each pane header shows the current shell label and pane-local actions for split vertically, split
+  horizontally, and close.
 - The shell starts in `Task.terminal.cwd` for task terminals, `TaskRepo.worktreePath` for repo
   terminals, and the stored pane `cwd` for split-created panes.
 - The default shell is the user's `SHELL`; missing or invalid shell falls back to `/bin/zsh`.
@@ -834,10 +840,11 @@ Runtime rules:
 - `Cmd+W` closes the active pane. If tmux and the pane tty report a foreground command that is not
   the user's shell, Piñata asks before stopping that pane session. Shim wrappers like `volta-shim`
   are resolved to the launched command when possible.
-- Closing the last pane stores `Task.terminalClosed` and shows an empty main surface. If
-  `closeAppOnLastPane` is enabled in Settings, Piñata closes after stopping that final pane session.
+- Closing the last pane for one surface stores `Task.terminalClosedBySurface` and shows an empty
+  main surface. If `closeAppOnLastPane` is enabled in Settings, Piñata closes after stopping that
+  final pane session.
 - `Cmd+T` reopens the selected task's current terminal target from that empty surface.
-- Task edits that add or remove repos reset the task split layout and kill split-only sessions so
+- Task edits that add or remove repos reset the task split layouts and kill split-only sessions so
   stale panes do not point at removed worktrees.
 
 Task lifecycle integration:

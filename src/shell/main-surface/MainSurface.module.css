@@ -79,17 +79,89 @@
 .pane {
 	position: relative;
 	display: grid;
+	grid-template-rows: 30px minmax(0, 1fr);
 	min-width: 0;
 	min-height: 0;
 	overflow: hidden;
 	background: var(--color-terminal-background);
 }
 
-.paneDim::after {
-	position: absolute;
-	inset: 0;
-	z-index: 1;
-	pointer-events: none;
-	content: '';
-	background: var(--color-pane-dim-overlay);
+.paneHeader {
+	display: flex;
+	align-items: center;
+	gap: var(--space-md);
+	min-width: 0;
+	height: 30px;
+	padding: 0 var(--space-xs) 0 var(--space-lg);
+	color: var(--color-text-tertiary);
+	background: color-mix(in srgb, var(--color-background) 55%, var(--color-terminal-background));
+	border-bottom: 1px solid var(--color-border-primary);
+	transition: opacity 120ms ease;
+}
+
+.paneTitle {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-sm);
+	min-width: 0;
+	color: var(--color-text-tertiary);
+	font-family: var(--font-ui);
+	font-size: var(--font-size-body);
+	font-weight: 700;
+	line-height: 1;
+}
+
+.paneTitle span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.paneActions {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--space-2xs);
+	margin-left: auto;
+}
+
+.paneActionButton {
+	display: grid;
+	place-items: center;
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	color: var(--color-text-placeholder);
+	background: transparent;
+	border: 1px solid transparent;
+	border-radius: var(--radius-sm);
+	cursor: pointer;
+	transition:
+		background 120ms ease,
+		border-color 120ms ease,
+		color 120ms ease;
+}
+
+.paneActionButton:hover {
+	color: var(--color-text-tertiary);
+	background: var(--color-surface-hover);
+}
+
+.paneActionButton:focus-visible {
+	border-color: var(--color-accent-muted);
+	outline: none;
+}
+
+.paneBody {
+	min-width: 0;
+	min-height: 0;
+	overflow: hidden;
+	transition: opacity 120ms ease;
+}
+
+.paneDim .paneHeader {
+	opacity: 0.6;
+}
+
+.paneDim .paneBody {
+	opacity: 0.4;
 }

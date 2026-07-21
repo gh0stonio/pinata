@@ -134,8 +134,12 @@ pub struct Task {
     pub repos: Vec<TaskRepo>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub terminal_closed: bool,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub terminal_closed_by_surface: HashMap<String, bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal_layout: Option<TaskTerminalLayout>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub terminal_layouts: HashMap<String, TaskTerminalLayout>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -335,11 +339,17 @@ fn normalize_app_state(mut state: AppState) -> AppState {
             task.terminal.cwd = "~".into();
         }
 
-        if task.terminal_layout.is_some() {
+        let repo_ids: Vec<&str> = task.repos.iter().map(|repo| repo.id.as_str()).collect();
+
+        task.terminal_closed_by_surface
+            .retain(|key, closed| *closed && terminal_surface_key_valid(key, &repo_ids));
+        task.terminal_layouts
+            .retain(|key, _| terminal_surface_key_valid(key, &repo_ids));
+
+        if task.terminal_layout.is_some() || !task.terminal_layouts.is_empty() {
             task.terminal_closed = false;
         }
 
-        let repo_ids: Vec<&str> = task.repos.iter().map(|repo| repo.id.as_str()).collect();
         let legacy_repo_id = state
             .selection
             .task_repo_id_by_task_id
@@ -379,6 +389,15 @@ fn normalize_app_state(mut state: AppState) -> AppState {
     state.selection.task_repo_id_by_task_id.clear();
 
     state
+}
+
+fn terminal_surface_key_valid(key: &str, repo_ids: &[&str]) -> bool {
+    if key == "task-terminal" {
+        return true;
+    }
+
+    key.strip_prefix("repo:")
+        .is_some_and(|repo_id| repo_ids.contains(&repo_id))
 }
 
 fn default_worktree_base_path() -> String {

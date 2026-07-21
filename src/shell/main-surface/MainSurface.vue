@@ -1,10 +1,15 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import type { AppState, TaskTerminalPane } from '../../features/app-state/app-state'
+import { computed, onMounted, ref } from 'vue'
+import type {
+  AppState,
+  TaskTerminalPane,
+  TerminalSplitDirection,
+} from '../../features/app-state/app-state'
 import {
   effectiveTerminalLayout,
   selectedTerminalTarget,
 } from '../../features/app-state/app-state'
+import { terminalShellName } from '../../features/terminal/terminal'
 import styles from './MainSurface.module.css'
 import TerminalSplitNode from './TerminalSplitNode.vue'
 
@@ -15,7 +20,11 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'select-terminal-pane': [taskId: string, paneId: string]
+  'split-terminal-pane': [taskId: string, paneId: string, direction: TerminalSplitDirection]
+  'close-terminal-pane': [taskId: string, paneId: string]
 }>()
+
+const shellName = ref('shell')
 
 const selectedTask = computed(() =>
   props.appState.tasks.find((task) => task.id === props.appState.selection.taskId),
@@ -43,6 +52,38 @@ const panesById = computed<Record<string, TaskTerminalPane>>(() => {
 
   return Object.fromEntries(layout.panes.map((pane) => [pane.id, pane]))
 })
+
+function emitSelectTerminalPane(paneId: string) {
+  const task = selectedTask.value
+
+  if (task) {
+    emit('select-terminal-pane', task.id, paneId)
+  }
+}
+
+function emitSplitTerminalPane(paneId: string, direction: TerminalSplitDirection) {
+  const task = selectedTask.value
+
+  if (task) {
+    emit('split-terminal-pane', task.id, paneId, direction)
+  }
+}
+
+function emitCloseTerminalPane(paneId: string) {
+  const task = selectedTask.value
+
+  if (task) {
+    emit('close-terminal-pane', task.id, paneId)
+  }
+}
+
+onMounted(() => {
+  void terminalShellName()
+    .then((name) => {
+      shellName.value = name || 'shell'
+    })
+    .catch(() => undefined)
+})
 </script>
 
 <template>
@@ -52,8 +93,11 @@ const panesById = computed<Record<string, TaskTerminalPane>>(() => {
       :node="terminalLayout.root"
       :panes="panesById"
       :active-pane-id="terminalLayout.activePaneId"
+      :shell-name="shellName"
       :terminal-font-size="terminalFontSize"
-      @select-pane="emit('select-terminal-pane', selectedTask.id, $event)"
+      @select-pane="emitSelectTerminalPane"
+      @split-pane="emitSplitTerminalPane"
+      @close-pane="emitCloseTerminalPane"
     />
 
     <section v-else :class="styles.content" aria-labelledby="pinata-empty-title">

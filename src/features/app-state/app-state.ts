@@ -96,7 +96,9 @@ export type Task = {
   terminal: TaskTerminal
   repos: TaskRepo[]
   terminalClosed?: boolean
+  terminalClosedBySurface?: Record<string, boolean>
   terminalLayout?: TaskTerminalLayout
+  terminalLayouts?: Record<string, TaskTerminalLayout>
 }
 
 export type TaskTerminal = {
@@ -354,11 +356,11 @@ export function effectiveTerminalLayout(
   task: Task,
   fallbackTarget: TerminalTarget,
 ): TaskTerminalLayout | undefined {
-  if (task.terminalClosed) {
+  if (isTerminalSurfaceClosed(task, fallbackTarget.source)) {
     return undefined
   }
 
-  const layout = normalizeTerminalLayout(task.terminalLayout)
+  const layout = terminalLayoutForTarget(task, fallbackTarget)
 
   if (layout) {
     return layout
@@ -378,7 +380,7 @@ export function splitTaskTerminalLayout(
   fallbackTarget: TerminalTarget,
   direction: TerminalSplitDirection,
 ): Task {
-  const layout = normalizeTerminalLayout(task.terminalLayout) ?? defaultTerminalLayout(fallbackTarget)
+  const layout = terminalLayoutForTarget(task, fallbackTarget) ?? defaultTerminalLayout(fallbackTarget)
   const activePane =
     layout.panes.find((pane) => pane.id === layout.activePaneId) ?? layout.panes[0]
   const newPaneId = `terminal-pane-${crypto.randomUUID()}`
@@ -388,19 +390,23 @@ export function splitTaskTerminalLayout(
     sessionId: newPaneId,
   }
 
-  return {
-    ...task,
-    terminalClosed: false,
-    terminalLayout: {
+  return withTerminalLayoutForTarget(
+    task,
+    fallbackTarget,
+    {
       activePaneId: newPane.id,
       panes: [...layout.panes, newPane],
       root: splitTerminalNode(layout.root, activePane.id, direction, newPane.id),
     },
-  }
+  )
 }
 
-export function activateTaskTerminalPane(task: Task, paneId: string): Task {
-  const layout = normalizeTerminalLayout(task.terminalLayout)
+export function activateTaskTerminalPane(
+  task: Task,
+  fallbackTarget: TerminalTarget,
+  paneId: string,
+): Task {
+  const layout = effectiveTerminalLayout(task, fallbackTarget)
 
   if (!layout?.panes.some((pane) => pane.id === paneId)) {
     return task
@@ -410,47 +416,22 @@ export function activateTaskTerminalPane(task: Task, paneId: string): Task {
     return task
   }
 
-  return {
-    ...task,
-    terminalClosed: false,
-    terminalLayout: {
+  return withTerminalLayoutForTarget(
+    task,
+    fallbackTarget,
+    {
       ...layout,
       activePaneId: paneId,
     },
-  }
+  )
 }
 
 export function focusTaskTerminalTarget(task: Task, target: TerminalTarget): Task {
-  const layout = normalizeTerminalLayout(task.terminalLayout)
-
-  if (!layout) {
-    return task.terminalClosed ? { ...task, terminalClosed: false } : task
-  }
-
-  const activePane =
-    layout.panes.find((pane) => pane.id === layout.activePaneId) ?? layout.panes[0]
-
-  if (activePane && sameTerminalSource(activePane.source, target.source)) {
+  if (!isTerminalSurfaceClosed(task, target.source)) {
     return task
   }
 
-  const existingPane = layout.panes.find((pane) => sameTerminalSource(pane.source, target.source))
-
-  if (existingPane) {
-    return activateTaskTerminalPane(task, existingPane.id)
-  }
-
-  const nextPane = terminalPaneForTarget(target)
-
-  return {
-    ...task,
-    terminalClosed: false,
-    terminalLayout: {
-      activePaneId: nextPane.id,
-      panes: layout.panes.map((pane) => (pane.id === activePane.id ? nextPane : pane)),
-      root: replaceTerminalPaneId(layout.root, activePane.id, nextPane.id),
-    },
-  }
+  return withTerminalLayoutForTarget(task, target, terminalLayoutForTarget(task, target))
 }
 
 export type CloseTaskTerminalPaneResult = {
@@ -473,11 +454,7 @@ export function closeTaskTerminalPane(
 
   if (layout.panes.length === 1) {
     return {
-      task: {
-        ...task,
-        terminalClosed: true,
-        terminalLayout: undefined,
-      },
+      task: withClosedTerminalSurface(task, fallbackTarget),
       closedPane,
       closedLast: true,
     }
@@ -486,37 +463,36 @@ export function closeTaskTerminalPane(
   const panes = layout.panes.filter((pane) => pane.id !== paneId)
   const paneIds = new Set(panes.map((pane) => pane.id))
   const root = removeTerminalPaneNode(layout.root, paneId)
-  const activePaneId = paneIds.has(layout.activePaneId)
-    ? layout.activePaneId
-    : root
-      ? firstTerminalPaneId(root)
-      : panes[0]?.id
+  const activePaneId = nextActivePaneId(layout, paneIds, paneId, root)
 
   if (!root || !activePaneId) {
     return {
-      task: {
-        ...task,
-        terminalClosed: true,
-        terminalLayout: undefined,
-      },
+      task: withClosedTerminalSurface(task, fallbackTarget),
       closedPane,
       closedLast: true,
     }
   }
 
   return {
-    task: {
-      ...task,
-      terminalClosed: false,
-      terminalLayout: {
+    task: withTerminalLayoutForTarget(
+      task,
+      fallbackTarget,
+      {
         activePaneId,
         panes,
         root,
       },
-    },
+    ),
     closedPane,
     closedLast: false,
   }
+}
+
+export function terminalPanesForTask(task: Task) {
+  return [
+    ...(task.terminalLayout?.panes ?? []),
+    ...Object.values(task.terminalLayouts ?? {}).flatMap((layout) => layout.panes),
+  ]
 }
 
 export function terminalSessionIdsForTask(task: Task) {
@@ -524,7 +500,7 @@ export function terminalSessionIdsForTask(task: Task) {
     new Set([
       task.terminal.id,
       ...task.repos.map((repo) => repo.id),
-      ...(task.terminalLayout?.panes.map((pane) => pane.sessionId) ?? []),
+      ...terminalPanesForTask(task).map((pane) => pane.sessionId),
     ]),
   )
 }
@@ -615,12 +591,19 @@ function normalizeTask(task: Task): Task {
   const terminal =
     task.terminal?.id && task.terminal.cwd ? task.terminal : taskTerminalForTaskId(task.id)
   const terminalLayout = normalizeTerminalLayout(task.terminalLayout, terminal, task.repos)
+  const terminalLayouts = normalizeTerminalLayouts(task.terminalLayouts, terminal, task.repos)
+  const terminalClosedBySurface = normalizeTerminalClosedBySurface(
+    task.terminalClosedBySurface,
+    task.repos,
+  )
 
   return {
     ...task,
     terminal,
-    terminalClosed: terminalLayout ? false : Boolean(task.terminalClosed),
+    terminalClosed: terminalLayout || terminalLayouts ? false : Boolean(task.terminalClosed),
+    terminalClosedBySurface,
     terminalLayout,
+    terminalLayouts,
   }
 }
 
@@ -665,6 +648,144 @@ function defaultTerminalLayout(fallbackTarget: TerminalTarget): TaskTerminalLayo
     panes: [pane],
     root: { kind: 'pane', paneId: pane.id },
   }
+}
+
+function terminalSurfaceKey(source: TaskSurfaceSelection) {
+  return source.kind === 'task-terminal' ? 'task-terminal' : `repo:${source.taskRepoId}`
+}
+
+function surfaceFromTerminalKey(
+  key: string,
+  repos: TaskRepo[],
+): TaskSurfaceSelection | undefined {
+  if (key === 'task-terminal') {
+    return { kind: 'task-terminal' }
+  }
+
+  const repoId = key.startsWith('repo:') ? key.slice(5) : undefined
+
+  return repoId && repos.some((repo) => repo.id === repoId)
+    ? { kind: 'repo', taskRepoId: repoId }
+    : undefined
+}
+
+function isTerminalSurfaceClosed(task: Task, source: TaskSurfaceSelection) {
+  const key = terminalSurfaceKey(source)
+
+  return Boolean(task.terminalClosedBySurface?.[key] ?? task.terminalClosed)
+}
+
+function withTerminalLayoutForTarget(
+  task: Task,
+  target: TerminalTarget,
+  layout: TaskTerminalLayout | undefined,
+): Task {
+  const key = terminalSurfaceKey(target.source)
+  const terminalLayouts = { ...(task.terminalLayouts ?? {}) }
+  const terminalClosedBySurface = { ...(task.terminalClosedBySurface ?? {}) }
+
+  if (layout) {
+    terminalLayouts[key] = layout
+  } else {
+    delete terminalLayouts[key]
+  }
+
+  delete terminalClosedBySurface[key]
+
+  return {
+    ...task,
+    terminalClosed: false,
+    terminalClosedBySurface: Object.keys(terminalClosedBySurface).length
+      ? terminalClosedBySurface
+      : undefined,
+    terminalLayout: undefined,
+    terminalLayouts: Object.keys(terminalLayouts).length ? terminalLayouts : undefined,
+  }
+}
+
+function withClosedTerminalSurface(task: Task, target: TerminalTarget): Task {
+  const key = terminalSurfaceKey(target.source)
+  const terminalLayouts = { ...(task.terminalLayouts ?? {}) }
+  const terminalClosedBySurface = { ...(task.terminalClosedBySurface ?? {}) }
+
+  delete terminalLayouts[key]
+  terminalClosedBySurface[key] = true
+
+  return {
+    ...task,
+    terminalClosed: false,
+    terminalClosedBySurface,
+    terminalLayout: undefined,
+    terminalLayouts: Object.keys(terminalLayouts).length ? terminalLayouts : undefined,
+  }
+}
+
+function terminalLayoutForTarget(
+  task: Task,
+  target: TerminalTarget,
+): TaskTerminalLayout | undefined {
+  const key = terminalSurfaceKey(target.source)
+  const keyedLayout = normalizeTerminalLayout(
+    task.terminalLayouts?.[key],
+    task.terminal,
+    task.repos,
+  )
+
+  if (keyedLayout) {
+    return terminalLayoutForSurface(keyedLayout, target.source)
+  }
+
+  const legacyLayout = normalizeTerminalLayout(task.terminalLayout, task.terminal, task.repos)
+
+  return legacyLayout ? terminalLayoutForSurface(legacyLayout, target.source) : undefined
+}
+
+function terminalLayoutForSurface(
+  layout: TaskTerminalLayout,
+  source: TaskSurfaceSelection,
+): TaskTerminalLayout | undefined {
+  const panes = layout.panes.filter((pane) => sameTerminalSource(pane.source, source))
+  const paneIds = new Set(panes.map((pane) => pane.id))
+  const root = normalizeTerminalNode(layout.root, paneIds)
+
+  if (!panes.length || !root) {
+    return undefined
+  }
+
+  return {
+    activePaneId: paneIds.has(layout.activePaneId) ? layout.activePaneId : panes[0].id,
+    panes,
+    root,
+  }
+}
+
+function normalizeTerminalLayouts(
+  layouts: Record<string, TaskTerminalLayout> | undefined,
+  terminal: TaskTerminal,
+  repos: TaskRepo[],
+): Record<string, TaskTerminalLayout> | undefined {
+  const normalizedEntries = Object.entries(layouts ?? {}).flatMap(([key, layout]) => {
+    const source = surfaceFromTerminalKey(key, repos)
+    const normalizedLayout = normalizeTerminalLayout(layout, terminal, repos)
+    const surfaceLayout = source && normalizedLayout
+      ? terminalLayoutForSurface(normalizedLayout, source)
+      : undefined
+
+    return surfaceLayout ? [[key, surfaceLayout] as const] : []
+  })
+
+  return normalizedEntries.length ? Object.fromEntries(normalizedEntries) : undefined
+}
+
+function normalizeTerminalClosedBySurface(
+  closedBySurface: Record<string, boolean> | undefined,
+  repos: TaskRepo[],
+): Record<string, boolean> | undefined {
+  const entries = Object.entries(closedBySurface ?? {}).filter(
+    ([key, closed]) => closed && surfaceFromTerminalKey(key, repos),
+  )
+
+  return entries.length ? Object.fromEntries(entries) : undefined
 }
 
 function normalizeTerminalLayout(
@@ -760,8 +881,54 @@ function removeTerminalPaneNode(
   return first ?? second
 }
 
+function nextActivePaneId(
+  layout: TaskTerminalLayout,
+  paneIds: Set<string>,
+  closedPaneId: string,
+  root: TerminalLayoutNode | undefined,
+): string | undefined {
+  if (paneIds.has(layout.activePaneId)) {
+    return layout.activePaneId
+  }
+
+  const closestPaneId = closestTerminalPaneId(layout.root, closedPaneId)
+
+  if (closestPaneId && paneIds.has(closestPaneId)) {
+    return closestPaneId
+  }
+
+  return root ? firstTerminalPaneId(root) : undefined
+}
+
+function closestTerminalPaneId(
+  node: TerminalLayoutNode,
+  paneId: string,
+): string | undefined {
+  if (node.kind === 'pane') {
+    return undefined
+  }
+
+  if (terminalNodeHasPane(node.first, paneId)) {
+    return closestTerminalPaneId(node.first, paneId) ?? firstTerminalPaneId(node.second)
+  }
+
+  if (terminalNodeHasPane(node.second, paneId)) {
+    return closestTerminalPaneId(node.second, paneId) ?? firstTerminalPaneId(node.first)
+  }
+
+  return undefined
+}
+
 function firstTerminalPaneId(node: TerminalLayoutNode): string | undefined {
   return node.kind === 'pane' ? node.paneId : firstTerminalPaneId(node.first)
+}
+
+function terminalNodeHasPane(node: TerminalLayoutNode, paneId: string): boolean {
+  if (node.kind === 'pane') {
+    return node.paneId === paneId
+  }
+
+  return terminalNodeHasPane(node.first, paneId) || terminalNodeHasPane(node.second, paneId)
 }
 
 function terminalPaneSource(
@@ -798,20 +965,4 @@ function sameTerminalSource(left: TaskSurfaceSelection, right: TaskSurfaceSelect
   }
 
   return right.kind === 'repo' && left.taskRepoId === right.taskRepoId
-}
-
-function replaceTerminalPaneId(
-  node: TerminalLayoutNode,
-  fromPaneId: string,
-  toPaneId: string,
-): TerminalLayoutNode {
-  if (node.kind === 'pane') {
-    return node.paneId === fromPaneId ? { kind: 'pane', paneId: toPaneId } : node
-  }
-
-  return {
-    ...node,
-    first: replaceTerminalPaneId(node.first, fromPaneId, toPaneId),
-    second: replaceTerminalPaneId(node.second, fromPaneId, toPaneId),
-  }
 }

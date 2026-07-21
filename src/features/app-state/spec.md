@@ -65,7 +65,9 @@ type Task = {
   terminal: TaskTerminal
   repos: TaskRepo[]
   terminalClosed?: boolean
+  terminalClosedBySurface?: Record<string, boolean>
   terminalLayout?: TaskTerminalLayout
+  terminalLayouts?: Record<string, TaskTerminalLayout>
 }
 
 type TaskTerminal = {
@@ -120,15 +122,18 @@ type TaskSurfaceSelection =
 - `repoRegistry` is global repo config. `TaskRepo` is the repo instance inside a task.
 - Every `Task` owns a default `TaskTerminal`. It starts in `~` and is the task's scratch or
   orchestration surface when no repo is selected.
-- `Task.terminalLayout` is optional. Missing layout means "render the selected task surface as one
-  pane". Once the user splits, Piñata persists the pane tree, active pane id, and each pane's
-  `sessionId`, `cwd`, label, and source.
-- `Task.terminalClosed` is optional. When true and no `Task.terminalLayout` exists, the selected
-  task shows an empty main surface instead of auto-opening the default pane. Selecting the task,
-  selecting a repo, pressing `⌘T`, or splitting clears it and reopens a pane.
+- `Task.terminalLayouts` persists pane trees per task surface. Keys are `task-terminal` or
+  `repo:<TaskRepo.id>`.
+- Missing surface layout means "render that surface as one pane". Once the user splits a surface,
+  Piñata persists that surface's pane tree, active pane id, and each pane's `sessionId`, `cwd`,
+  label, and source.
+- `Task.terminalLayout` is legacy migration state. New writes use `Task.terminalLayouts`.
+- `Task.terminalClosedBySurface` suppresses the implicit single pane for one surface after the
+  user closes its final pane. `Task.terminalClosed` is legacy migration state.
+- Selecting a task or repo only switches to that surface's own layout. Pane trees from another repo
+  or the task terminal must not leak into the newly selected surface.
 - `TaskTerminalPane.source` records whether the pane was created from the task terminal or a
-  specific task repo. Sidebar selection uses that source to focus a matching pane before replacing
-  the active pane.
+  specific task repo. Clicking a pane updates sidebar selection to that source.
 - Tasks may have zero repos. Repo-less tasks are valid and open their task terminal immediately.
 - `repositoryDefaults.worktreeBasePath` is the shared worktree base. Per-repo
   `worktreeBasePath` is an optional override only.
