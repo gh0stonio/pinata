@@ -2,7 +2,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env, fs,
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -383,16 +383,31 @@ fn foreground_command_for_tty(tty_path: &str) -> Option<String> {
         return None;
     }
 
-    String::from_utf8_lossy(&output.stdout)
+    foreground_command_from_ps_output(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn foreground_command_from_ps_output(output: &str) -> Option<String> {
+    let processes = output
         .lines()
         .filter_map(parse_ps_process)
         .filter(|process| process.stat.contains('+'))
+        .collect::<Vec<_>>();
+    let parent_pids = processes
+        .iter()
+        .map(|process| process.ppid)
+        .collect::<HashSet<_>>();
+
+    processes
+        .iter()
+        .filter(|process| !parent_pids.contains(&process.pid))
         .filter_map(|process| command_label(&process.comm, &process.command))
         .filter(|command| !is_idle_terminal_command(command))
         .last()
 }
 
 struct PsProcess {
+    pid: u32,
+    ppid: u32,
     stat: String,
     comm: String,
     command: String,
@@ -400,13 +415,15 @@ struct PsProcess {
 
 fn parse_ps_process(line: &str) -> Option<PsProcess> {
     let mut fields = line.split_whitespace();
-    fields.next()?;
-    fields.next()?;
+    let pid = fields.next()?.parse().ok()?;
+    let ppid = fields.next()?.parse().ok()?;
     let stat = fields.next()?.to_string();
     let comm = fields.next()?.to_string();
     let command = fields.collect::<Vec<_>>().join(" ");
 
     Some(PsProcess {
+        pid,
+        ppid,
         stat,
         comm,
         command,
@@ -416,15 +433,15 @@ fn parse_ps_process(line: &str) -> Option<PsProcess> {
 fn command_label(comm: &str, command: &str) -> Option<String> {
     let comm = command_name(comm);
 
-    if !is_shim_command(&comm) {
+    if !is_wrapper_command(&comm) && !is_tty_command(&comm) {
         return (!comm.is_empty()).then_some(comm);
     }
 
     command
         .split_whitespace()
         .map(command_name)
-        .find(|name| !name.is_empty() && !is_shim_command(name))
-        .or_else(|| (!comm.is_empty()).then_some(comm))
+        .find(|name| !name.is_empty() && !is_wrapper_command(name) && !is_tty_command(name))
+        .or_else(|| (!comm.is_empty() && !is_tty_command(&comm)).then_some(comm))
 }
 
 fn command_name(command: &str) -> String {
@@ -435,8 +452,24 @@ fn command_name(command: &str) -> String {
         .to_string()
 }
 
-fn is_shim_command(command: &str) -> bool {
-    matches!(command, "volta-shim")
+fn is_wrapper_command(command: &str) -> bool {
+    command.ends_with("-shim")
+}
+
+fn is_tty_command(command: &str) -> bool {
+    let command = command.strip_prefix("/dev/").unwrap_or(command);
+
+    if let Some(rest) = command.strip_prefix("pts/") {
+        return is_digits(rest);
+    }
+
+    command
+        .strip_prefix("tty")
+        .is_some_and(|rest| is_digits(rest) || rest.strip_prefix('s').is_some_and(is_digits))
+}
+
+fn is_digits(value: &str) -> bool {
+    !value.is_empty() && value.chars().all(|character| character.is_ascii_digit())
 }
 
 fn ensure_session(app: &AppHandle, session_id: &str, cwd: &str) -> Result<(), String> {
@@ -531,12 +564,46 @@ fn has_session(app: &AppHandle, session_id: &str) -> Result<bool, String> {
 }
 
 fn is_idle_terminal_command(command: &str) -> bool {
-    let name = Path::new(command)
-        .file_name()
-        .and_then(|file_name| file_name.to_str())
-        .unwrap_or(command);
+    let name = command_name(command);
 
-    matches!(name, "bash" | "fish" | "sh" | "tmux" | "zsh")
+    if is_tty_command(&name) {
+        return true;
+    }
+
+    is_shell_command(&name)
+}
+
+fn is_shell_command(command: &str) -> bool {
+    let configured_shell = env::var_os("SHELL")
+        .and_then(|shell| shell.into_string().ok())
+        .map(|shell| command_name(&shell));
+
+    if configured_shell.as_deref() == Some(command) {
+        return true;
+    }
+
+    if shell_names_from_etc().contains(command) {
+        return true;
+    }
+
+    matches!(
+        command,
+        "bash" | "dash" | "fish" | "ksh" | "nu" | "sh" | "zsh"
+    )
+}
+
+fn shell_names_from_etc() -> HashSet<String> {
+    fs::read_to_string("/etc/shells")
+        .ok()
+        .map(|shells| {
+            shells
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty() && !line.starts_with('#'))
+                .map(command_name)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn tmux_command(app: &AppHandle) -> Result<Command, String> {
@@ -669,8 +736,8 @@ fn expand_home(path: &str) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        command_label, is_idle_terminal_command, login_shell_command, parse_ps_process,
-        tmux_session_name,
+        command_label, foreground_command_from_ps_output, is_idle_terminal_command,
+        login_shell_command, parse_ps_process, tmux_session_name,
     };
     use std::path::Path;
 
@@ -690,6 +757,7 @@ mod tests {
     #[test]
     fn foreground_shells_are_idle() {
         assert!(is_idle_terminal_command("/bin/zsh"));
+        assert!(is_idle_terminal_command("ttys004"));
         assert!(!is_idle_terminal_command("node"));
     }
 
@@ -699,6 +767,23 @@ mod tests {
             command_label("/Users/me/.volta/bin/volta-shim", "volta-shim pi"),
             Some("pi".into())
         );
+    }
+
+    #[test]
+    fn tty_label_uses_invoked_command_label() {
+        assert_eq!(command_label("ttys000", "pi"), Some("pi".into()));
+        assert_eq!(command_label("/dev/ttys000", "/dev/ttys000"), None);
+    }
+
+    #[test]
+    fn foreground_process_uses_leaf_process_label() {
+        let output = "\
+89065 89064 S+   zsh      /bin/zsh -l
+89335 89065 S+   pi       pi
+89336 89335 S+   pi       pi
+";
+
+        assert_eq!(foreground_command_from_ps_output(output), Some("pi".into()));
     }
 
     #[test]
