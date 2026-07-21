@@ -94,12 +94,15 @@ others).
 - **Empty state:** with no selected task, or with a selected repo that has not finished worktree
   setup, the center shows a simple empty state.
 
+Current center work:
+
+- **Tab bar** - the selected task surface's terminal tabs plus a `+` new-terminal button. A surface
+  is either the task terminal or one attached repo terminal.
+- **Pane area** - the active tab's pane tree. If the selected surface has no open tab, the center
+  shows an empty state with the `⌘T` shortcut.
+
 Future center work from v0:
 
-- **Tab bar** (`.term-tabbar`) - the active repo's tabs + a `+` new-terminal button. Full behaviour
-  in spec 08.
-- **Pane area** - the active tab's pane tree (`TabPanes`, spec 04), or an **EmptyRepo** state ("No
-  tabs in <repo>" + a New terminal button) when the repo has no tabs.
 - **LSP status bar** (`LspBar`) - only when a **file** tab is active. A thin mono strip: per-server
   status dots (`ts-go`, `eslint`, `rust-analyzer`, …; ready = `--ck-pass`, indexing = pulsing
   `--ck-run`) + the repo name at the right. Decorative/status only.
@@ -110,8 +113,8 @@ Future center work from v0:
   surface, either task terminal or repo terminal. `selection.expandedTaskIds` - which tasks are
   expanded in the left side panel.
 - Clicking a task row selects the task terminal. Clicking the chevron toggles expand/collapse.
-  Clicking a repo row selects that repo and its task. Future tab selection should be remembered per
-  surface once terminal tabs land.
+  Clicking a repo row selects that repo and its task. Terminal tab selection is remembered per
+  surface.
 
 ## Overlays (z-order, all mounted by `App`)
 
@@ -129,8 +132,8 @@ including blocking progress flows.
 
 Implement the full global map from `APP.md` §8 in one central keydown handler. Notes:
 - ⌘B toggles the sidebar; ⌘L toggles the right panel.
-- ⌘T new terminal in active repo; ⌘N new task; ⌘D / ⌘⇧D split active pane row/col; ⌘W close active
-  pane; ⌘, settings; ⌘P palette.
+- ⌘T new terminal tab in active surface; ⌘N new task; ⌘D / ⌘⇧D split active pane row/col; ⌘W
+  close active pane; ⌘, settings; ⌘P palette.
 - The handler depends on the active tab/repo/task, so it must see current selection (re-bind or read
   latest state). Pane-local inputs (shell/agent/rename fields) must not swallow these shortcuts.
 
@@ -138,7 +141,7 @@ Implement the full global map from `APP.md` §8 in one central keydown handler. 
 
 - **No task selected / empty project:** center shows an empty state; breadcrumb hides repo half.
 - **Task with no repos:** repo switcher empty; center shows the task terminal in `~`.
-- **Repo with no tabs:** center shows EmptyRepo with a "New terminal" CTA.
+- **Surface with no tabs:** center shows an empty state with `⌘T`.
 - **Both panels collapsed:** center fills the window; toggles still available in the title bar.
 - **Remote-down gate:** there is a latent `RepoRemoteGate` path (shown instead of the center when a
   repo's remote is unreachable). Currently `remoteDown` is always false; wire it if production adds

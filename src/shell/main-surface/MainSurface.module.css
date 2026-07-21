@@ -54,6 +54,169 @@
 	line-height: 1;
 }
 
+.terminalHost {
+	display: grid;
+	grid-template-rows: 40px minmax(0, 1fr);
+	min-width: 0;
+	min-height: 0;
+	overflow: hidden;
+	background: var(--color-terminal-background);
+}
+
+.tabBar {
+	display: flex;
+	align-items: stretch;
+	min-width: 0;
+	min-height: 0;
+	overflow-x: auto;
+	overflow-y: hidden;
+	background: color-mix(in srgb, var(--color-background) 55%, var(--color-terminal-background));
+	border-bottom: 1px solid var(--color-border-primary);
+	scrollbar-width: none;
+}
+
+.tabBar::-webkit-scrollbar {
+	display: none;
+}
+
+.tabItem {
+	position: relative;
+	display: inline-grid;
+	grid-template-columns: minmax(0, 1fr) 28px;
+	align-items: center;
+	min-width: 144px;
+	max-width: 260px;
+	border-right: 1px solid var(--color-border-subtle);
+}
+
+.tabItem::before {
+	position: absolute;
+	inset: 0 0 auto;
+	height: 2px;
+	background: transparent;
+	content: "";
+}
+
+.tabItemActive::before {
+	background: var(--color-accent-primary);
+}
+
+.tabButton,
+.tabCloseButton,
+.tabAddButton {
+	display: inline-grid;
+	place-items: center;
+	height: 100%;
+	padding: 0;
+	color: var(--color-text-placeholder);
+	background: transparent;
+	border: 0;
+	cursor: pointer;
+}
+
+.tabButton {
+	grid-template-columns: 16px minmax(0, 1fr) auto;
+	justify-content: start;
+	gap: var(--space-sm);
+	min-width: 0;
+	padding: 0 var(--space-sm) 0 var(--space-xl);
+	font-family: var(--font-ui);
+	font-size: var(--font-size-body);
+	font-weight: 700;
+	text-align: left;
+}
+
+.tabRenameShell {
+	cursor: default;
+}
+
+.tabRenameInput {
+	min-width: 0;
+	width: min(100%, 160px);
+	height: 24px;
+	padding: 0 var(--space-xs);
+	color: var(--color-text-primary);
+	background: var(--color-control-background);
+	border: 1px solid var(--color-accent-border);
+	border-radius: var(--radius-sm);
+	font-family: var(--font-ui);
+	font-size: var(--font-size-body);
+	font-weight: 700;
+	text-align: left;
+	outline: 0;
+	cursor: text;
+}
+
+.tabRenameInput::selection {
+	color: var(--color-accent-on-primary);
+	background: var(--color-accent-primary);
+}
+
+.tabButton span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.tabPaneCount {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 0;
+	height: 14px;
+	margin-left: var(--space-2xs);
+	padding: 0 var(--space-xs);
+	color: var(--color-text-placeholder);
+	border: 1px solid currentColor;
+	border-radius: var(--space-2xs);
+	font-family: var(--font-ui);
+	font-size: var(--font-size-help);
+	font-weight: 500;
+	line-height: 1;
+	opacity: 0.45;
+}
+
+.tabItemActive .tabButton {
+	color: var(--color-text-primary);
+}
+
+.tabItemActive .tabPaneCount {
+	color: var(--color-text-tertiary);
+	opacity: 0.63;
+}
+
+.tabCloseButton {
+	width: 28px;
+	opacity: 0;
+	transition:
+		color 120ms ease,
+		opacity 120ms ease;
+}
+
+.tabItem:hover .tabCloseButton,
+.tabItem:focus-within .tabCloseButton,
+.tabItemActive .tabCloseButton {
+	opacity: 1;
+}
+
+.tabCloseButton:hover,
+.tabAddButton:hover {
+	color: var(--color-text-secondary);
+}
+
+.tabButton:focus-visible,
+.tabRenameInput:focus-visible,
+.tabCloseButton:focus-visible,
+.tabAddButton:focus-visible {
+	outline: 1px solid var(--color-accent-border);
+	outline-offset: -1px;
+}
+
+.tabAddButton {
+	width: 40px;
+	border-right: 1px solid var(--color-border-subtle);
+}
+
 .split {
 	display: grid;
 	width: 100%;

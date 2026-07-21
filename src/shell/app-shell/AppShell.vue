@@ -7,20 +7,25 @@ import SidePanel from '../side-panel/SidePanel.vue'
 import TitleBar from '../title-bar/TitleBar.vue'
 import {
   activateTaskTerminalPane,
+  closeTaskTerminalTab,
   closeTaskTerminalPane,
+  createTaskTerminalTab,
   createTaskRepoWorktree,
   createTask,
   DEFAULT_APP_LAYOUT,
   createEmptyAppState,
   deleteTaskRepoWorktree,
   effectiveTerminalLayout,
+  effectiveTerminalTabs,
   findRegisteredRepo,
   focusTaskTerminalTarget,
   hasRegisteredRepo,
   loadAppState,
   plannedTaskRepoWorktreePath,
+  renameTaskTerminalTab,
   saveAppState,
   selectedTerminalTarget,
+  selectTaskTerminalTab,
   SIDE_PANEL_WIDTH_LIMITS,
   splitTaskTerminalLayout,
   taskSelectedSurface,
@@ -33,6 +38,7 @@ import {
   type NewTaskInput,
   type RegisteredRepo,
   type Task,
+  type TaskTerminalPane,
   type TaskRepoGitOperation,
   type TaskRepo,
   type TaskSurfaceSelection,
@@ -96,7 +102,8 @@ type SidePanelResizeStart = {
 
 type PaneCloseConfirmation = {
   taskId: string
-  paneId: string
+  paneId?: string
+  tabId?: string
   command?: string
   closeAppAfterClose: boolean
 }
@@ -123,6 +130,7 @@ const taskDialogProgress = ref<TaskProgress | null>(null)
 const paneCloseConfirmation = ref<PaneCloseConfirmation | null>(null)
 const appState = ref<AppState>(createEmptyAppState())
 const settings = ref<AppSettings>(startsInOnboarding ? { ...defaultSettings } : loadSettings())
+const terminalProcessNames = ref<Record<string, string>>({})
 const terminalFontSize = computed(() => terminalFontSizePxById[settings.value.terminalFontSize])
 const editingTask = computed(() =>
   appState.value.tasks.find((task) => task.id === editingTaskId.value),
@@ -152,6 +160,7 @@ let sidePanelResizeStart: SidePanelResizeStart | undefined
 let windowLayoutSaveTimer: number | undefined
 let pendingWindowSize: PhysicalSize | undefined
 let pendingWindowPosition: PhysicalPosition | undefined
+let terminalProcessPollTimer: number | undefined
 
 function clamp(value: number, min: number, max: number) {
   return Math.round(Math.min(max, Math.max(min, value)))
@@ -587,8 +596,18 @@ function splitTerminalPane(
   )
 }
 
-function openSelectedTerminalPane() {
+function openSelectedTerminalTab() {
   const task = appState.value.tasks.find((item) => item.id === appState.value.selection.taskId)
+
+  if (!task) {
+    return
+  }
+
+  openTerminalTab(task.id)
+}
+
+function openTerminalTab(taskId: string) {
+  const task = appState.value.tasks.find((item) => item.id === taskId)
 
   if (!task) {
     return
@@ -600,13 +619,59 @@ function openSelectedTerminalPane() {
     return
   }
 
-  updateStoredTask(task.id, (currentTask) => focusTaskTerminalTarget(currentTask, terminal))
+  updateStoredTask(task.id, (currentTask) => createTaskTerminalTab(currentTask, terminal))
 }
 
 function selectedTaskTerminalLayout(task: Task) {
   const terminal = selectedTerminalTarget(appState.value, task)
 
   return terminal ? effectiveTerminalLayout(task, terminal) : undefined
+}
+
+function selectedTaskTerminalTabs(task: Task) {
+  const terminal = selectedTerminalTarget(appState.value, task)
+
+  return terminal ? effectiveTerminalTabs(task, terminal) : undefined
+}
+
+function selectedTaskTerminalSessionIds() {
+  const task = appState.value.tasks.find((item) => item.id === appState.value.selection.taskId)
+  const tabs = task ? selectedTaskTerminalTabs(task) : undefined
+
+  return tabs?.tabs.flatMap((tab) => tab.layout.panes.map((pane) => pane.sessionId)) ?? []
+}
+
+async function refreshTerminalProcessNames() {
+  const sessionIds = Array.from(new Set(selectedTaskTerminalSessionIds()))
+
+  if (!sessionIds.length) {
+    terminalProcessNames.value = {}
+    return
+  }
+
+  const statuses = await Promise.all(
+    sessionIds.map(async (sessionId) => ({
+      sessionId,
+      status: await terminalProcessStatus({ sessionId }).catch(() => ({
+        busy: false,
+        command: undefined,
+      })),
+    })),
+  )
+
+  terminalProcessNames.value = Object.fromEntries(
+    statuses
+      .filter(({ status }) => status.busy && status.command)
+      .map(({ sessionId, status }) => [sessionId, status.command as string]),
+  )
+}
+
+function startTerminalProcessPolling() {
+  window.clearInterval(terminalProcessPollTimer)
+  void refreshTerminalProcessNames()
+  terminalProcessPollTimer = window.setInterval(() => {
+    void refreshTerminalProcessNames()
+  }, 1500)
 }
 
 function paneSessionUsedByOtherPane(sessionId: string, paneId: string, tasks: Task[]) {
@@ -683,16 +748,94 @@ async function closeTerminalPane(
   }
 }
 
+async function closeTerminalTab(taskId: string, tabId: string, force = false) {
+  const task = appState.value.tasks.find((item) => item.id === taskId)
+  const terminal = task ? selectedTerminalTarget(appState.value, task) : undefined
+  const tabs = task && terminal ? effectiveTerminalTabs(task, terminal) : undefined
+  const tab = tabs?.tabs.find((item) => item.id === tabId)
+
+  if (!task || !terminal || !tabs || !tab) {
+    return
+  }
+
+  const closeAppAfterClose = tabs.tabs.length === 1 && settings.value.closeAppOnLastPane
+
+  if (!force) {
+    const statuses = await Promise.all(
+      tab.layout.panes.map((pane) =>
+        terminalProcessStatus({ sessionId: pane.sessionId }).catch(() => ({
+          busy: false,
+          command: undefined,
+        })),
+      ),
+    )
+    const busyStatus = statuses.find((status) => status.busy)
+
+    if (busyStatus) {
+      paneCloseConfirmation.value = {
+        taskId,
+        tabId,
+        command: busyStatus.command,
+        closeAppAfterClose,
+      }
+      return
+    }
+  }
+
+  let closedPanes: TaskTerminalPane[] = []
+  let closedLast = false
+  let changed = false
+
+  const tasks = appState.value.tasks.map((item) => {
+    if (item.id !== taskId) {
+      return item
+    }
+
+    const result = closeTaskTerminalTab(item, terminal, tabId)
+
+    if (!result.closedPanes.length) {
+      return item
+    }
+
+    closedPanes = result.closedPanes
+    closedLast = result.closedLast
+    changed = result.task !== item
+
+    return result.task
+  })
+
+  if (!changed || !closedPanes.length) {
+    return
+  }
+
+  await Promise.allSettled(
+    closedPanes
+      .filter((pane) => !paneSessionUsedByOtherPane(pane.sessionId, pane.id, tasks))
+      .map((pane) => killTerminalSession({ sessionId: pane.sessionId })),
+  )
+
+  await persistAppStateAsync({
+    ...appState.value,
+    tasks,
+  })
+
+  if (closedLast && closeAppAfterClose) {
+    await appWindow.close()
+  }
+}
+
 async function closeActiveTerminalPane() {
   const task = appState.value.tasks.find((item) => item.id === appState.value.selection.taskId)
   const layout = task ? selectedTaskTerminalLayout(task) : undefined
+  const tabs = task ? selectedTaskTerminalTabs(task) : undefined
   const activePane = layout?.panes.find((pane) => pane.id === layout.activePaneId)
 
   if (!task || !layout || !activePane) {
     return
   }
 
-  const closeAppAfterClose = layout.panes.length === 1 && settings.value.closeAppOnLastPane
+  const closeAppAfterClose =
+    layout.panes.length === 1 && tabs?.tabs.length === 1 && settings.value.closeAppOnLastPane
   const status = await terminalProcessStatus({ sessionId: activePane.sessionId }).catch(() => ({
     busy: false,
     command: undefined,
@@ -715,13 +858,15 @@ async function requestCloseTerminalPane(taskId: string, paneId: string) {
   const task = appState.value.tasks.find((item) => item.id === taskId)
   const terminal = task ? selectedTerminalTarget(appState.value, task) : undefined
   const layout = task && terminal ? effectiveTerminalLayout(task, terminal) : undefined
+  const tabs = task && terminal ? effectiveTerminalTabs(task, terminal) : undefined
   const pane = layout?.panes.find((item) => item.id === paneId)
 
   if (!task || !layout || !pane) {
     return
   }
 
-  const closeAppAfterClose = layout.panes.length === 1 && settings.value.closeAppOnLastPane
+  const closeAppAfterClose =
+    layout.panes.length === 1 && tabs?.tabs.length === 1 && settings.value.closeAppOnLastPane
   const status = await terminalProcessStatus({ sessionId: pane.sessionId }).catch(() => ({
     busy: false,
     command: undefined,
@@ -752,11 +897,35 @@ async function confirmPaneClose() {
   }
 
   paneCloseConfirmation.value = null
-  await closeTerminalPane(
-    confirmation.taskId,
-    confirmation.paneId,
-    confirmation.closeAppAfterClose,
-  )
+
+  if (confirmation.tabId) {
+    await closeTerminalTab(confirmation.taskId, confirmation.tabId, true)
+    return
+  }
+
+  if (confirmation.paneId) {
+    await closeTerminalPane(
+      confirmation.taskId,
+      confirmation.paneId,
+      confirmation.closeAppAfterClose,
+    )
+  }
+}
+
+function selectTerminalTab(taskId: string, tabId: string) {
+  updateStoredTask(taskId, (task) => {
+    const terminal = selectedTerminalTarget(appState.value, task)
+
+    return terminal ? selectTaskTerminalTab(task, terminal, tabId) : task
+  })
+}
+
+function renameTerminalTab(taskId: string, tabId: string, title: string) {
+  updateStoredTask(taskId, (task) => {
+    const terminal = selectedTerminalTarget(appState.value, task)
+
+    return terminal ? renameTaskTerminalTab(task, terminal, tabId, title) : task
+  })
 }
 
 function selectTerminalPane(taskId: string, paneId: string) {
@@ -1128,6 +1297,7 @@ async function updateExistingTask(task: Task, input: NewTaskInput) {
           terminalClosedBySurface: undefined,
           terminalLayout: undefined,
           terminalLayouts: undefined,
+          terminalTabs: undefined,
         }
       : materializedTask
 
@@ -1251,7 +1421,7 @@ function handleKeydown(event: KeyboardEvent) {
     splitSelectedTerminal(event.shiftKey ? 'horizontal' : 'vertical')
   } else if (event.key.toLowerCase() === 't') {
     event.preventDefault()
-    openSelectedTerminalPane()
+    openSelectedTerminalTab()
   } else if (event.key.toLowerCase() === 'w') {
     event.preventDefault()
     void closeActiveTerminalPane()
@@ -1283,6 +1453,7 @@ onMounted(() => {
     })
     .finally(() => {
       bootstrapped.value = true
+      startTerminalProcessPolling()
       void startWindowLayoutPersistence().catch((error: unknown) => {
         console.error('Failed to listen for window layout changes', error)
       })
@@ -1304,6 +1475,7 @@ onBeforeUnmount(() => {
     window.clearTimeout(windowLayoutSaveTimer)
     windowLayoutSaveTimer = undefined
   }
+  window.clearInterval(terminalProcessPollTimer)
   void persistPendingWindowLayout().catch((error: unknown) => {
     console.error('Failed to save window layout', error)
   })
@@ -1367,8 +1539,13 @@ onBeforeUnmount(() => {
           <MainSurface
             :app-state="appState"
             :terminal-font-size="terminalFontSize"
+            :terminal-process-names="terminalProcessNames"
+            @close-terminal-tab="(taskId, tabId) => void closeTerminalTab(taskId, tabId)"
             @close-terminal-pane="requestCloseTerminalPane"
+            @open-terminal-tab="openTerminalTab"
+            @rename-terminal-tab="renameTerminalTab"
             @select-terminal-pane="selectTerminalPane"
+            @select-terminal-tab="selectTerminalTab"
             @split-terminal-pane="splitTerminalPane"
           />
           <button
@@ -1435,11 +1612,13 @@ onBeforeUnmount(() => {
                 <LayersIcon :size="18" />
               </span>
               <div>
-                <h2 id="pane-close-title">Close active pane?</h2>
+                <h2 id="pane-close-title">
+                  {{ paneCloseConfirmation.tabId ? 'Close terminal tab?' : 'Close active pane?' }}
+                </h2>
                 <p>
-                  This pane is running
+                  This {{ paneCloseConfirmation.tabId ? 'tab' : 'pane' }} is running
                   <strong>{{ paneCloseConfirmation.command || 'a process' }}</strong>. Closing it
-                  will stop that terminal session.
+                  will stop {{ paneCloseConfirmation.tabId ? 'its terminal sessions' : 'that terminal session' }}.
                 </p>
                 <p v-if="paneCloseConfirmation.closeAppAfterClose">
                   This is the last pane, so Piñata will close too.
@@ -1449,10 +1628,10 @@ onBeforeUnmount(() => {
 
             <div :class="styles.confirmActions">
               <button type="button" class="uiButton" @click="cancelPaneClose">
-                Keep pane
+                Keep {{ paneCloseConfirmation.tabId ? 'tab' : 'pane' }}
               </button>
               <button type="button" class="uiButton uiButtonDanger" @click="confirmPaneClose">
-                Close pane
+                Close {{ paneCloseConfirmation.tabId ? 'tab' : 'pane' }}
               </button>
             </div>
           </section>

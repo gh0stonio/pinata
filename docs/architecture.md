@@ -267,6 +267,11 @@ type Task = {
   color: string
   terminal: TaskTerminal
   repos: TaskRepo[]
+  terminalClosed?: boolean
+  terminalClosedBySurface?: Record<string, boolean>
+  terminalTabs?: Record<string, TaskTerminalTabs>
+  terminalLayout?: TaskTerminalLayout
+  terminalLayouts?: Record<string, TaskTerminalLayout>
 }
 
 type TaskTerminal = {
@@ -285,6 +290,24 @@ type TaskRepo = {
 type TaskSurfaceSelection =
   | { kind: 'task-terminal' }
   | { kind: 'repo'; taskRepoId: string }
+
+type TaskTerminalTabs = {
+  activeTabId: string
+  tabs: TaskTerminalTab[]
+}
+
+type TaskTerminalTab = {
+  id: string
+  title: string
+  kind: 'shell'
+  layout: TaskTerminalLayout
+}
+
+type TaskTerminalLayout = {
+  activePaneId: string
+  panes: TaskTerminalPane[]
+  root: TerminalLayoutNode
+}
 ```
 
 State rules:
@@ -304,8 +327,14 @@ State rules:
 - Terminal live process state is not in app state. `Task.terminal.id` and `TaskRepo.id` derive tmux
   session names. Their `cwd` or `worktreePath` values let Piñata recreate sessions if the tmux
   server is gone.
-- `Task.terminalLayouts` stores pane trees per task surface. Keys are `task-terminal` or
-  `repo:<TaskRepo.id>`, so each task terminal and each repo owns its own split layout.
+- A terminal surface is one selectable terminal context inside a task. It is either the task
+  terminal or one attached repo terminal.
+- `Task.terminalTabs` stores tab sets per task surface. Keys are `task-terminal` or
+  `repo:<TaskRepo.id>`, so each task terminal and each repo owns its own tabs and splits.
+- Each terminal tab owns one pane tree. Switching task or repo switches the whole tab set and pane
+  tree for that surface, so panes never leak between repos or the task terminal.
+- `Task.terminalLayout` and `Task.terminalLayouts` are legacy migration fields only. New writes use
+  `Task.terminalTabs`.
 - `Task.terminalClosedBySurface` records that the user closed the final pane for one surface. This
   suppresses that surface's implicit default pane until the user explicitly reopens it.
 
@@ -783,14 +812,17 @@ Use this file for the big picture. Use feature specs when changing one feature.
 ## Terminal Runtime
 
 The terminal starts as one embedded shell for the selected task surface. A task surface is either
-the task terminal or one attached repo terminal. When the user splits, the task stores a durable
-pane tree for that selected surface. Each pane owns its own tmux-backed session and remembers the
-task surface it came from.
+the task terminal or one attached repo terminal. Each surface owns its own terminal tab set, each
+tab owns its own pane tree, and each pane owns a tmux-backed session. This keeps the product unit
+clear: task and repo selection choose a surface, tabs organize shells inside that surface, and
+panes split one tab.
 
 ```mermaid
 flowchart LR
     Surface["Task.terminal or TaskRepo"]
-    Layout["Task.terminalLayouts[surface]"]
+    Tabs["Task.terminalTabs[surface]"]
+    Tab["active TaskTerminalTab"]
+    Layout["TaskTerminalTab.layout"]
     MainSurface["MainSurface"]
     SplitNode["TerminalSplitNode"]
     TerminalSurface["TerminalSurface + xterm.js"]
@@ -800,6 +832,9 @@ flowchart LR
     Shell["user shell in cwd"]
 
     Surface --> MainSurface
+    Surface --> Tabs
+    Tabs --> Tab
+    Tab --> Layout
     Layout --> MainSurface
     MainSurface --> SplitNode
     SplitNode --> TerminalSurface
@@ -826,9 +861,11 @@ Runtime rules:
 - The first pane for a surface uses deterministic session names from `Task.terminal.id` or
   `TaskRepo.id`.
   Split-created panes use persisted `terminal-pane-*` session ids.
+- Each surface stores tabs under `Task.terminalTabs`. A tab stores the split tree, active pane id,
+  and pane sessions for that surface only.
 - Each pane stores a source, either task terminal or one task repo. Split-created panes inherit the
-  active pane source. Sidebar clicks switch to that source's own pane tree, so layouts do not leak
-  across task terminal and repo surfaces.
+  active pane source. Sidebar clicks switch to that source's own tab set, so tabs and pane trees do
+  not leak across task terminal and repo surfaces.
 - Clicking a pane makes it active and updates the task sidebar selection to that pane source.
 - Each pane header shows the current shell label and pane-local actions for split vertically, split
   horizontally, and close.
@@ -837,14 +874,18 @@ Runtime rules:
 - The default shell is the user's `SHELL`; missing or invalid shell falls back to `/bin/zsh`.
 - `Cmd+D` creates a vertical split. `Cmd+Shift+D` creates a horizontal split. The new pane opens in
   the same cwd as the active pane and becomes active.
+- `Cmd+T` creates a new shell tab in the selected task surface. If that surface had no open tab, it
+  reopens it with one shell tab.
+- Double-clicking a tab title edits the tab name inline. Enter or blur saves the name, and Escape
+  cancels.
 - `Cmd+W` closes the active pane. If tmux and the pane tty report a foreground command that is not
   the user's shell, Piñata asks before stopping that pane session. Shim wrappers like `volta-shim`
   are resolved to the launched command when possible.
-- Closing the last pane for one surface stores `Task.terminalClosedBySurface` and shows an empty
-  main surface. If `closeAppOnLastPane` is enabled in Settings, Piñata closes after stopping that
-  final pane session.
-- `Cmd+T` reopens the selected task's current terminal target from that empty surface.
-- Task edits that add or remove repos reset the task split layouts and kill split-only sessions so
+- Closing the last pane in a tab closes that tab. Closing the final tab for one surface stores
+  `Task.terminalClosedBySurface` and shows an empty main surface. If `closeAppOnLastPane` is
+  enabled in Settings, Piñata closes after stopping that final pane session.
+- Closing a tab kills every pane session in that tab, with the same foreground-process warning.
+- Task edits that add or remove repos reset the task tab layouts and kill split-only sessions so
   stale panes do not point at removed worktrees.
 
 Task lifecycle integration:
@@ -858,7 +899,6 @@ Task lifecycle integration:
 
 Deferred:
 
-- Multiple terminal tabs per repository.
 - Resizing split dividers.
 - Restoring xterm scrollback from `tmux capture-pane` on attach.
 

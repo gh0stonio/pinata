@@ -140,6 +140,8 @@ pub struct Task {
     pub terminal_layout: Option<TaskTerminalLayout>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub terminal_layouts: HashMap<String, TaskTerminalLayout>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub terminal_tabs: HashMap<String, TaskTerminalTabs>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -196,6 +198,28 @@ pub struct TaskTerminalLayout {
     pub active_pane_id: String,
     pub panes: Vec<TaskTerminalPane>,
     pub root: TerminalLayoutNode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TaskTerminalTabKind {
+    Shell,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskTerminalTab {
+    pub id: String,
+    pub title: String,
+    pub kind: TaskTerminalTabKind,
+    pub layout: TaskTerminalLayout,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskTerminalTabs {
+    pub active_tab_id: String,
+    pub tabs: Vec<TaskTerminalTab>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -345,8 +369,13 @@ fn normalize_app_state(mut state: AppState) -> AppState {
             .retain(|key, closed| *closed && terminal_surface_key_valid(key, &repo_ids));
         task.terminal_layouts
             .retain(|key, _| terminal_surface_key_valid(key, &repo_ids));
+        task.terminal_tabs
+            .retain(|key, _| terminal_surface_key_valid(key, &repo_ids));
 
-        if task.terminal_layout.is_some() || !task.terminal_layouts.is_empty() {
+        if task.terminal_layout.is_some()
+            || !task.terminal_layouts.is_empty()
+            || !task.terminal_tabs.is_empty()
+        {
             task.terminal_closed = false;
         }
 

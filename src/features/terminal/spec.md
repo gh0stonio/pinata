@@ -4,20 +4,33 @@
 
 - One embedded task terminal per `Task`.
 - One embedded repo terminal per attached `TaskRepo`.
-- `MainSurface` renders the selected task surface as one pane until the user splits. Split panes
-  are persisted per task surface as small layout trees.
+- A terminal surface is one selectable terminal context inside a task: the task terminal or one
+  attached repo terminal.
+- `MainSurface` renders the selected task surface as a tab set. Each surface owns its own tabs, and
+  each tab owns its own pane tree.
+- Missing tabs for an open surface render as one shell tab with one pane.
+- `⌘T` creates a new shell tab in the selected surface. If that surface was closed, it reopens it
+  with one shell tab.
+- Terminal tabs use the shell icon, show the editable tab title, and show a small naked count pill
+  when the tab contains more than one pane.
+- Pane headers show the shell name while idle. When the pane is running a foreground command, the
+  pane header temporarily shows that command label.
+- Double-clicking a tab title edits it inline. Enter or blur saves the persisted tab title. Escape
+  cancels.
 - `⌘D` splits the active terminal vertically into side-by-side panes. `⌘⇧D` splits it
   horizontally into stacked panes. The new pane starts in the same cwd as the active pane and owns
   a separate tmux session.
 - A pane stores both a tmux `sessionId` and a source, either task terminal or one task repo. Split
-  panes inherit the active pane source. Sidebar clicks switch to that source's own layout.
+  panes inherit the active pane source. Sidebar clicks switch to that source's own tab set.
 - Clicking a pane makes it active and updates the task sidebar selection to that pane source.
 - `⌘W` closes the active pane. If tmux reports a foreground command that is not the user's shell,
   Piñata shows a warning before killing that pane's session.
-- Closing the final pane for one surface stores `Task.terminalClosedBySurface` and shows an empty
-  main surface. If Settings `closeAppOnLastPane` is enabled, closing that final pane closes Piñata
-  after the session is stopped.
-- `⌘T` reopens the selected task's current terminal target after the final pane was closed.
+- Closing the final pane in a tab closes that tab.
+- Closing a tab kills every pane session in that tab. If any pane is running a foreground process,
+  Piñata shows a warning before killing those sessions.
+- Closing the final tab for one surface stores `Task.terminalClosedBySurface` and shows an empty
+  main surface. If Settings `closeAppOnLastPane` is enabled, closing that final tab closes Piñata
+  after the sessions are stopped.
 - `xterm.js` owns rendering, keyboard input, cursor, and resize fitting in the webview.
 - Rust owns PTY attachment and byte transport. Output crosses the webview as base64 chunks so
   terminal bytes do not expand into large JSON arrays.
@@ -35,8 +48,9 @@
   shell and are mapped to tmux pane history. The next user input exits tmux scrollback before sending
   bytes to the shell, so typing snaps back to the live cursor.
 - `⌘K` clears the visible xterm buffer and asks tmux to clear pane history for the selected session.
-- `terminal_process_status` asks tmux for the pane command and tty, then prefers the tty foreground
-  process list so shim wrappers like `volta-shim` display as the command the user launched.
+- `terminal_process_status` asks tmux for the pane command and tty, then prefers the top non-shell
+  process from the tty foreground process group so helper children do not replace the command the
+  user launched. Username-shaped vendor wrapper labels are ignored for the same reason.
 - `⌘C` copies the active xterm selection. `⌘V` stays on xterm/webview's native paste path so paste
   input is not duplicated.
 - Right-click never falls through to tmux or the browser context menu. If text is selected, it
@@ -98,19 +112,22 @@ flowchart TD
 
 ## App state
 
-- `Task.terminalLayouts` persists split topology, active pane id, pane session targets, and pane
-  source per task surface. Keys are `task-terminal` or `repo:<TaskRepo.id>`.
-- Missing layout for the selected surface means that surface renders as one pane.
-- `Task.terminalClosedBySurface` suppresses that implicit single pane after the user closes the
-  final pane for one surface. `⌘T` or splitting reopens that surface.
+- `Task.terminalTabs` persists tab sets per task surface. Keys are `task-terminal` or
+  `repo:<TaskRepo.id>`.
+- Each `TaskTerminalTab` persists its pane topology, active pane id, pane session targets, and pane
+  source for that surface only.
+- Missing tabs for the selected open surface means that surface renders as one shell tab with one
+  pane.
+- `Task.terminalLayout` and `Task.terminalLayouts` are legacy migration fields only. New writes use
+  `Task.terminalTabs`.
+- `Task.terminalClosedBySurface` suppresses that implicit single tab after the user closes the
+  final tab for one surface. `⌘T` or splitting reopens that surface.
 - Live process handles, terminal scrollback, and PTY readers remain outside app-state JSON.
-- Task edits that add or remove repos reset the task split layouts so stale panes do not keep
+- Task edits that add or remove repos reset the task tab layouts so stale panes do not keep
   pointing at removed worktrees.
 
 ## Deferred
 
-- Multiple terminal tabs per repository.
 - Resizing split dividers.
-- Terminal title/status bar.
 - Explicit kill/restart terminal action.
 - Restoring xterm scrollback from `tmux capture-pane` on attach.

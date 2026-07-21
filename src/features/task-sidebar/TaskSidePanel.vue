@@ -5,6 +5,7 @@ import AppTooltip from '../../components/tooltip/AppTooltip.vue'
 import ChevronDownIcon from '../../icons/ChevronDownIcon.vue'
 import PencilIcon from '../../icons/PencilIcon.vue'
 import PlusIcon from '../../icons/PlusIcon.vue'
+import RepositoryIcon from '../../icons/RepositoryIcon.vue'
 import {
   findRegisteredRepo,
   plannedTaskRepoWorktreePath,
@@ -106,9 +107,15 @@ function taskRepoPath(task: Task, taskRepo: TaskRepo) {
   )
 }
 
-function selectAndToggleTask(task: Task) {
+function selectAndOpenTask(task: Task) {
   emit('select-task', task)
 
+  if (task.repos.length && !isTaskExpanded(task.id)) {
+    emit('toggle-task', task)
+  }
+}
+
+function toggleTaskFromCaret(task: Task) {
   if (task.repos.length) {
     emit('toggle-task', task)
   }
@@ -154,7 +161,7 @@ function selectAndToggleTask(task: Task) {
             :class="[styles.taskRow, isTaskTerminalSelected(task) && styles.taskRowActive]"
             :data-working="isTaskWorking(task.id)"
             :data-has-repos="Boolean(task.repos.length)"
-            @click="selectAndToggleTask(task)"
+            @click="selectAndOpenTask(task)"
           >
             <button
               type="button"
@@ -162,6 +169,7 @@ function selectAndToggleTask(task: Task) {
               :aria-expanded="isTaskExpanded(task.id)"
               :aria-label="isTaskExpanded(task.id) ? `Collapse ${task.name}` : `Expand ${task.name}`"
               :disabled="!task.repos.length"
+              @click.stop="toggleTaskFromCaret(task)"
             >
               <span
                 v-if="task.repos.length"
@@ -212,6 +220,7 @@ function selectAndToggleTask(task: Task) {
                 @mouseleave="hideRepoHover"
                 @click="emit('select-task-repo', task, taskRepoItem)"
               >
+                <RepositoryIcon :class="styles.repoIcon" />
                 <span :class="styles.repoMain">
                   <span :class="styles.repoName">{{ taskRepoName(taskRepoItem) }}</span>
                 </span>

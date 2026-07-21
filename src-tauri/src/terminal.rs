@@ -406,22 +406,21 @@ fn foreground_command_from_ps_output(output: &str) -> Option<String> {
         .filter_map(parse_ps_process)
         .filter(|process| process.stat.contains('+'))
         .collect::<Vec<_>>();
-    let parent_pids = processes
-        .iter()
-        .map(|process| process.ppid)
-        .collect::<HashSet<_>>();
 
     processes
         .iter()
-        .filter(|process| !parent_pids.contains(&process.pid))
         .filter_map(|process| command_label(&process.comm, &process.command))
         .filter(|command| !is_idle_terminal_command(command))
-        .last()
+        .find(|command| !is_user_identity_command(command))
+        .or_else(|| {
+            processes
+                .iter()
+                .filter_map(|process| command_label(&process.comm, &process.command))
+                .find(|command| !is_idle_terminal_command(command))
+        })
 }
 
 struct PsProcess {
-    pid: u32,
-    ppid: u32,
     stat: String,
     comm: String,
     command: String,
@@ -429,15 +428,13 @@ struct PsProcess {
 
 fn parse_ps_process(line: &str) -> Option<PsProcess> {
     let mut fields = line.split_whitespace();
-    let pid = fields.next()?.parse().ok()?;
-    let ppid = fields.next()?.parse().ok()?;
+    fields.next()?.parse::<u32>().ok()?;
+    fields.next()?.parse::<u32>().ok()?;
     let stat = fields.next()?.to_string();
     let comm = fields.next()?.to_string();
     let command = fields.collect::<Vec<_>>().join(" ");
 
     Some(PsProcess {
-        pid,
-        ppid,
         stat,
         comm,
         command,
@@ -447,14 +444,19 @@ fn parse_ps_process(line: &str) -> Option<PsProcess> {
 fn command_label(comm: &str, command: &str) -> Option<String> {
     let comm = command_name(comm);
 
-    if !is_wrapper_command(&comm) && !is_tty_command(&comm) {
+    if !is_wrapper_command(&comm) && !is_tty_command(&comm) && !is_user_identity_command(&comm) {
         return (!comm.is_empty()).then_some(comm);
     }
 
     command
         .split_whitespace()
         .map(command_name)
-        .find(|name| !name.is_empty() && !is_wrapper_command(name) && !is_tty_command(name))
+        .find(|name| {
+            !name.is_empty()
+                && !is_wrapper_command(name)
+                && !is_tty_command(name)
+                && !is_user_identity_command(name)
+        })
         .or_else(|| (!comm.is_empty() && !is_tty_command(&comm)).then_some(comm))
 }
 
@@ -480,6 +482,25 @@ fn is_tty_command(command: &str) -> bool {
     command
         .strip_prefix("tty")
         .is_some_and(|rest| is_digits(rest) || rest.strip_prefix('s').is_some_and(is_digits))
+}
+
+fn is_user_identity_command(command: &str) -> bool {
+    let user_names = [env::var("USER").ok(), env::var("LOGNAME").ok()];
+
+    user_names
+        .iter()
+        .flatten()
+        .any(|user_name| is_user_identity_command_for(command, user_name))
+}
+
+fn is_user_identity_command_for(command: &str, user_name: &str) -> bool {
+    let command = command_name(command);
+
+    !command.is_empty()
+        && !user_name.is_empty()
+        && (command == user_name
+            || user_name.starts_with(&command)
+            || command.starts_with(user_name))
 }
 
 fn is_digits(value: &str) -> bool {
@@ -751,7 +772,7 @@ fn expand_home(path: &str) -> Result<PathBuf, String> {
 mod tests {
     use super::{
         command_label, foreground_command_from_ps_output, is_idle_terminal_command,
-        login_shell_command, parse_ps_process, tmux_session_name,
+        is_user_identity_command_for, login_shell_command, parse_ps_process, tmux_session_name,
     };
     use std::path::Path;
 
@@ -790,7 +811,7 @@ mod tests {
     }
 
     #[test]
-    fn foreground_process_uses_leaf_process_label() {
+    fn foreground_process_uses_top_foreground_label() {
         let output = "\
 89065 89064 S+   zsh      /bin/zsh -l
 89335 89065 S+   pi       pi
@@ -798,6 +819,45 @@ mod tests {
 ";
 
         assert_eq!(foreground_command_from_ps_output(output), Some("pi".into()));
+    }
+
+    #[test]
+    fn foreground_process_ignores_helper_children() {
+        let output = "\
+89065 89064 S+   zsh          /bin/zsh -l
+89335 89065 S+   claude       claude
+89336 89335 S+   caffeinate   caffeinate -dimsu
+";
+
+        assert_eq!(
+            foreground_command_from_ps_output(output),
+            Some("claude".into())
+        );
+    }
+
+    #[test]
+    fn foreground_process_prefers_cli_over_user_named_vendor_binary() {
+        let output = "\
+39362 89064 Ss   /bin/zsh         /bin/zsh -l
+63379 39362 S+   codex            codex
+63380 63379 S+   node             node /Users/me/.volta/tools/image/packages/@openai/codex/bin/codex
+63443 63380 S+   /Users/me        /Users/me/.volta/tools/image/packages/@openai/codex/vendor/bin/codex
+";
+
+        assert_eq!(
+            foreground_command_from_ps_output(output),
+            Some("codex".into())
+        );
+    }
+
+    #[test]
+    fn user_identity_command_matches_truncated_comm() {
+        assert!(is_user_identity_command_for("antoine.l", "antoine.leveque"));
+        assert!(is_user_identity_command_for(
+            "/Users/antoine.l",
+            "antoine.leveque"
+        ));
+        assert!(!is_user_identity_command_for("claude", "antoine.leveque"));
     }
 
     #[test]

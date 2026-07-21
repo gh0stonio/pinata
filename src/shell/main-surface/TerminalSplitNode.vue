@@ -22,6 +22,7 @@ const props = defineProps<{
   panes: Record<string, TaskTerminalPane>
   activePaneId: string
   shellName: string
+  terminalProcessNames: Record<string, string>
   terminalFontSize: number
 }>()
 
@@ -32,6 +33,11 @@ const emit = defineEmits<{
 }>()
 
 const pane = computed(() => (props.node.kind === 'pane' ? props.panes[props.node.paneId] : undefined))
+const paneTitle = computed(() => {
+  const currentPane = pane.value
+
+  return currentPane ? props.terminalProcessNames[currentPane.sessionId] ?? props.shellName : props.shellName
+})
 </script>
 
 <template>
@@ -47,6 +53,7 @@ const pane = computed(() => (props.node.kind === 'pane' ? props.panes[props.node
       :panes="panes"
       :active-pane-id="activePaneId"
       :shell-name="shellName"
+      :terminal-process-names="terminalProcessNames"
       :terminal-font-size="terminalFontSize"
       @select-pane="emit('select-pane', $event)"
       @split-pane="(paneId, direction) => emit('split-pane', paneId, direction)"
@@ -58,6 +65,7 @@ const pane = computed(() => (props.node.kind === 'pane' ? props.panes[props.node
       :panes="panes"
       :active-pane-id="activePaneId"
       :shell-name="shellName"
+      :terminal-process-names="terminalProcessNames"
       :terminal-font-size="terminalFontSize"
       @select-pane="emit('select-pane', $event)"
       @split-pane="(paneId, direction) => emit('split-pane', paneId, direction)"
@@ -73,7 +81,7 @@ const pane = computed(() => (props.node.kind === 'pane' ? props.panes[props.node
     <header :class="styles.paneHeader">
       <div :class="styles.paneTitle">
         <TerminalIcon :size="13" />
-        <span>{{ shellName }}</span>
+        <span>{{ paneTitle }}</span>
       </div>
 
       <div :class="styles.paneActions">

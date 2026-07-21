@@ -66,6 +66,7 @@ type Task = {
   repos: TaskRepo[]
   terminalClosed?: boolean
   terminalClosedBySurface?: Record<string, boolean>
+  terminalTabs?: Record<string, TaskTerminalTabs>
   terminalLayout?: TaskTerminalLayout
   terminalLayouts?: Record<string, TaskTerminalLayout>
 }
@@ -87,6 +88,18 @@ type TaskTerminalLayout = {
   activePaneId: string
   panes: TaskTerminalPane[]
   root: TerminalLayoutNode
+}
+
+type TaskTerminalTabs = {
+  activeTabId: string
+  tabs: TaskTerminalTab[]
+}
+
+type TaskTerminalTab = {
+  id: string
+  title: string
+  kind: 'shell'
+  layout: TaskTerminalLayout
 }
 
 type TaskTerminalPane = {
@@ -122,16 +135,21 @@ type TaskSurfaceSelection =
 - `repoRegistry` is global repo config. `TaskRepo` is the repo instance inside a task.
 - Every `Task` owns a default `TaskTerminal`. It starts in `~` and is the task's scratch or
   orchestration surface when no repo is selected.
-- `Task.terminalLayouts` persists pane trees per task surface. Keys are `task-terminal` or
+- A terminal surface is one selectable terminal context inside a task: either the task terminal or
+  one attached repo terminal.
+- `Task.terminalTabs` persists tabs per task surface. Keys are `task-terminal` or
   `repo:<TaskRepo.id>`.
-- Missing surface layout means "render that surface as one pane". Once the user splits a surface,
-  Piñata persists that surface's pane tree, active pane id, and each pane's `sessionId`, `cwd`,
-  label, and source.
-- `Task.terminalLayout` is legacy migration state. New writes use `Task.terminalLayouts`.
-- `Task.terminalClosedBySurface` suppresses the implicit single pane for one surface after the
-  user closes its final pane. `Task.terminalClosed` is legacy migration state.
-- Selecting a task or repo only switches to that surface's own layout. Pane trees from another repo
-  or the task terminal must not leak into the newly selected surface.
+- Missing tabs for an open surface means "render that surface as one shell tab with one pane". Once
+  the user opens tabs or splits panes, Piñata persists the surface tab set, active tab id, active
+  pane id, and each pane's `sessionId`, `cwd`, label, and source.
+- A tab title is user-editable. The default shell title may be rendered as the current shell name,
+  but renamed titles persist literally.
+- `Task.terminalLayout` and `Task.terminalLayouts` are legacy migration state. New writes use
+  `Task.terminalTabs`.
+- `Task.terminalClosedBySurface` suppresses the implicit single tab for one surface after the user
+  closes its final tab. `Task.terminalClosed` is legacy migration state.
+- Selecting a task or repo only switches to that surface's own tab set. Tabs and pane trees from
+  another repo or the task terminal must not leak into the newly selected surface.
 - `TaskTerminalPane.source` records whether the pane was created from the task terminal or a
   specific task repo. Clicking a pane updates sidebar selection to that source.
 - Tasks may have zero repos. Repo-less tasks are valid and open their task terminal immediately.
