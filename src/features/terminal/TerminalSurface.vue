@@ -3,6 +3,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   attachTerminal,
@@ -30,11 +31,13 @@ const emit = defineEmits<{
 
 const terminalElement = ref<HTMLElement | null>(null)
 const errorMessage = ref<string | null>(null)
+const isDropTarget = ref(false)
 
 let terminal: Terminal | undefined
 let fitAddon: FitAddon | undefined
 let unlistenOutput: UnlistenFn | undefined
 let unlistenExit: UnlistenFn | undefined
+let unlistenFileDrop: UnlistenFn | undefined
 let resizeObserver: ResizeObserver | undefined
 let themeObserver: MutationObserver | undefined
 let writeDisposer: { dispose: () => void } | undefined
@@ -169,6 +172,58 @@ function handleTerminalContextMenu(event: MouseEvent) {
   copyTerminalSelection()
 }
 
+function shellQuotePath(path: string) {
+  return `'${path.split("'").join("'\"'\"'")}'`
+}
+
+function terminalContainsDropPosition(position: { x: number; y: number }) {
+  const element = terminalElement.value
+
+  if (!element) {
+    return false
+  }
+
+  const rect = element.getBoundingClientRect()
+  const scaleFactor = globalThis.devicePixelRatio || 1
+  const x = position.x / scaleFactor
+  const y = position.y / scaleFactor
+
+  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
+}
+
+function insertDroppedPaths(paths: string[]) {
+  if (!terminal || paths.length === 0) {
+    return
+  }
+
+  terminal.focus()
+  terminal.paste(`${paths.map(shellQuotePath).join(' ')} `)
+}
+
+function handleFileDrop(event: {
+  payload:
+    | { type: 'enter'; paths: string[]; position: { x: number; y: number } }
+    | { type: 'over'; position: { x: number; y: number } }
+    | { type: 'drop'; paths: string[]; position: { x: number; y: number } }
+    | { type: 'leave' }
+}) {
+  if (event.payload.type === 'leave') {
+    isDropTarget.value = false
+    return
+  }
+
+  const isTarget = terminalContainsDropPosition(event.payload.position)
+  isDropTarget.value = isTarget
+
+  if (event.payload.type === 'drop') {
+    isDropTarget.value = false
+
+    if (isTarget) {
+      insertDroppedPaths(event.payload.paths)
+    }
+  }
+}
+
 function wheelDeltaToLines(event: WheelEvent) {
   if (!terminal) {
     return 0
@@ -267,6 +322,7 @@ async function attach() {
   terminal.attachCustomWheelEventHandler(handleTerminalWheel)
   element.addEventListener('contextmenu', handleTerminalContextMenu)
   terminalDomElement = element
+  unlistenFileDrop = await getCurrentWindow().onDragDropEvent(handleFileDrop)
   const themeRoot = element.closest('[data-theme]')
 
   if (themeRoot) {
@@ -334,6 +390,7 @@ async function attach() {
 function detach() {
   terminalDomElement?.removeEventListener('contextmenu', handleTerminalContextMenu)
   terminalDomElement = undefined
+  isDropTarget.value = false
   wheelRemainder = 0
   isBrowsingScrollback = false
   scrollbackCancel = undefined
@@ -345,6 +402,8 @@ function detach() {
   unlistenOutput = undefined
   unlistenExit?.()
   unlistenExit = undefined
+  unlistenFileDrop?.()
+  unlistenFileDrop = undefined
   writeDisposer?.dispose()
   writeDisposer = undefined
   terminal?.dispose()
@@ -374,7 +433,10 @@ onBeforeUnmount(detach)
 </script>
 
 <template>
-  <section :class="styles.surface" :aria-label="`${label} terminal`">
+  <section
+    :class="[styles.surface, isDropTarget && styles.dropTarget]"
+    :aria-label="`${label} terminal`"
+  >
     <div :class="styles.terminalFrame">
       <div ref="terminalElement" :class="styles.terminal" />
     </div>

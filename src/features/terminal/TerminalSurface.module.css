@@ -9,6 +9,22 @@
 	background: var(--color-terminal-background);
 }
 
+.dropTarget::after {
+	position: absolute;
+	inset: var(--space-lg);
+	z-index: 1;
+	display: grid;
+	place-items: center;
+	content: 'Drop paths';
+	color: var(--color-text-primary);
+	font-size: var(--font-size-body);
+	font-weight: 600;
+	background: color-mix(in srgb, var(--color-surface-elevated) 88%, transparent);
+	border: 1px dashed var(--color-border-focus);
+	border-radius: var(--radius-md);
+	pointer-events: none;
+}
+
 .terminalFrame {
 	display: grid;
 	width: 100%;

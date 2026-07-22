@@ -54,6 +54,9 @@
   user launched. Username-shaped vendor wrapper labels are ignored for the same reason.
 - `⌘C` copies the active xterm selection. `⌘V` stays on xterm/webview's native paste path so paste
   input is not duplicated.
+- Dropping local files or folders onto a terminal pane pastes their absolute paths at the cursor,
+  shell-quoted and separated by spaces. Drops never execute commands, upload files, or copy data.
+  In split layouts, only the pane under the pointer receives the paths.
 - Right-click never falls through to tmux or the browser context menu. If text is selected, it
   copies the selection; otherwise it does nothing.
 - If a terminal program later enables mouse reporting, Option-click still forces xterm selection on
