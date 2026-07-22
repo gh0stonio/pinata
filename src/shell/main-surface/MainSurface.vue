@@ -13,14 +13,17 @@ import {
 } from '../../features/app-state/app-state'
 import { terminalShellName } from '../../features/terminal/terminal'
 import AppTooltip from '../../components/tooltip/AppTooltip.vue'
+import LayersIcon from '../../icons/LayersIcon.vue'
 import PlusIcon from '../../icons/PlusIcon.vue'
 import TerminalIcon from '../../icons/TerminalIcon.vue'
+import TrashIcon from '../../icons/TrashIcon.vue'
 import XIcon from '../../icons/XIcon.vue'
 import styles from './MainSurface.module.css'
 import TerminalSplitNode from './TerminalSplitNode.vue'
 
 const props = defineProps<{
   appState: AppState
+  taskOperation?: { taskId: string; kind: 'create' | 'update' | 'delete' } | null
   terminalFontSize: number
   terminalCurrentPaths: Record<string, string>
   terminalProcessNames: Record<string, string>
@@ -44,6 +47,12 @@ const focusedRenameTabId = ref<string | null>(null)
 
 const selectedTask = computed(() =>
   props.appState.tasks.find((task) => task.id === props.appState.selection.taskId),
+)
+const selectedTaskOperation = computed(
+  () =>
+    props.taskOperation && selectedTask.value?.id === props.taskOperation.taskId
+      ? props.taskOperation
+      : null,
 )
 
 const selectedTerminal = computed(() => {
@@ -236,7 +245,36 @@ onMounted(() => {
 
 <template>
   <main :class="styles.main">
-    <section v-if="selectedTask && terminalLayout && terminalTabs" :class="styles.terminalHost">
+    <section
+      v-if="selectedTaskOperation"
+      :class="styles.content"
+      aria-labelledby="task-operation-title"
+    >
+      <div :class="[styles.emptyState, styles.operationState]" role="status">
+        <TrashIcon
+          v-if="selectedTaskOperation.kind === 'delete'"
+          :class="[styles.operationIcon, styles.deleteIcon]"
+          aria-hidden="true"
+        />
+        <LayersIcon v-else :class="[styles.operationIcon, styles.updateIcon]" aria-hidden="true" />
+        <h1 id="task-operation-title">
+          Task is being
+          {{
+            selectedTaskOperation.kind === 'delete'
+              ? 'deleted'
+              : selectedTaskOperation.kind === 'create'
+                ? 'created'
+                : 'updated'
+          }}
+        </h1>
+        <p>
+          Its terminals and attached repositories are unavailable until
+          {{ selectedTaskOperation.kind === 'delete' ? 'cleanup' : 'setup' }} finishes.
+        </p>
+      </div>
+    </section>
+
+    <section v-else-if="selectedTask && terminalLayout && terminalTabs" :class="styles.terminalHost">
       <div :class="styles.tabBar" role="tablist" aria-label="Terminal tabs">
         <div
           v-for="tab in terminalTabs.tabs"

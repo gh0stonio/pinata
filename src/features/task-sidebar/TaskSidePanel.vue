@@ -19,12 +19,14 @@ import styles from './TaskSidePanel.module.css'
 const props = defineProps<{
   appState: AppState
   visible: boolean
-  workingTaskId?: string | null
+  workingTaskIds?: string[]
+  resumableTaskProgressIds?: string[]
 }>()
 
 const emit = defineEmits<{
   'edit-task': [task: Task]
   'open-new-task': []
+  'show-task-progress': [task: Task]
   'select-task': [task: Task]
   'select-task-repo': [task: Task, taskRepo: TaskRepo]
   'toggle-task': [task: Task]
@@ -81,7 +83,11 @@ function isTaskTerminalSelected(task: Task) {
 }
 
 function isTaskWorking(taskId: string) {
-  return props.workingTaskId === taskId
+  return props.workingTaskIds?.includes(taskId) ?? false
+}
+
+function canResumeTaskProgress(taskId: string) {
+  return props.resumableTaskProgressIds?.includes(taskId) ?? false
 }
 
 function registeredRepoFor(taskRepo: TaskRepo) {
@@ -185,7 +191,26 @@ function toggleTaskFromCaret(task: Task) {
             </button>
 
             <span
-              v-if="isTaskWorking(task.id)"
+              v-if="canResumeTaskProgress(task.id)"
+              :class="styles.taskProgressControl"
+            >
+              <AppTooltip
+                label="Show task progress"
+                placement="top-end"
+              >
+                <button
+                  type="button"
+                  class="uiButton uiButtonIcon uiButtonNaked"
+                  :class="styles.taskProgressButton"
+                  aria-label="Show task progress"
+                  @click.stop="emit('show-task-progress', task)"
+                >
+                  <span :class="styles.taskSpinner" aria-hidden="true" />
+                </button>
+              </AppTooltip>
+            </span>
+            <span
+              v-else-if="isTaskWorking(task.id)"
               :class="styles.taskSpinner"
               role="status"
               aria-label="Task operation running"

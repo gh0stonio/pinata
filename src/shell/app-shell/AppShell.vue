@@ -79,6 +79,15 @@ type TaskProgress = {
   error?: string
 }
 
+type TaskOperationKind = 'create' | 'update' | 'delete'
+
+type PendingTaskOperation = {
+  taskId: string
+  kind: TaskOperationKind
+  progress: TaskProgress
+  hidden: boolean
+}
+
 type TaskRepoGitPlan = TaskRepoGitOperation & {
   id: string
   repoName: string
@@ -129,9 +138,10 @@ const newTaskVisible = ref(false)
 const editingTaskId = ref<string | null>(null)
 const onboardingVisible = ref(startsInOnboarding)
 const bootstrapped = ref(false)
-const taskDialogProgress = ref<TaskProgress | null>(null)
+const pendingTaskOperations = ref<Record<string, PendingTaskOperation>>({})
+const activeTaskOperationId = ref<string | null>(null)
 const paneCloseConfirmation = ref<PaneCloseConfirmation | null>(null)
-const appCloseConfirmation = ref(false)
+const appCloseConfirmation = ref<'preference' | 'task-operation' | null>(null)
 const appState = ref<AppState>(createEmptyAppState())
 const settings = ref<AppSettings>(startsInOnboarding ? { ...defaultSettings } : loadSettings())
 const terminalProcessNames = ref<Record<string, string>>({})
@@ -140,17 +150,38 @@ const terminalFontSize = computed(() => terminalFontSizePxById[settings.value.te
 const editingTask = computed(() =>
   appState.value.tasks.find((task) => task.id === editingTaskId.value),
 )
-const taskDialogOpen = computed(() => newTaskVisible.value || Boolean(editingTask.value))
-const taskDialogBusy = computed(() =>
-  Boolean(
-    taskDialogProgress.value &&
-      !taskDialogProgress.value.error &&
-      taskDialogProgress.value.steps.some(
-        (step) => step.status === 'pending' || step.status === 'running',
-      ),
-  ),
+const activeTaskOperation = computed(() =>
+  activeTaskOperationId.value
+    ? pendingTaskOperations.value[activeTaskOperationId.value] ?? null
+    : null,
 )
-const workingTaskId = computed(() => (taskDialogBusy.value ? editingTask.value?.id ?? null : null))
+const visibleTaskProgress = computed(() => activeTaskOperation.value?.progress ?? null)
+const taskDialogOpen = computed(
+  () =>
+    Boolean(activeTaskOperation.value && !activeTaskOperation.value.hidden) ||
+    newTaskVisible.value ||
+    Boolean(editingTask.value),
+)
+const workingTaskIds = computed(() =>
+  Object.values(pendingTaskOperations.value)
+    .filter((operation) => taskProgressIsBusy(operation.progress))
+    .map((operation) => operation.taskId),
+)
+const resumableTaskProgressIds = computed(() =>
+  Object.values(pendingTaskOperations.value)
+    .filter((operation) => operation.hidden && taskProgressIsBusy(operation.progress))
+    .map((operation) => operation.taskId),
+)
+const selectedPendingTaskOperation = computed(() =>
+  appState.value.selection.taskId
+    ? pendingTaskOperations.value[appState.value.selection.taskId] ?? null
+    : null,
+)
+const taskSurfaceOperation = computed(() => {
+  const operation = selectedPendingTaskOperation.value
+
+  return operation ? { taskId: operation.taskId, kind: operation.kind } : null
+})
 const bodyLayoutStyle = computed<CSSProperties>(() => ({
   '--left-side-panel-width': `${leftSidePanelWidth.value}px`,
   '--right-side-panel-width': `${rightSidePanelWidth.value}px`,
@@ -377,8 +408,13 @@ async function startWindowCloseConfirmation() {
 }
 
 function requestAppClose() {
+  if (workingTaskIds.value.length > 0) {
+    appCloseConfirmation.value = 'task-operation'
+    return
+  }
+
   if (settings.value.confirmBeforeAppClose) {
-    appCloseConfirmation.value = true
+    appCloseConfirmation.value = 'preference'
     return
   }
 
@@ -403,33 +439,85 @@ function openSettings() {
 }
 
 function openNewTask() {
-  taskDialogProgress.value = null
+  activeTaskOperationId.value = null
   editingTaskId.value = null
   newTaskVisible.value = true
 }
 
 function openEditTask(task: Task) {
-  taskDialogProgress.value = null
+  if (pendingTaskOperations.value[task.id]) {
+    showTaskProgress(task)
+    return
+  }
+
+  activeTaskOperationId.value = null
   newTaskVisible.value = false
   editingTaskId.value = task.id
 }
 
 function closeTaskDialog() {
-  if (taskDialogBusy.value) {
+  const operation = activeTaskOperation.value
+
+  if (operation && taskProgressIsBusy(operation.progress)) {
+    pendingTaskOperations.value = {
+      ...pendingTaskOperations.value,
+      [operation.taskId]: { ...operation, hidden: true },
+    }
+    activeTaskOperationId.value = null
+    newTaskVisible.value = false
+    editingTaskId.value = null
     return
   }
 
-  taskDialogProgress.value = null
+  if (operation) {
+    dismissTaskProgress()
+    return
+  }
+
   newTaskVisible.value = false
   editingTaskId.value = null
 }
 
 function dismissTaskProgress() {
-  if (taskDialogBusy.value) {
+  const operation = activeTaskOperation.value
+
+  if (operation) {
+    const nextOperations = { ...pendingTaskOperations.value }
+
+    delete nextOperations[operation.taskId]
+    pendingTaskOperations.value = nextOperations
+    activeTaskOperationId.value = null
+    editingTaskId.value = operation.taskId
     return
   }
+}
 
-  taskDialogProgress.value = null
+function hideTaskProgress() {
+  const operation = activeTaskOperation.value
+
+  if (operation && taskProgressIsBusy(operation.progress)) {
+    pendingTaskOperations.value = {
+      ...pendingTaskOperations.value,
+      [operation.taskId]: { ...operation, hidden: true },
+    }
+    activeTaskOperationId.value = null
+    newTaskVisible.value = false
+    editingTaskId.value = null
+  }
+}
+
+function showTaskProgress(task: Task) {
+  const operation = pendingTaskOperations.value[task.id]
+
+  if (operation) {
+    pendingTaskOperations.value = {
+      ...pendingTaskOperations.value,
+      [task.id]: { ...operation, hidden: false },
+    }
+    activeTaskOperationId.value = task.id
+    newTaskVisible.value = false
+    editingTaskId.value = null
+  }
 }
 
 function closeSettings() {
@@ -485,6 +573,10 @@ async function persistAppStateAsync(next: AppState) {
   appStateSaveQueue = save
 
   await save
+}
+
+async function updateAppStateAsync(update: (current: AppState) => AppState) {
+  await persistAppStateAsync(update(appState.value))
 }
 
 function selectTask(task: Task) {
@@ -952,11 +1044,11 @@ function cancelPaneClose() {
 }
 
 function cancelAppClose() {
-  appCloseConfirmation.value = false
+  appCloseConfirmation.value = null
 }
 
 async function confirmAppClose() {
-  appCloseConfirmation.value = false
+  appCloseConfirmation.value = null
   await invoke('confirm_app_close')
 }
 
@@ -1093,11 +1185,39 @@ function cleanupPlansForTaskRepos(task: Task, repos: TaskRepo[]) {
 }
 
 function startTaskProgress(
+  taskId: string,
+  kind: TaskOperationKind,
   title: string,
   createPlans: TaskRepoGitPlan[],
   cleanupPlans: TaskRepoGitPlan[],
 ) {
-  taskDialogProgress.value = {
+  pendingTaskOperations.value = {
+    ...pendingTaskOperations.value,
+    [taskId]: {
+      taskId,
+      kind,
+      progress: progressForPlans(title, createPlans, cleanupPlans),
+      hidden: false,
+    },
+  }
+  activeTaskOperationId.value = taskId
+  newTaskVisible.value = false
+  editingTaskId.value = null
+}
+
+function taskProgressIsBusy(progress: TaskProgress) {
+  return (
+    !progress.error &&
+    progress.steps.some((step) => step.status === 'pending' || step.status === 'running')
+  )
+}
+
+function progressForPlans(
+  title: string,
+  createPlans: TaskRepoGitPlan[],
+  cleanupPlans: TaskRepoGitPlan[],
+): TaskProgress {
+  return {
     title,
     steps: [
       ...createPlans.map((plan) => ({
@@ -1118,14 +1238,31 @@ function startTaskProgress(
   }
 }
 
-function updateTaskProgressStep(id: string, status: TaskProgressStep['status']) {
-  const progress = taskDialogProgress.value
+function setPendingTaskOperationProgress(taskId: string, progress: TaskProgress) {
+  const operation = pendingTaskOperations.value[taskId]
+
+  if (!operation) {
+    return
+  }
+
+  pendingTaskOperations.value = {
+    ...pendingTaskOperations.value,
+    [taskId]: { ...operation, progress },
+  }
+}
+
+function updateTaskProgressStep(
+  id: string,
+  status: TaskProgressStep['status'],
+  operationTaskId: string,
+) {
+  const progress = pendingTaskOperations.value[operationTaskId]?.progress
 
   if (!progress) {
     return
   }
 
-  taskDialogProgress.value = {
+  const nextProgress: TaskProgress = {
     ...progress,
     steps: progress.steps.map((step) =>
       step.id === id
@@ -1137,41 +1274,65 @@ function updateTaskProgressStep(id: string, status: TaskProgressStep['status']) 
         : step,
     ),
   }
+
+  setPendingTaskOperationProgress(operationTaskId, nextProgress)
 }
 
 function updateTaskProgressPhase(progressId: string, phase: string) {
-  const progress = taskDialogProgress.value
+  const operation = Object.values(pendingTaskOperations.value).find((item) =>
+    item.progress.steps.some((step) => step.id === progressId),
+  )
+  const progress = operation?.progress
 
   if (!progress) {
     return
   }
 
-  taskDialogProgress.value = {
+  const nextProgress = {
     ...progress,
     steps: progress.steps.map((step) =>
       step.id === progressId && step.status === 'running' ? { ...step, detail: phase } : step,
     ),
   }
+
+  if (operation) {
+    setPendingTaskOperationProgress(operation.taskId, nextProgress)
+  }
 }
 
-function failTaskProgress(error: unknown) {
-  const progress = taskDialogProgress.value
+function failTaskProgress(
+  error: unknown,
+  taskId: string,
+  kind: TaskOperationKind,
+  title: string,
+) {
+  const operation = pendingTaskOperations.value[taskId]
+  const progress = operation?.progress
   const message = error instanceof Error ? error.message : String(error)
 
   if (!progress) {
-    taskDialogProgress.value = {
-      title: 'Git setup failed',
-      error: message,
-      steps: [
-        {
-          id: 'error',
-          kind: 'prepare',
-          label: 'Git setup',
-          detail: message,
-          status: 'error',
+    pendingTaskOperations.value = {
+      ...pendingTaskOperations.value,
+      [taskId]: {
+        taskId,
+        kind,
+        hidden: false,
+        progress: {
+          title,
+          error: message,
+          steps: [
+            {
+              id: `error-${taskId}`,
+              kind: kind === 'delete' ? 'cleanup' : 'prepare',
+              label: 'Operation failed',
+              detail: message,
+              status: 'error',
+            },
+          ],
         },
-      ],
+      },
     }
+    activeTaskOperationId.value = taskId
     return
   }
 
@@ -1179,12 +1340,25 @@ function failTaskProgress(error: unknown) {
     progress.steps.find((step) => step.status === 'running') ??
     progress.steps.find((step) => step.status === 'pending')
 
-  taskDialogProgress.value = {
+  const nextProgress: TaskProgress = {
     ...progress,
     error: message,
     steps: progress.steps.map((step) =>
       step.id === failingStep?.id ? { ...step, status: 'error' } : step,
     ),
+  }
+
+  setPendingTaskOperationProgress(taskId, nextProgress)
+}
+
+function finishTaskOperation(taskId: string) {
+  const nextOperations = { ...pendingTaskOperations.value }
+
+  delete nextOperations[taskId]
+  pendingTaskOperations.value = nextOperations
+
+  if (activeTaskOperationId.value === taskId) {
+    activeTaskOperationId.value = null
   }
 }
 
@@ -1219,6 +1393,7 @@ async function flushTaskProgress() {
 async function runCreatePlans(
   task: Task,
   plans: TaskRepoGitPlan[],
+  operationTaskId: string,
   createdPlans: TaskRepoGitPlan[] = [],
 ) {
   if (!plans.length) {
@@ -1226,7 +1401,7 @@ async function runCreatePlans(
   }
 
   for (const plan of plans) {
-    updateTaskProgressStep(`create-${plan.id}`, 'running')
+    updateTaskProgressStep(`create-${plan.id}`, 'running', operationTaskId)
     updateTaskProgressPhase(`create-${plan.id}`, 'Starting worktree')
   }
   await flushTaskProgress()
@@ -1242,12 +1417,12 @@ async function runCreatePlans(
         createdPlans.push(createdPlan)
         updateTaskProgressPhase(`create-${plan.id}`, 'Starting terminal')
         await ensureTerminalSession({ sessionId: plan.id, cwd: worktreePath })
-        updateTaskProgressStep(`create-${plan.id}`, 'done')
+        updateTaskProgressStep(`create-${plan.id}`, 'done', operationTaskId)
         await flushTaskProgress()
 
         return createdPlan
       } catch (error) {
-        updateTaskProgressStep(`create-${plan.id}`, 'error')
+        updateTaskProgressStep(`create-${plan.id}`, 'error', operationTaskId)
         await flushTaskProgress()
         throw error
       }
@@ -1271,13 +1446,13 @@ async function runCreatePlans(
   }
 }
 
-async function runCleanupPlans(plans: TaskRepoGitPlan[]) {
+async function runCleanupPlans(plans: TaskRepoGitPlan[], operationTaskId: string) {
   if (!plans.length) {
     return
   }
 
   for (const plan of plans) {
-    updateTaskProgressStep(`cleanup-${plan.id}`, 'running')
+    updateTaskProgressStep(`cleanup-${plan.id}`, 'running', operationTaskId)
     updateTaskProgressPhase(`cleanup-${plan.id}`, 'Removing worktree')
   }
   await flushTaskProgress()
@@ -1287,9 +1462,9 @@ async function runCleanupPlans(plans: TaskRepoGitPlan[]) {
       try {
         await killTerminalSession({ sessionId: plan.id })
         await deleteTaskRepoWorktree(plan)
-        updateTaskProgressStep(`cleanup-${plan.id}`, 'done')
+        updateTaskProgressStep(`cleanup-${plan.id}`, 'done', operationTaskId)
       } catch (error) {
-        updateTaskProgressStep(`cleanup-${plan.id}`, 'error')
+        updateTaskProgressStep(`cleanup-${plan.id}`, 'error', operationTaskId)
         throw error
       } finally {
         await flushTaskProgress()
@@ -1304,38 +1479,46 @@ async function runCleanupPlans(plans: TaskRepoGitPlan[]) {
 }
 
 async function createNewTask(input: NewTaskInput) {
+  const task = createTask(input)
+
   try {
-    const task = createTask(input)
     const createPlans = createPlansForTask(task)
 
     if (createPlans.length) {
-      startTaskProgress('Create task', createPlans, [])
+      startTaskProgress(task.id, 'create', 'Create task', createPlans, [])
     }
 
-    const nextTask = await runCreatePlans(task, createPlans)
-
-    await persistAppStateAsync({
-      ...appState.value,
-      tasks: [nextTask, ...appState.value.tasks],
+    newTaskVisible.value = false
+    await updateAppStateAsync((current) => ({
+      ...current,
+      tasks: [task, ...current.tasks],
       selection: {
-        ...appState.value.selection,
-        taskId: nextTask.id,
+        ...current.selection,
+        taskId: task.id,
         surfaceByTaskId: {
-          ...appState.value.selection.surfaceByTaskId,
-          [nextTask.id]: { kind: 'task-terminal' },
+          ...current.selection.surfaceByTaskId,
+          [task.id]: { kind: 'task-terminal' },
         },
         expandedTaskIds: Array.from(
           new Set(
-            nextTask.repos.length
-              ? [nextTask.id, ...appState.value.selection.expandedTaskIds]
-              : appState.value.selection.expandedTaskIds,
+            task.repos.length
+              ? [task.id, ...current.selection.expandedTaskIds]
+              : current.selection.expandedTaskIds,
           ),
         ),
       },
-    })
-    closeTaskDialog()
+    }))
+
+    const nextTask = await runCreatePlans(task, createPlans, task.id)
+
+    await updateAppStateAsync((current) => ({
+      ...current,
+      tasks: current.tasks.map((item) => (item.id === task.id ? nextTask : item)),
+    }))
+
+    finishTaskOperation(task.id)
   } catch (error) {
-    failTaskProgress(error)
+    failTaskProgress(error, task.id, 'create', 'Create task')
   }
 }
 
@@ -1350,14 +1533,14 @@ async function updateExistingTask(task: Task, input: NewTaskInput) {
     const hasGitWork = createPlans.length > 0 || cleanupPlans.length > 0
 
     if (hasGitWork) {
-      startTaskProgress('Update task', createPlans, cleanupPlans)
+      startTaskProgress(task.id, 'update', 'Update task', createPlans, cleanupPlans)
     }
 
     const createdPlans: TaskRepoGitPlan[] = []
-    const materializedTask = await runCreatePlans(nextTask, createPlans, createdPlans)
+    const materializedTask = await runCreatePlans(nextTask, createPlans, task.id, createdPlans)
 
     try {
-      await runCleanupPlans(cleanupPlans)
+      await runCleanupPlans(cleanupPlans, task.id)
     } catch (error) {
       await rollbackCreatedWorktrees(createdPlans)
       throw error
@@ -1387,63 +1570,70 @@ async function updateExistingTask(task: Task, input: NewTaskInput) {
       )
     }
 
-    await persistAppStateAsync({
-      ...appState.value,
-      tasks: appState.value.tasks.map((item) =>
-        item.id === task.id ? nextMaterializedTask : item,
-      ),
+    await updateAppStateAsync((current) => ({
+      ...current,
+      tasks: current.tasks.map((item) => (item.id === task.id ? nextMaterializedTask : item)),
       selection: {
-        ...appState.value.selection,
+        ...current.selection,
         surfaceByTaskId: {
-          ...appState.value.selection.surfaceByTaskId,
+          ...current.selection.surfaceByTaskId,
           [task.id]: selectedSurfaceForUpdatedTask(task, nextMaterializedTask),
         },
       },
-    })
-    closeTaskDialog()
+    }))
+    finishTaskOperation(task.id)
+    if (editingTaskId.value === task.id) {
+      editingTaskId.value = null
+    }
   } catch (error) {
-    failTaskProgress(error)
+    failTaskProgress(error, task.id, 'update', 'Update task')
   }
 }
 
 async function deleteExistingTask(task: Task) {
   try {
-    const nextTasks = appState.value.tasks.filter((item) => item.id !== task.id)
-    const surfaceByTaskId = { ...appState.value.selection.surfaceByTaskId }
-    const selectedFallbackTask = nextTasks[0]
     const cleanupPlans = cleanupPlansForTaskRepos(task, task.repos)
 
-    delete surfaceByTaskId[task.id]
-
-    if (appState.value.selection.taskId === task.id && selectedFallbackTask) {
-      surfaceByTaskId[selectedFallbackTask.id] ??= { kind: 'task-terminal' }
-    }
-
     if (cleanupPlans.length) {
-      startTaskProgress('Delete task', [], cleanupPlans)
+      startTaskProgress(task.id, 'delete', 'Delete task', [], cleanupPlans)
     }
 
-    await runCleanupPlans(cleanupPlans)
+    await runCleanupPlans(cleanupPlans, task.id)
     await Promise.allSettled(
       terminalSessionIdsForTask(task).map((sessionId) => killTerminalSession({ sessionId })),
     )
 
-    await persistAppStateAsync({
-      ...appState.value,
-      tasks: nextTasks,
-      selection: {
-        ...appState.value.selection,
-        taskId:
-          appState.value.selection.taskId === task.id
-            ? selectedFallbackTask?.id ?? null
-            : appState.value.selection.taskId,
-        surfaceByTaskId,
-        expandedTaskIds: appState.value.selection.expandedTaskIds.filter((id) => id !== task.id),
-      },
+    await updateAppStateAsync((current) => {
+      const nextTasks = current.tasks.filter((item) => item.id !== task.id)
+      const surfaceByTaskId = { ...current.selection.surfaceByTaskId }
+      const selectedFallbackTask = nextTasks[0]
+
+      delete surfaceByTaskId[task.id]
+
+      if (current.selection.taskId === task.id && selectedFallbackTask) {
+        surfaceByTaskId[selectedFallbackTask.id] ??= { kind: 'task-terminal' }
+      }
+
+      return {
+        ...current,
+        tasks: nextTasks,
+        selection: {
+          ...current.selection,
+          taskId:
+            current.selection.taskId === task.id
+              ? selectedFallbackTask?.id ?? null
+              : current.selection.taskId,
+          surfaceByTaskId,
+          expandedTaskIds: current.selection.expandedTaskIds.filter((id) => id !== task.id),
+        },
+      }
     })
-    closeTaskDialog()
+    finishTaskOperation(task.id)
+    if (editingTaskId.value === task.id) {
+      editingTaskId.value = null
+    }
   } catch (error) {
-    failTaskProgress(error)
+    failTaskProgress(error, task.id, 'delete', 'Delete task')
   }
 }
 
@@ -1607,9 +1797,11 @@ onBeforeUnmount(() => {
           <TaskSidePanel
             :app-state="appState"
             :visible="leftSidePanelVisible"
-            :working-task-id="workingTaskId"
+            :working-task-ids="workingTaskIds"
+            :resumable-task-progress-ids="resumableTaskProgressIds"
             @edit-task="openEditTask"
             @open-new-task="openNewTask"
+            @show-task-progress="showTaskProgress"
             @select-task="selectTask"
             @select-task-repo="selectTaskRepo"
             @toggle-task="toggleTask"
@@ -1629,6 +1821,7 @@ onBeforeUnmount(() => {
           />
           <MainSurface
             :app-state="appState"
+            :task-operation="taskSurfaceOperation"
             :terminal-font-size="terminalFontSize"
             :terminal-current-paths="terminalCurrentPaths"
             :terminal-process-names="terminalProcessNames"
@@ -1684,14 +1877,15 @@ onBeforeUnmount(() => {
         />
 
         <TaskDialog
-          v-if="newTaskVisible || editingTask"
+          v-if="taskDialogOpen"
           :app-state="appState"
-          :progress="taskDialogProgress"
-          :task="editingTask || undefined"
+          :progress="visibleTaskProgress"
+          :task="activeTaskOperation ? undefined : editingTask || undefined"
           @close="closeTaskDialog"
           @create="createNewTask"
           @delete="deleteExistingTask"
           @dismiss-progress="dismissTaskProgress"
+          @hide-progress="hideTaskProgress"
           @update="updateExistingTask"
         />
 
@@ -1742,8 +1936,17 @@ onBeforeUnmount(() => {
       @drag="startWindowDrag"
     >
       <template #body>
-        <h2 id="app-close-title">Close Piñata?</h2>
-        <p>Terminal sessions will stop when the app closes.</p>
+        <template v-if="appCloseConfirmation === 'task-operation'">
+          <h2 id="app-close-title">Close during task changes?</h2>
+          <p>
+            Task setup or cleanup is still running. Closing now interrupts that work, and its
+            progress cannot be restored after reopening.
+          </p>
+        </template>
+        <template v-else>
+          <h2 id="app-close-title">Close Piñata?</h2>
+          <p>Terminal sessions will stop when the app closes.</p>
+        </template>
       </template>
 
       <template #actions>
@@ -1751,7 +1954,7 @@ onBeforeUnmount(() => {
           Keep open
         </button>
         <button type="button" class="uiButton uiButtonDanger" @click="confirmAppClose">
-          Close app
+          {{ appCloseConfirmation === 'task-operation' ? 'Close anyway' : 'Close app' }}
         </button>
       </template>
     </ConfirmationDialog>

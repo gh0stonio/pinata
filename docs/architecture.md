@@ -205,7 +205,7 @@ Current `AppShell` responsibilities:
 | Panels | `leftSidePanelVisible`, `rightSidePanelVisible` | Header shortcuts and buttons toggle these |
 | Settings | `settingsVisible`, `settings` | Settings values come from `localStorage` |
 | Onboarding | `onboardingVisible` | First-run flow owns the screen until completed |
-| Task modal | `newTaskVisible`, `editingTaskId`, `taskDialogProgress` | One dialog handles create, edit, delete, and git progress |
+| Task modal | `newTaskVisible`, `editingTaskId`, `pendingTaskOperations` | One dialog handles forms and task-keyed git progress |
 | App state | `appState`, `persistAppState`, `persistAppStateAsync` | Fire-and-forget for low-risk UI edits, awaited for task git transactions |
 | Git progress | `listen('pinata://git-progress')` | Rust phase events update the running progress row |
 
@@ -345,8 +345,8 @@ Write behavior:
   then writes pretty JSON directly.
 - Low-risk interactions call `persistAppState`, which updates the Vue ref immediately and logs save
   failures.
-- Git transactions call `persistAppStateAsync`, so the modal closes only after git work and the
-  final state save both succeed.
+- Git transactions call `persistAppStateAsync`. Creation first persists the pending task hierarchy,
+  then saves materialized worktree paths after git work succeeds.
 
 ## Settings State
 
@@ -596,8 +596,8 @@ Interaction rules:
   pointer release.
 - Expanded task ids and selected task surfaces persist in app state.
 - Repo hover metadata shows branch, base branch, and planned or persisted worktree path.
-- During blocking task git work, the working task shows progress and repo selection highlight is
-  suppressed.
+- During task git work, the affected task shows progress and repo selection highlight is suppressed.
+  Its dialog can be hidden without cancelling work, and other tasks remain usable.
 
 ## Task Creation Lifecycle
 
@@ -613,6 +613,7 @@ sequenceDiagram
     shell->>state: createTask(input)
     shell->>state: create task terminal target
     shell->>shell: build git plans for repos without worktreePath
+    shell->>file: save pending task hierarchy
     opt attached repos
         shell->>dialog: show progress-only modal
     end
@@ -625,11 +626,12 @@ sequenceDiagram
     end
     shell->>state: attach worktreePath to each TaskRepo
     shell->>file: save_app_state(nextState)
-    shell->>dialog: close
+    shell->>shell: clear task operation
 ```
 
-Creation is synchronous from the user's point of view when repos are attached. The modal stays open
-until git work finishes. Repo-less tasks skip git work and select the task terminal immediately.
+Attached-repo creation runs in the background. The task hierarchy appears immediately, its terminal
+surface shows setup state, and its spinner restores live progress after the dialog is hidden.
+Repo-less tasks skip git work and select the task terminal immediately.
 
 Parallelism:
 
@@ -641,7 +643,8 @@ Failure behavior:
 
 - If a repo fails, the modal shows the error and returns to the form only when the user chooses.
 - Repos that succeeded in the same transaction are rolled back with `delete_task_repo_worktree`.
-- App state is not saved until all git work succeeds.
+- The pending task remains registered so an error can return to its edit form. Materialized
+  `worktreePath` values are saved only after all git work succeeds.
 - Rust also cleans up a partially-created worktree and branch if `git worktree add` fails after
   creating them.
 
@@ -752,7 +755,8 @@ Rules:
 - Keep the top `--titlebar-height` draggable even during blocking progress.
 - Outside-click close should be based on pointer down and pointer up both starting outside, not just
   releasing outside.
-- Blocking git progress disables close actions until the transaction finishes or fails.
+- Active git progress can be hidden through its explicit footer action or an outside click without
+  cancelling the operation. Errors return to the task form instead of becoming hidden progress.
 
 ## Styling System
 

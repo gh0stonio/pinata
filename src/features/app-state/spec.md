@@ -170,9 +170,10 @@ type TaskSurfaceSelection =
   references that `RegisteredRepo.id`.
 - New Task always creates a task terminal. If repos are attached, it also stores the chosen base
   branch and topic branch (`feat/<6-char task-id hash>-<slug>`), creates repo branches and
-  worktrees in one blocking transaction, persists `TaskRepo.worktreePath`, then selects the task
-  terminal. Repositories run in parallel, while branch and worktree setup inside one repository stay
-  sequential. Git creation resolves the base branch locally first, then falls back to
+  worktrees in one background operation, persists the pending task hierarchy immediately and each
+  `TaskRepo.worktreePath` after success, then selects the task terminal. Repositories run in
+  parallel, while branch and worktree setup inside one repository stay sequential. Git creation
+  resolves the base branch locally first, then falls back to
   `origin/<base branch>` when only the remote ref exists.
 - Task editing can update task name, repo membership, and base branches. Existing `TaskRepo.id`,
   `branch`, and `worktreePath` are preserved when the registered repo stays in the task.

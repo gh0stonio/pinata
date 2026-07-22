@@ -56,6 +56,7 @@ const emit = defineEmits<{
   create: [task: NewTaskInput]
   delete: [task: Task]
   'dismiss-progress': []
+  'hide-progress': []
   update: [task: Task, input: NewTaskInput]
 }>()
 
@@ -76,6 +77,7 @@ const isWorking = computed(() =>
       props.progress.steps.some((step) => step.status === 'pending' || step.status === 'running'),
   ),
 )
+const canHideProgress = computed(() => isWorking.value)
 const selectedRepoIds = computed(() => new Set(rows.value.map((row) => row.registeredRepoId)))
 const canAddRepo = computed(() => rows.value.length < registry.value.length)
 const hasChanges = computed(() => {
@@ -377,6 +379,11 @@ function saveTask() {
 }
 
 function handleEscape() {
+  if (canHideProgress.value) {
+    emit('hide-progress')
+    return
+  }
+
   if (isWorking.value) {
     return
   }
@@ -389,18 +396,22 @@ function handleEscape() {
   emit('close')
 }
 
+function closeDialog() {
+  if (canHideProgress.value) {
+    emit('hide-progress')
+    return
+  }
+
+  emit('close')
+}
+
 function handleScrimPointerDown(event: PointerEvent) {
   scrimPointerStartedOutside.value = event.target === event.currentTarget
 }
 
 function handleScrimPointerUp(event: PointerEvent) {
-  if (isWorking.value) {
-    scrimPointerStartedOutside.value = false
-    return
-  }
-
   if (scrimPointerStartedOutside.value && event.target === event.currentTarget) {
-    emit('close')
+    closeDialog()
   }
 
   scrimPointerStartedOutside.value = false
@@ -466,11 +477,11 @@ onMounted(() => {
           </p>
         </div>
         <button
+          v-if="!canHideProgress"
           type="button"
           class="uiButton uiButtonIcon uiButtonNaked"
           aria-label="Close task dialog"
-          :disabled="isWorking"
-          @click="emit('close')"
+          @click="closeDialog"
         >
           <XIcon />
         </button>
@@ -501,6 +512,13 @@ onMounted(() => {
         <footer v-if="progress.error" :class="styles.progressActions">
           <button type="button" class="uiButton uiButtonSmall" @click="emit('dismiss-progress')">
             Back to form
+          </button>
+        </footer>
+
+        <footer v-else-if="canHideProgress" :class="styles.backgroundActions">
+          <p>Work continues in the background. Reopen progress from the task.</p>
+          <button type="button" class="uiButton uiButtonSmall" @click="emit('hide-progress')">
+            Close progress
           </button>
         </footer>
       </div>

@@ -61,7 +61,9 @@ drag-resizable; the center flexes to fill.
   the saved layout during startup, and fullscreen window events do not replace the saved normal
   window layout.
 - Native app close requests, including window close, menu Quit, and ⌘Q, open a Piñata
-  confirmation modal before the app exits when `confirmBeforeAppClose` is enabled.
+  confirmation modal before the app exits when `confirmBeforeAppClose` is enabled. Active task
+  creation, update, or deletion always forces a warning because that progress cannot yet resume
+  after reopening.
 
 ## Title bar (left → right)
 
@@ -95,6 +97,10 @@ others).
   rendering, Rust PTY transport, and the bundled tmux session. See `src/features/terminal/spec.md`.
 - **Empty state:** with no selected task, or with a selected repo that has not finished worktree
   setup, the center shows a simple empty state.
+- **Task operations:** creation, update, and deletion use independent task-keyed progress and can run
+  with the dialog hidden, including while another task is created. A creating task renders its
+  complete hierarchy immediately. Selecting an affected task or repo replaces the terminal surface
+  with an operation warning. Its sidebar spinner restores the matching live dialog.
 
 Current center work:
 

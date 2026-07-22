@@ -352,6 +352,26 @@ select.fieldInput {
 	gap: var(--space-sm);
 }
 
+.backgroundActions {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-xl);
+	padding-top: var(--space-md);
+	border-top: 1px solid var(--color-border-subtle);
+}
+
+.backgroundActions p {
+	margin: 0;
+	color: var(--color-text-tertiary);
+	font-size: var(--font-size-meta);
+	line-height: 1.4;
+}
+
+.backgroundActions button {
+	flex: 0 0 auto;
+}
+
 @keyframes progressSpin {
 	to {
 		transform: rotate(360deg);

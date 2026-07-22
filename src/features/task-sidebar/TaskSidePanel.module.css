@@ -260,17 +260,47 @@
 	pointer-events: auto;
 }
 
+.taskProgressControl {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	right: var(--space-xs);
+	z-index: 2;
+	display: grid;
+	place-items: center;
+}
+
+.taskProgressButton {
+	--ui-button-height: 18px;
+
+	width: 18px;
+	height: 18px;
+	padding: 0;
+	cursor: pointer;
+}
+
+.taskProgressButton:focus-visible {
+	outline: 1px solid var(--color-accent-muted);
+	outline-offset: -1px;
+}
+
 .taskSpinner {
 	position: absolute;
 	top: calc(50% - 7px);
 	right: var(--space-xs);
 	z-index: 2;
+	display: block;
 	width: 14px;
 	height: 14px;
 	border: 2px solid var(--color-accent-primary);
 	border-top-color: transparent;
 	border-radius: var(--radius-pill);
 	animation: taskSpinner 0.8s linear infinite;
+}
+
+.taskProgressButton .taskSpinner {
+	position: static;
+	margin: auto;
 }
 
 .taskToggle:focus-visible,
