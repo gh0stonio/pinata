@@ -587,7 +587,10 @@ onBeforeUnmount(() => {
             </div>
           </section>
 
-          <section :class="styles.dangerZone" aria-labelledby="settings-danger-title">
+          <section
+            :class="[styles.settingsGroup, styles.dangerZone]"
+            aria-labelledby="settings-danger-title"
+          >
             <h3 id="settings-danger-title">Danger Zone</h3>
             <div :class="styles.dangerPanel">
               <div :class="styles.configRow">
