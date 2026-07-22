@@ -21,6 +21,13 @@ pub struct RepositoryInspection {
     pub default_branch: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepositoryDiffStats {
+    pub additions: u64,
+    pub deletions: u64,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskRepoGitOperation {
@@ -71,6 +78,87 @@ pub fn inspect_repository(path: String) -> Result<RepositoryInspection, String> 
         branches,
         default_branch,
     })
+}
+
+#[tauri::command]
+pub async fn repository_diff_stats(path: String) -> Result<RepositoryDiffStats, String> {
+    tauri::async_runtime::spawn_blocking(move || repository_diff_stats_sync(&path))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+fn repository_diff_stats_sync(path: &str) -> Result<RepositoryDiffStats, String> {
+    let repository_path = expand_home(path.trim())?;
+    ensure_git_repo(&repository_path)?;
+
+    let tracked = git_stdout_bytes(
+        &repository_path,
+        &["diff", "--numstat", "--no-renames", "-z", "HEAD", "--"],
+    )?;
+    let mut stats = parse_numstat(&tracked);
+    let untracked = git_stdout_bytes(
+        &repository_path,
+        &["ls-files", "--others", "--exclude-standard", "-z"],
+    )?;
+
+    for path in untracked
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+    {
+        let relative_path = std::str::from_utf8(path).map_err(|error| error.to_string())?;
+        let file_path = repository_path.join(relative_path);
+        let Ok(metadata) = fs::symlink_metadata(&file_path) else {
+            continue;
+        };
+
+        if !metadata.file_type().is_file() {
+            continue;
+        }
+
+        let contents = fs::read(file_path).unwrap_or_default();
+
+        stats.additions += text_line_count(&contents);
+    }
+
+    Ok(stats)
+}
+
+fn parse_numstat(output: &[u8]) -> RepositoryDiffStats {
+    let mut stats = RepositoryDiffStats {
+        additions: 0,
+        deletions: 0,
+    };
+
+    for record in output
+        .split(|byte| *byte == 0)
+        .filter(|record| !record.is_empty())
+    {
+        let mut fields = record.splitn(3, |byte| *byte == b'\t');
+        let additions = fields.next().and_then(parse_count);
+        let deletions = fields.next().and_then(parse_count);
+
+        if fields.next().is_none() {
+            continue;
+        }
+
+        stats.additions += additions.unwrap_or(0);
+        stats.deletions += deletions.unwrap_or(0);
+    }
+
+    stats
+}
+
+fn parse_count(value: &[u8]) -> Option<u64> {
+    std::str::from_utf8(value).ok()?.parse().ok()
+}
+
+fn text_line_count(contents: &[u8]) -> u64 {
+    if contents.is_empty() || contents.contains(&0) {
+        return 0;
+    }
+
+    contents.iter().filter(|byte| **byte == b'\n').count() as u64
+        + u64::from(contents.last() != Some(&b'\n'))
 }
 
 #[tauri::command]
@@ -215,6 +303,10 @@ fn ensure_git_repo(path: &Path) -> Result<(), String> {
 }
 
 fn git_stdout(path: &Path, args: &[&str]) -> Result<String, String> {
+    String::from_utf8(git_stdout_bytes(path, args)?).map_err(|error| error.to_string())
+}
+
+fn git_stdout_bytes(path: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     let output = Command::new("git")
         .arg("-C")
         .arg(path)
@@ -223,7 +315,7 @@ fn git_stdout(path: &Path, args: &[&str]) -> Result<String, String> {
         .map_err(|error| format!("failed to run git: {error}"))?;
 
     if output.status.success() {
-        return String::from_utf8(output.stdout).map_err(|error| error.to_string());
+        return Ok(output.stdout);
     }
 
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -623,7 +715,8 @@ fn parse_origin_org(origin: &str) -> Option<String> {
 mod tests {
     use super::{
         create_task_repo_worktree_sync, delete_task_repo_worktree_sync, expand_home,
-        git_branch_exists, git_progress_phase, git_stdout, parse_origin_org, TaskRepoGitOperation,
+        git_branch_exists, git_progress_phase, git_stdout, parse_origin_org,
+        repository_diff_stats_sync, RepositoryDiffStats, TaskRepoGitOperation,
     };
     use std::{
         env, fs,
@@ -714,6 +807,37 @@ mod tests {
         delete_task_repo_worktree_sync(input.clone()).expect("delete worktree");
         assert!(!worktree.exists());
         assert!(!git_branch_exists(&repo, &input.branch).expect("branch deleted"));
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn counts_only_local_tracked_and_untracked_changes() {
+        let root = temp_path("git-diff-stats");
+        let repo = root.join("repo");
+
+        fs::create_dir_all(&repo).expect("repo dir");
+        git(&repo, &["init"]);
+        configure_test_repo(&repo);
+        fs::write(repo.join("tracked.txt"), "one\nold\n").expect("write tracked file");
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "--no-verify", "-m", "init"]);
+        fs::write(repo.join("committed.txt"), "branch change\n").expect("write committed file");
+        git(&repo, &["add", "committed.txt"]);
+        git(&repo, &["commit", "--no-verify", "-m", "branch change"]);
+
+        fs::write(repo.join("tracked.txt"), "one\nnew\nextra\n").expect("change tracked file");
+        git(&repo, &["add", "tracked.txt"]);
+        fs::write(repo.join("tracked.txt"), "one\nnew\nextra\ntail\n").expect("change staged file");
+        fs::write(repo.join("untracked.txt"), "first\nsecond\n").expect("write untracked file");
+
+        assert_eq!(
+            repository_diff_stats_sync(repo.to_str().expect("repo path")).expect("diff stats"),
+            RepositoryDiffStats {
+                additions: 5,
+                deletions: 1,
+            }
+        );
 
         fs::remove_dir_all(root).ok();
     }

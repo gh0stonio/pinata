@@ -11,6 +11,7 @@ import {
   plannedTaskRepoWorktreePath,
   taskSelectedSurface,
   type AppState,
+  type RepositoryDiffStats,
   type Task,
   type TaskRepo,
 } from '../app-state/app-state'
@@ -21,6 +22,8 @@ const props = defineProps<{
   visible: boolean
   workingTaskIds?: string[]
   resumableTaskProgressIds?: string[]
+  repositoryDiffStats?: Record<string, RepositoryDiffStats>
+  repositoryDiffLoading?: Record<string, boolean>
 }>()
 
 const emit = defineEmits<{
@@ -111,6 +114,26 @@ function taskRepoPath(task: Task, taskRepo: TaskRepo) {
     taskRepo,
     registeredRepo,
   )
+}
+
+function taskRepoDiff(taskRepo: TaskRepo) {
+  return props.repositoryDiffStats?.[taskRepo.id]
+}
+
+function hasTaskRepoDiff(taskRepo: TaskRepo) {
+  const diff = taskRepoDiff(taskRepo)
+
+  return Boolean(diff && (diff.additions || diff.deletions))
+}
+
+function isTaskRepoDiffLoading(taskRepo: TaskRepo) {
+  return props.repositoryDiffLoading?.[taskRepo.id] ?? false
+}
+
+function taskRepoDiffLabel(taskRepo: TaskRepo) {
+  const diff = taskRepoDiff(taskRepo)
+
+  return `${diff?.additions ?? 0} additions, ${diff?.deletions ?? 0} deletions`
 }
 
 function selectAndOpenTask(task: Task) {
@@ -248,6 +271,24 @@ function toggleTaskFromCaret(task: Task) {
                 <RepositoryIcon :class="styles.repoIcon" />
                 <span :class="styles.repoMain">
                   <span :class="styles.repoName">{{ taskRepoName(taskRepoItem) }}</span>
+                </span>
+                <span
+                  v-if="isTaskRepoDiffLoading(taskRepoItem)"
+                  :class="styles.repoDiffLoader"
+                  role="status"
+                  :aria-label="`Loading local changes for ${taskRepoName(taskRepoItem)}`"
+                />
+                <span
+                  v-else-if="hasTaskRepoDiff(taskRepoItem)"
+                  :class="styles.repoDiff"
+                  :aria-label="taskRepoDiffLabel(taskRepoItem)"
+                >
+                  <span v-if="taskRepoDiff(taskRepoItem)?.additions" :class="styles.repoAdditions">
+                    +{{ taskRepoDiff(taskRepoItem)?.additions }}
+                  </span>
+                  <span v-if="taskRepoDiff(taskRepoItem)?.deletions" :class="styles.repoDeletions">
+                    -{{ taskRepoDiff(taskRepoItem)?.deletions }}
+                  </span>
                 </span>
               </button>
             </li>

@@ -73,6 +73,11 @@ export type RepositoryInspection = {
   defaultBranch: string
 }
 
+export type RepositoryDiffStats = {
+  additions: number
+  deletions: number
+}
+
 type RegisteredRepoOptions = {
   name?: string
   defaultBranch?: string
@@ -220,6 +225,10 @@ export function saveAppState(state: AppState): Promise<void> {
 
 export function inspectRepository(path: string): Promise<RepositoryInspection> {
   return invoke<RepositoryInspection>('inspect_repository', { path })
+}
+
+export function repositoryDiffStats(path: string): Promise<RepositoryDiffStats> {
+  return invoke<RepositoryDiffStats>('repository_diff_stats', { path })
 }
 
 export function createTaskRepoWorktree(input: TaskRepoGitOperation): Promise<string> {

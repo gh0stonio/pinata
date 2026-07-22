@@ -52,7 +52,11 @@ Based on v0 spec 03 and `reference/src/term-sidebar.jsx`.
 - Task rows follow v0 spacing with the chevron aligned to the Tasks icon. Repo names align with task names.
 - Task titles use `--font-ui`, `--font-size-body`, `--color-text-secondary`, weight 600.
 - Repo rows use `--font-ui`, `--font-size-body`, inactive `--color-text-secondary` at 500, active
-  `--color-text-primary` at 700 with `--color-accent-subtle` fill.
+  `--color-text-primary` at 700 with neutral `--color-control-selected` fill.
+- Repo rows show local worktree line changes as `+additions` and `-deletions`. Counts include
+  staged, unstaged, and untracked text changes, exclude committed branch changes, and remain
+  runtime-derived rather than persisted in app state. A neutral spinner fills the counter slot
+  during the initial lookup; established counts remain visible during refreshes.
 - Task names own the full remaining row width. Edit controls overlay the right edge on row hover or
   focus with a row-background fade, and do not reserve a layout column.
 - Repo hover metadata values use `--font-mono` because branch and worktree paths are git/shell
@@ -71,4 +75,4 @@ Based on v0 spec 03 and `reference/src/term-sidebar.jsx`.
   can be permanently deleted only from the archive view.
 - Multiple terminals, tabs, and splits.
 - Drag reorder.
-- Diff counters, PR glyphs, checks donut.
+- PR glyphs, checks donut.

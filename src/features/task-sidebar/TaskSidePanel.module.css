@@ -166,7 +166,7 @@
 }
 
 .taskRowActive {
-	--task-row-background: var(--color-accent-subtle);
+	--task-row-background: var(--color-control-selected);
 	--task-row-action-color: color-mix(
 		in srgb,
 		var(--color-text-primary) 70%,
@@ -175,7 +175,7 @@
 }
 
 .taskRowActive:hover {
-	--task-row-background: var(--color-accent-hover);
+	--task-row-background: var(--color-control-selected);
 }
 
 .taskRowActive .taskName {
@@ -367,7 +367,7 @@
 
 .repoButton {
 	display: grid;
-	grid-template-columns: 16px minmax(0, 1fr);
+	grid-template-columns: 16px minmax(0, 1fr) auto;
 	align-items: center;
 	gap: var(--space-sm);
 	width: 100%;
@@ -380,16 +380,44 @@
 	transition: background 150ms ease;
 }
 
+.repoDiff {
+	display: flex;
+	align-items: center;
+	gap: var(--space-xs);
+	font-family: var(--font-mono);
+	font-size: var(--font-size-meta);
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+.repoDiffLoader {
+	display: block;
+	width: 10px;
+	height: 10px;
+	border: 1px solid var(--color-text-placeholder);
+	border-top-color: transparent;
+	border-radius: var(--radius-pill);
+	animation: taskSpinner 0.8s linear infinite;
+}
+
+.repoAdditions {
+	color: var(--color-status-success);
+}
+
+.repoDeletions {
+	color: var(--color-status-danger);
+}
+
 .repoButton:hover {
 	background: var(--color-control-hover);
 }
 
 .repoButtonActive {
-	background: var(--color-accent-subtle);
+	background: var(--color-control-selected);
 }
 
 .repoButtonActive:hover {
-	background: var(--color-accent-hover);
+	background: var(--color-control-selected);
 }
 
 .repoMain {

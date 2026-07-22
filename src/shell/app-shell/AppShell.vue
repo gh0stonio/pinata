@@ -56,6 +56,7 @@ import {
 } from '../../features/terminal/terminal'
 import TaskDialog from '../../features/task-sidebar/task-dialog/TaskDialog.vue'
 import TaskSidePanel from '../../features/task-sidebar/TaskSidePanel.vue'
+import { useRepositoryDiffStats } from '../../features/task-sidebar/repository-diff'
 import {
   type AppSettings,
   defaultSettings,
@@ -146,6 +147,7 @@ const appState = ref<AppState>(createEmptyAppState())
 const settings = ref<AppSettings>(startsInOnboarding ? { ...defaultSettings } : loadSettings())
 const terminalProcessNames = ref<Record<string, string>>({})
 const terminalCurrentPaths = ref<Record<string, string>>({})
+const repositoryDiff = useRepositoryDiffStats(appState)
 const terminalFontSize = computed(() => terminalFontSizePxById[settings.value.terminalFontSize])
 const editingTask = computed(() =>
   appState.value.tasks.find((task) => task.id === editingTaskId.value),
@@ -622,6 +624,7 @@ function selectTaskRepo(task: Task, taskRepo: TaskRepo) {
       expandedTaskIds: Array.from(new Set([...appState.value.selection.expandedTaskIds, task.id])),
     },
   })
+  repositoryDiff.queue(taskRepo.id, 0)
 }
 
 function selectedSurfaceForUpdatedTask(currentTask: Task, nextTask: Task): TaskSurfaceSelection {
@@ -826,6 +829,8 @@ function handleTerminalOutput(sessionId: string) {
   if (selectedTaskTerminalSessionIds().includes(sessionId)) {
     queueTerminalProcessRefresh()
   }
+
+  repositoryDiff.queueForTerminalSession(sessionId)
 }
 
 function paneSessionUsedByOtherPane(sessionId: string, paneId: string, tasks: Task[]) {
@@ -1144,6 +1149,7 @@ function toggleTask(task: Task) {
     expandedTaskIds.delete(task.id)
   } else {
     expandedTaskIds.add(task.id)
+    task.repos.forEach((repo) => repositoryDiff.queue(repo.id, 0))
   }
 
   persistAppState({
@@ -1728,6 +1734,7 @@ onMounted(() => {
     })
     .finally(() => {
       bootstrapped.value = true
+      repositoryDiff.refreshAll()
       startTerminalProcessPolling()
       void startWindowLayoutPersistence().catch((error: unknown) => {
         console.error('Failed to listen for window layout changes', error)
@@ -1755,6 +1762,7 @@ onBeforeUnmount(() => {
   }
   window.clearInterval(terminalProcessPollTimer)
   window.clearTimeout(terminalProcessRefreshTimer)
+  repositoryDiff.dispose()
   void persistPendingWindowLayout().catch((error: unknown) => {
     console.error('Failed to save window layout', error)
   })
@@ -1796,6 +1804,8 @@ onBeforeUnmount(() => {
         >
           <TaskSidePanel
             :app-state="appState"
+            :repository-diff-loading="repositoryDiff.loading.value"
+            :repository-diff-stats="repositoryDiff.stats.value"
             :visible="leftSidePanelVisible"
             :working-task-ids="workingTaskIds"
             :resumable-task-progress-ids="resumableTaskProgressIds"

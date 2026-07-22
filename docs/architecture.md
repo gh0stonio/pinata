@@ -406,6 +406,7 @@ Registered commands:
 | `load_app_state` | `app_state.rs` | Read app-state JSON from app data dir |
 | `save_app_state` | `app_state.rs` | Write app-state JSON |
 | `inspect_repository` | `repository.rs` | Validate git checkout, infer repo metadata |
+| `repository_diff_stats` | `repository.rs` | Count local staged, unstaged, and untracked line changes |
 | `create_task_repo_worktree` | `repository.rs` | Create task-owned branch and worktree |
 | `delete_task_repo_worktree` | `repository.rs` | Remove task-owned worktree and branch |
 | `terminal_ensure_session` | `terminal.rs` | Ensure a bundled tmux session exists for a selected task surface |
@@ -596,6 +597,8 @@ Interaction rules:
   pointer release.
 - Expanded task ids and selected task surfaces persist in app state.
 - Repo hover metadata shows branch, base branch, and planned or persisted worktree path.
+- Repo rows show runtime-only local line changes from their task worktree. Committed branch changes
+  are excluded, and the derived counters are never written to app state.
 - During task git work, the affected task shows progress and repo selection highlight is suppressed.
   Its dialog can be hidden without cancelling work, and other tasks remain usable.
 

@@ -35,6 +35,7 @@ pub fn run() {
             repository::create_task_repo_worktree,
             repository::delete_task_repo_worktree,
             repository::inspect_repository,
+            repository::repository_diff_stats,
             app_state::load_app_state,
             app_state::save_app_state,
             terminal::terminal_attach,
