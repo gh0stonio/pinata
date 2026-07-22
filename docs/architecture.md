@@ -620,7 +620,8 @@ sequenceDiagram
     par each repo
         shell->>rust: create_task_repo_worktree(plan)
         rust->>rust: validate repo, branch, path
-        rust->>rust: git worktree add -b branch path base
+        rust->>rust: fetch selected base branch from origin
+        rust->>rust: git worktree add -b branch path origin/base
         rust-->>shell: progress events
         rust-->>shell: canonical worktree path
     end
@@ -636,8 +637,10 @@ Repo-less tasks skip git work and select the task terminal immediately.
 Parallelism:
 
 - Repositories run in parallel.
-- Inside one repository, branch creation and worktree creation are one sequential `git worktree add`
-  operation.
+- Inside one repository, Piñata fetches the selected branch from `origin`, then branch creation and
+  worktree creation are one sequential `git worktree add` operation based on that remote commit.
+- Repositories without an `origin` use the local base branch. A configured `origin` that cannot be
+  fetched blocks creation instead of silently using stale local history.
 
 Failure behavior:
 

@@ -173,8 +173,9 @@ type TaskSurfaceSelection =
   worktrees in one background operation, persists the pending task hierarchy immediately and each
   `TaskRepo.worktreePath` after success, then selects the task terminal. Repositories run in
   parallel, while branch and worktree setup inside one repository stay sequential. Git creation
-  resolves the base branch locally first, then falls back to
-  `origin/<base branch>` when only the remote ref exists.
+  uses the freshly fetched `origin/<base branch>` when the repository has an `origin`. Repositories
+  without an `origin` use the local base branch. Fetch failures block creation so a task never
+  starts from stale remote state.
 - Task editing can update task name, repo membership, and base branches. Existing `TaskRepo.id`,
   `branch`, and `worktreePath` are preserved when the registered repo stays in the task.
 - Task editing that adds or removes repos resets the task terminal split layout and kills stale

@@ -98,8 +98,6 @@ fn create_task_repo_worktree_sync(
 
     ensure_git_repo(&source_path)?;
 
-    let start_point = git_start_point(&source_path, base_branch)?;
-
     if git_branch_exists(&source_path, branch)? {
         return Err(format!("branch already exists: {branch}"));
     }
@@ -110,6 +108,8 @@ fn create_task_repo_worktree_sync(
             worktree_path.to_string_lossy()
         ));
     }
+
+    let start_point = git_start_point(&app, &input.progress_id, &source_path, base_branch)?;
 
     if let Some(parent) = worktree_path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -504,18 +504,39 @@ fn git_branch_exists(path: &Path, branch: &str) -> Result<bool, String> {
     )
 }
 
-fn git_start_point(path: &Path, base_branch: &str) -> Result<String, String> {
+fn git_start_point(
+    app: &Option<AppHandle>,
+    progress_id: &Option<String>,
+    path: &Path,
+    base_branch: &str,
+) -> Result<String, String> {
+    let remote_branch = format!("origin/{base_branch}");
+
+    if git_remote_exists(path, "origin")? {
+        emit_git_phase(app, progress_id, "Fetching base branch");
+        let refspec = format!("+refs/heads/{base_branch}:refs/remotes/origin/{base_branch}");
+
+        git_success(path, &["fetch", "--no-tags", "origin", &refspec])
+            .map_err(|error| format!("failed to update {base_branch} from origin: {error}"))?;
+
+        if git_commit_exists(path, &remote_branch)? {
+            return Ok(remote_branch);
+        }
+
+        return Err(format!(
+            "base branch does not exist on origin: {base_branch}"
+        ));
+    }
+
     if git_commit_exists(path, base_branch)? {
         return Ok(base_branch.to_string());
     }
 
-    let remote_branch = format!("origin/{base_branch}");
-
-    if git_commit_exists(path, &remote_branch)? {
-        return Ok(remote_branch);
-    }
-
     Err(format!("base branch does not exist: {base_branch}"))
+}
+
+fn git_remote_exists(path: &Path, remote: &str) -> Result<bool, String> {
+    git_status(path, &["config", "--get", &format!("remote.{remote}.url")])
 }
 
 fn git_status(path: &Path, args: &[&str]) -> Result<bool, String> {
@@ -523,6 +544,8 @@ fn git_status(path: &Path, args: &[&str]) -> Result<bool, String> {
         .arg("-C")
         .arg(path)
         .args(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status()
         .map_err(|error| format!("failed to run git: {error}"))?;
 
@@ -696,6 +719,62 @@ mod tests {
     }
 
     #[test]
+    fn creates_task_worktree_from_latest_origin_branch() {
+        let root = temp_path("git-worktree-origin");
+        let remote = root.join("remote.git");
+        let repo = root.join("repo");
+        let updater = root.join("updater");
+        let worktree = root.join("worktrees").join("abc123-task");
+
+        fs::create_dir_all(&root).expect("root dir");
+        git(
+            &root,
+            &["init", "--bare", remote.to_str().expect("remote path")],
+        );
+        git(
+            &root,
+            &["clone", remote.to_str().expect("remote path"), "repo"],
+        );
+        configure_test_repo(&repo);
+        fs::write(repo.join("README.md"), "local\n").expect("write readme");
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "--no-verify", "-m", "initial"]);
+        git(&repo, &["push", "-u", "origin", "HEAD"]);
+
+        git(
+            &root,
+            &["clone", remote.to_str().expect("remote path"), "updater"],
+        );
+        configure_test_repo(&updater);
+        fs::write(updater.join("README.md"), "remote update\n").expect("update readme");
+        git(&updater, &["add", "."]);
+        git(&updater, &["commit", "--no-verify", "-m", "remote update"]);
+        git(&updater, &["push", "origin", "HEAD"]);
+
+        let base_branch = git_stdout(&repo, &["branch", "--show-current"])
+            .expect("current branch")
+            .trim()
+            .to_string();
+        let input = TaskRepoGitOperation {
+            source_path: repo.to_string_lossy().to_string(),
+            base_branch,
+            branch: "feat/abc123-task".into(),
+            worktree_path: worktree.to_string_lossy().to_string(),
+            progress_id: None,
+        };
+
+        create_task_repo_worktree_sync(None, input.clone()).expect("create worktree");
+
+        let worktree_head = git_stdout(&worktree, &["rev-parse", "HEAD"]).expect("worktree head");
+        let remote_branch = format!("origin/{}", input.base_branch);
+        let remote_head =
+            git_stdout(&repo, &["rev-parse", &remote_branch]).expect("remote branch head");
+        assert_eq!(worktree_head.trim(), remote_head.trim());
+
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
     fn cleans_up_failed_task_worktree_creation() {
         let root = temp_path("git-worktree-failure");
         let repo = root.join("repo");
@@ -754,5 +833,11 @@ mod tests {
             .expect("git runs");
 
         assert!(status.success(), "git {args:?} failed");
+    }
+
+    fn configure_test_repo(path: &Path) {
+        git(path, &["config", "user.email", "pinata@example.com"]);
+        git(path, &["config", "user.name", "Piñata"]);
+        git(path, &["config", "commit.gpgsign", "false"]);
     }
 }
