@@ -132,6 +132,18 @@ final class WorkspaceViewController: NSViewController {
         setRightPanelVisible(!rightPanelVisible)
     }
 
+    @objc func splitTerminalVertically(_ sender: Any?) {
+        mainContentController.splitActiveVertically()
+    }
+
+    @objc func splitTerminalHorizontally(_ sender: Any?) {
+        mainContentController.splitActiveHorizontally()
+    }
+
+    @objc func closeTerminalPane(_ sender: Any?) {
+        mainContentController.closeActivePane()
+    }
+
     private func setLeftPanelVisible(_ visible: Bool) {
         guard visible != leftPanelVisible else { return }
 

@@ -68,6 +68,18 @@ final class PinataApp: NSObject, NSApplicationDelegate {
         workspaceViewController?.toggleRightPanel(sender)
     }
 
+    @objc private func splitTerminalVertically(_ sender: Any?) {
+        workspaceViewController?.splitTerminalVertically(sender)
+    }
+
+    @objc private func splitTerminalHorizontally(_ sender: Any?) {
+        workspaceViewController?.splitTerminalHorizontally(sender)
+    }
+
+    @objc private func closeTerminalPane(_ sender: Any?) {
+        workspaceViewController?.closeTerminalPane(sender)
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
     }
@@ -106,6 +118,31 @@ final class PinataApp: NSObject, NSApplicationDelegate {
         rightPanelItem.target = self
         viewItem.submenu = viewMenu
         mainMenu.addItem(viewItem)
+
+        let terminalItem = NSMenuItem()
+        let terminalMenu = NSMenu(title: "Terminal")
+        let splitVerticalItem = terminalMenu.addItem(
+            withTitle: "Split Vertically",
+            action: #selector(splitTerminalVertically(_:)),
+            keyEquivalent: "d"
+        )
+        splitVerticalItem.target = self
+        let splitHorizontalItem = terminalMenu.addItem(
+            withTitle: "Split Horizontally",
+            action: #selector(splitTerminalHorizontally(_:)),
+            keyEquivalent: "d"
+        )
+        splitHorizontalItem.keyEquivalentModifierMask = [.command, .shift]
+        splitHorizontalItem.target = self
+        terminalMenu.addItem(.separator())
+        let closePaneItem = terminalMenu.addItem(
+            withTitle: "Close Pane",
+            action: #selector(closeTerminalPane(_:)),
+            keyEquivalent: "w"
+        )
+        closePaneItem.target = self
+        terminalItem.submenu = terminalMenu
+        mainMenu.addItem(terminalItem)
         NSApp.mainMenu = mainMenu
     }
 }

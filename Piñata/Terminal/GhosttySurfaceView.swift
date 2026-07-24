@@ -15,13 +15,19 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
 
     nonisolated(unsafe) private(set) var surface: ghostty_surface_t?
     var workingDirectory: String
+    var didFocus: (() -> Void)?
+    var didChangeTitle: ((String) -> Void)?
+    var defaultTitle: String { URL(fileURLWithPath: UserShell.loginPath).lastPathComponent }
 
     override var acceptsFirstResponder: Bool { true }
     override var isFlipped: Bool { false }
 
-    init(runtime: GhosttyRuntime) {
+    init(
+        runtime: GhosttyRuntime,
+        workingDirectory: String = FileManager.default.homeDirectoryForCurrentUser.path
+    ) {
         self.runtime = runtime
-        workingDirectory = FileManager.default.homeDirectoryForCurrentUser.path
+        self.workingDirectory = workingDirectory
         launchCommand = "\(Self.shellQuote(UserShell.loginPath)) -l"
         super.init(frame: .zero)
         wantsLayer = true
@@ -68,8 +74,11 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
 
     override func becomeFirstResponder() -> Bool {
         let accepted = super.becomeFirstResponder()
-        if accepted, let surface {
-            ghostty_surface_set_focus(surface, true)
+        if accepted {
+            if let surface {
+                ghostty_surface_set_focus(surface, true)
+            }
+            didFocus?()
         }
         return accepted
     }
@@ -94,6 +103,7 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
         ghostty_surface_free(surface)
         lastPixelWidth = 0
         lastPixelHeight = 0
+        didChangeTitle?(defaultTitle)
         scheduleSurfaceCreation()
     }
 
@@ -114,7 +124,6 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
             }
             do {
                 try self.createSurface()
-                self.window?.makeFirstResponder(self)
             } catch {
                 NSAlert(error: error).runModal()
             }
