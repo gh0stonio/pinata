@@ -5,6 +5,7 @@ import AppKit
 final class PinataApp: NSObject, NSApplicationDelegate {
     private var window: NSWindow?
     private var workspaceViewController: WorkspaceViewController?
+    private var ghosttyRuntime: GhosttyRuntime?
 
     static func main() {
         let application = NSApplication.shared
@@ -18,6 +19,16 @@ final class PinataApp: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         installMenu()
 
+        let runtime: GhosttyRuntime
+        do {
+            runtime = try GhosttyRuntime()
+        } catch {
+            NSAlert(error: error).runModal()
+            NSApp.terminate(nil)
+            return
+        }
+        ghosttyRuntime = runtime
+
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 960, height: 640),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -30,7 +41,7 @@ final class PinataApp: NSObject, NSApplicationDelegate {
         window.titlebarSeparatorStyle = .none
         window.backgroundColor = AppTheme.background
         window.minSize = NSSize(width: 900, height: 600)
-        let workspaceViewController = WorkspaceViewController()
+        let workspaceViewController = WorkspaceViewController(runtime: runtime)
         window.contentViewController = workspaceViewController
         self.workspaceViewController = workspaceViewController
         window.center()
@@ -38,6 +49,14 @@ final class PinataApp: NSObject, NSApplicationDelegate {
         self.window = window
 
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        ghosttyRuntime?.setApplicationFocused(true)
+    }
+
+    func applicationDidResignActive(_ notification: Notification) {
+        ghosttyRuntime?.setApplicationFocused(false)
     }
 
 

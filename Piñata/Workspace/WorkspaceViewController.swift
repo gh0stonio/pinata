@@ -5,7 +5,7 @@ final class WorkspaceViewController: NSViewController {
     private let topBar = TopBarView()
     private let bodyView = NSView()
     private let leftPanelController = PanelViewController(role: .left)
-    private let mainContentController = PanelViewController(role: .main)
+    private let mainContentController: TerminalViewController
     private let rightPanelController = PanelViewController(role: .right)
     private let leftResizeHandle = PanelResizeHandle()
     private let rightResizeHandle = PanelResizeHandle()
@@ -16,6 +16,15 @@ final class WorkspaceViewController: NSViewController {
     private var rightPanelVisible = false
     private var leftPanelWidth = AppTheme.leftPanelWidth
     private var rightPanelWidth = AppTheme.rightPanelWidth
+
+    init(runtime: GhosttyRuntime) {
+        mainContentController = TerminalViewController(runtime: runtime)
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is unavailable")
+    }
 
     override func loadView() {
         let rootView = NSView()
