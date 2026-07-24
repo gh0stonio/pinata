@@ -74,13 +74,13 @@ final class TopBarView: NSView {
             NotificationCenter.default.addObserver(
                 self,
                 selector: #selector(fullscreenStateChanged),
-                name: NSWindow.didEnterFullScreenNotification,
+                name: NSWindow.willEnterFullScreenNotification,
                 object: window
             )
             NotificationCenter.default.addObserver(
                 self,
                 selector: #selector(fullscreenStateChanged),
-                name: NSWindow.didExitFullScreenNotification,
+                name: NSWindow.willExitFullScreenNotification,
                 object: window
             )
         }
@@ -107,8 +107,9 @@ final class TopBarView: NSView {
     }
 
     @objc private func fullscreenStateChanged(_ notification: Notification) {
-        updateTrafficLightReserve()
-        needsLayout = true
+        updateTrafficLightReserve(
+            fullScreen: notification.name == NSWindow.willEnterFullScreenNotification
+        )
     }
 
     private func alignTrafficLights() {
@@ -136,8 +137,13 @@ final class TopBarView: NSView {
         }
     }
 
-    private func updateTrafficLightReserve() {
-        leftLeadingConstraint?.constant = window?.styleMask.contains(.fullScreen) == true ? 14 : 92
+    private func updateTrafficLightReserve(fullScreen: Bool? = nil) {
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0
+            leftLeadingConstraint?.constant =
+                (fullScreen ?? window?.styleMask.contains(.fullScreen) == true) ? 14 : 92
+            layoutSubtreeIfNeeded()
+        }
     }
 }
 
