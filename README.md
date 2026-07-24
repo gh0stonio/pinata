@@ -46,8 +46,9 @@ The current `main` branch is the minimal native foundation:
 - Asset catalog with the Piñata application icon.
 - macOS 14 or newer.
 - App version `0.0.1`, build `1`.
+- One embedded `libghostty` terminal in the main content area.
 
-Terminal, task, repository, file, Git, and GitHub features are not implemented on this branch yet. The earlier native Ghostty proof of concept validated the terminal architecture before this clean rebuild.
+Task, repository, file, Git, and GitHub features are not implemented on this branch yet.
 
 ## Project Structure
 
@@ -56,6 +57,8 @@ Piñata.xcodeproj/       Xcode project and shared scheme
 Piñata/
   PinataApp.swift       AppKit entry point and application lifecycle
   Assets.xcassets/      Application assets and icon catalog
+  Terminal/             Ghostty runtime, surface, and AppKit host
+Scripts/                Local dependency bootstrap
 DerivedData/            Generated local Xcode output, ignored by Git
 ```
 
@@ -68,6 +71,7 @@ Xcode generates the application bundle, `Info.plist`, compiled assets, and local
 - Apple silicon Mac.
 - macOS 14 or newer.
 - Xcode 16 or newer.
+- Internet access for the first bootstrap.
 
 Confirm the selected toolchain:
 
@@ -87,6 +91,16 @@ If necessary:
 ```bash
 sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
 ```
+
+### Bootstrap Ghostty
+
+Download the pinned `GhosttyKit` artifact and its matching source resources:
+
+```bash
+./Scripts/bootstrap-ghostty.sh
+```
+
+Run this once before opening or building the project.
 
 ### Open in Xcode
 

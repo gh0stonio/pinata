@@ -4,3 +4,6 @@ DerivedData/
 xcuserdata/
 *.xcuserstate
 .DS_Store
+/.tools/
+/GhosttyKit.xcframework/
+Piñata/GhosttyResources/
