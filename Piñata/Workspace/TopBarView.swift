@@ -165,7 +165,7 @@ private final class PanelToggleButton: NSButton {
         layer?.insertSublayer(backgroundLayer, at: 0)
         isBordered = false
         bezelStyle = .regularSquare
-        image = NSImage(systemSymbolName: symbolName, accessibilityDescription: accessibilityLabel)
+        image = Self.balancedSymbol(named: symbolName, accessibilityLabel: accessibilityLabel)
         imagePosition = .imageOnly
         imageScaling = .scaleProportionallyDown
         focusRingType = .none
@@ -187,6 +187,22 @@ private final class PanelToggleButton: NSButton {
             width: side,
             height: side
         )
+    }
+
+    private static func balancedSymbol(named name: String, accessibilityLabel: String) -> NSImage? {
+        guard let source = NSImage(
+            systemSymbolName: name,
+            accessibilityDescription: accessibilityLabel
+        ) else {
+            return nil
+        }
+        let size = NSSize(width: source.size.width, height: source.size.height + 2)
+        let image = NSImage(size: size, flipped: false) { rect in
+            source.draw(in: rect)
+            return true
+        }
+        image.isTemplate = true
+        return image
     }
 
     @available(*, unavailable)
