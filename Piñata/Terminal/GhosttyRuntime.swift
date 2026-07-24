@@ -91,19 +91,30 @@ private func ghosttyRuntimeAction(
 ) -> Bool {
     guard
         target.tag == GHOSTTY_TARGET_SURFACE,
-        action.tag == GHOSTTY_ACTION_PWD,
         let surface = target.target.surface,
-        let userdata = ghostty_surface_userdata(surface),
-        let path = action.action.pwd.pwd
+        let userdata = ghostty_surface_userdata(surface)
     else {
         return false
     }
-    let directory = String(cString: path)
     let terminal = Unmanaged<GhosttySurfaceView>.fromOpaque(userdata).takeUnretainedValue()
-    DispatchQueue.main.async {
-        terminal.workingDirectory = directory
+
+    if action.tag == GHOSTTY_ACTION_PWD, let path = action.action.pwd.pwd {
+        let directory = String(cString: path)
+        DispatchQueue.main.async {
+            terminal.workingDirectory = directory
+        }
+        return true
     }
-    return true
+
+    if action.tag == GHOSTTY_ACTION_SET_TITLE, let title = action.action.set_title.title {
+        let value = String(cString: title)
+        DispatchQueue.main.async {
+            terminal.didChangeTitle?(value)
+        }
+        return true
+    }
+
+    return false
 }
 
 private func ghosttyRuntimeReadClipboard(
