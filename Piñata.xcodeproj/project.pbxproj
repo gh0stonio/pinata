@@ -9,12 +9,20 @@
 /* Begin PBXBuildFile section */
 		000000000000000000000001 /* PinataApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000003 /* PinataApp.swift */; };
 		000000000000000000000002 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000004 /* Assets.xcassets */; };
+		000000000000000000000020 /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000024 /* AppTheme.swift */; };
+		000000000000000000000021 /* PanelViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000025 /* PanelViewController.swift */; };
+		000000000000000000000022 /* TopBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000026 /* TopBarView.swift */; };
+		000000000000000000000023 /* WorkspaceViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000027 /* WorkspaceViewController.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		000000000000000000000003 /* PinataApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinataApp.swift; sourceTree = "<group>"; };
 		000000000000000000000004 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		000000000000000000000005 /* Piñata.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Piñata.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		000000000000000000000024 /* AppTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTheme.swift; sourceTree = "<group>"; };
+		000000000000000000000025 /* PanelViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelViewController.swift; sourceTree = "<group>"; };
+		000000000000000000000026 /* TopBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopBarView.swift; sourceTree = "<group>"; };
+		000000000000000000000027 /* WorkspaceViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceViewController.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -40,9 +48,21 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000003 /* PinataApp.swift */,
+				000000000000000000000028 /* Workspace */,
 				000000000000000000000004 /* Assets.xcassets */,
 			);
 			path = "Piñata";
+			sourceTree = "<group>";
+		};
+		000000000000000000000028 /* Workspace */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000024 /* AppTheme.swift */,
+				000000000000000000000025 /* PanelViewController.swift */,
+				000000000000000000000026 /* TopBarView.swift */,
+				000000000000000000000027 /* WorkspaceViewController.swift */,
+			);
+			path = Workspace;
 			sourceTree = "<group>";
 		};
 		000000000000000000000008 /* Products */ = {
@@ -123,6 +143,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				000000000000000000000001 /* PinataApp.swift in Sources */,
+				000000000000000000000020 /* AppTheme.swift in Sources */,
+				000000000000000000000021 /* PanelViewController.swift in Sources */,
+				000000000000000000000022 /* TopBarView.swift in Sources */,
+				000000000000000000000023 /* WorkspaceViewController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
