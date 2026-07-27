@@ -11,6 +11,10 @@ final class PanelViewController: NSViewController {
     private let role: Role
     private weak var contentContainer: NSView?
     private var contentWidthConstraint: NSLayoutConstraint?
+    private weak var titleLabel: NSTextField?
+    private weak var messageLabel: NSTextField?
+    private weak var separator: NSView?
+    private weak var mainLabel: NSTextField?
 
     init(role: Role) {
         self.role = role
@@ -49,6 +53,17 @@ final class PanelViewController: NSViewController {
         contentWidthConstraint?.constant = width
     }
 
+    func applyTheme() {
+        view.layer?.backgroundColor = backgroundColor.cgColor
+        titleLabel?.font = AppTheme.font(ofSize: AppTheme.typography.label, weight: 600)
+        titleLabel?.textColor = AppTheme.tertiaryText
+        messageLabel?.font = AppTheme.font(ofSize: AppTheme.typography.body)
+        messageLabel?.textColor = AppTheme.tertiaryText
+        separator?.layer?.backgroundColor = AppTheme.subtleBorder.cgColor
+        mainLabel?.font = AppTheme.font(ofSize: AppTheme.typography.body, weight: 500)
+        mainLabel?.textColor = AppTheme.tertiaryText
+    }
+
     private var backgroundColor: NSColor {
         role == .main ? AppTheme.background : AppTheme.chromeBackground
     }
@@ -68,7 +83,7 @@ final class PanelViewController: NSViewController {
 
         let titleLabel = NSTextField(labelWithString: title)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = .systemFont(ofSize: 11, weight: .bold)
+        titleLabel.font = AppTheme.font(ofSize: AppTheme.typography.label, weight: 600)
         titleLabel.textColor = AppTheme.tertiaryText
         titleLabel.usesSingleLineMode = true
 
@@ -79,7 +94,7 @@ final class PanelViewController: NSViewController {
 
         let messageLabel = NSTextField(labelWithString: message)
         messageLabel.translatesAutoresizingMaskIntoConstraints = false
-        messageLabel.font = .systemFont(ofSize: 13)
+        messageLabel.font = AppTheme.font(ofSize: AppTheme.typography.body)
         messageLabel.textColor = AppTheme.tertiaryText
 
         view.addSubview(contentContainer)
@@ -98,6 +113,9 @@ final class PanelViewController: NSViewController {
 
         self.contentContainer = contentContainer
         self.contentWidthConstraint = contentWidthConstraint
+        self.titleLabel = titleLabel
+        self.messageLabel = messageLabel
+        self.separator = separator
 
         NSLayoutConstraint.activate([
             contentEdgeConstraint,
@@ -122,9 +140,10 @@ final class PanelViewController: NSViewController {
     private func installMainPlaceholder() {
         let label = NSTextField(labelWithString: "Main content")
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = .systemFont(ofSize: 13, weight: .medium)
+        label.font = AppTheme.font(ofSize: AppTheme.typography.body, weight: 500)
         label.textColor = AppTheme.tertiaryText
         view.addSubview(label)
+        mainLabel = label
 
         NSLayoutConstraint.activate([
             label.centerXAnchor.constraint(equalTo: view.centerXAnchor),

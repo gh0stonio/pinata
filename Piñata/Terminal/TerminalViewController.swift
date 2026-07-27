@@ -140,6 +140,13 @@ final class TerminalViewController: NSViewController {
         close(activePaneID)
     }
 
+    func applyTheme() {
+        view.layer?.backgroundColor = AppTheme.background.cgColor
+        paneControllers.values.forEach { $0.applyTheme() }
+        rebuild()
+        updateActivePane()
+    }
+
     private func split(_ paneID: PaneID, axis: SplitAxis) {
         guard paneControllers.count < 8, let source = paneControllers[paneID] else {
             NSSound.beep()
@@ -346,6 +353,11 @@ private final class TerminalPaneViewController: NSViewController {
         terminalView.alphaValue = active ? 1 : 0.4
     }
 
+    func applyTheme() {
+        view.layer?.backgroundColor = AppTheme.background.cgColor
+        header.applyTheme()
+    }
+
     func focus() {
         view.window?.makeFirstResponder(terminalView)
     }
@@ -359,6 +371,9 @@ private final class PaneHeaderView: NSView {
     var didClose: (() -> Void)?
 
     private let titleLabel = NSTextField(labelWithString: "")
+    private let icon = NSImageView()
+    private let separator = NSView()
+    private var active = true
     private let verticalButton = PaneActionButton(
         symbolName: "square.split.2x1",
         accessibilityLabel: "Split vertically",
@@ -380,7 +395,6 @@ private final class PaneHeaderView: NSView {
         wantsLayer = true
         layer?.backgroundColor = AppTheme.chromeBackground.cgColor
 
-        let icon = NSImageView()
         icon.translatesAutoresizingMaskIntoConstraints = false
         icon.image = NSImage(systemSymbolName: "terminal", accessibilityDescription: nil)
         icon.contentTintColor = AppTheme.tertiaryText
@@ -389,12 +403,11 @@ private final class PaneHeaderView: NSView {
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.stringValue = title
-        titleLabel.font = .systemFont(ofSize: 11, weight: .semibold)
+        titleLabel.font = AppTheme.font(ofSize: AppTheme.typography.label, weight: 600)
         titleLabel.textColor = AppTheme.secondaryText
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let separator = NSView()
         separator.translatesAutoresizingMaskIntoConstraints = false
         separator.wantsLayer = true
         separator.layer?.backgroundColor = AppTheme.border.cgColor
@@ -442,6 +455,17 @@ private final class PaneHeaderView: NSView {
         didActivate?()
     }
 
+    func applyTheme() {
+        layer?.backgroundColor = AppTheme.chromeBackground.cgColor
+        icon.contentTintColor = AppTheme.tertiaryText
+        separator.layer?.backgroundColor = AppTheme.border.cgColor
+        titleLabel.font = AppTheme.font(ofSize: AppTheme.typography.label, weight: 600)
+        titleLabel.textColor = active ? AppTheme.secondaryText : AppTheme.tertiaryText
+        for button in [verticalButton, horizontalButton, closeButton] {
+            button.applyTheme()
+        }
+    }
+
     func setTitle(_ title: String) {
         guard !title.isEmpty else { return }
         titleLabel.stringValue = Self.displayTitle(title)
@@ -465,6 +489,7 @@ private final class PaneHeaderView: NSView {
     }
 
     func setActive(_ active: Bool, canClose: Bool) {
+        self.active = active
         titleLabel.textColor = active ? AppTheme.secondaryText : AppTheme.tertiaryText
         alphaValue = active ? 1 : 0.7
         closeButton.isEnabled = canClose
@@ -500,6 +525,10 @@ private final class PaneActionButton: NSButton {
             widthAnchor.constraint(equalToConstant: 22),
             heightAnchor.constraint(equalToConstant: 22),
         ])
+    }
+
+    func applyTheme() {
+        contentTintColor = AppTheme.tertiaryText
     }
 
 

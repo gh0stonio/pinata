@@ -6,6 +6,8 @@ final class PinataApp: NSObject, NSApplicationDelegate {
     private var window: NSWindow?
     private var workspaceViewController: WorkspaceViewController?
     private var ghosttyRuntime: GhosttyRuntime?
+    private let settingsStore = UserSettingsStore()
+    private var settings = UserSettings.defaults
 
     static func main() {
         let application = NSApplication.shared
@@ -17,11 +19,16 @@ final class PinataApp: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        settings = settingsStore.load()
+        AppTheme.configure(settings)
+        NSApp.appearance = NSAppearance(
+            named: settings.theme == .dark ? .darkAqua : .aqua
+        )
         installMenu()
 
         let runtime: GhosttyRuntime
         do {
-            runtime = try GhosttyRuntime()
+            runtime = try GhosttyRuntime(settings: settings)
         } catch {
             NSAlert(error: error).runModal()
             NSApp.terminate(nil)
@@ -80,6 +87,35 @@ final class PinataApp: NSObject, NSApplicationDelegate {
         workspaceViewController?.closeTerminalPane(sender)
     }
 
+    @objc private func toggleSettings(_ sender: Any?) {
+        workspaceViewController?.toggleSettings(settings) { [weak self] next in
+            self?.applySettings(next) ?? false
+        }
+    }
+
+    private func applySettings(_ next: UserSettings) -> Bool {
+        do {
+            if next.theme != settings.theme
+                || next.terminalFontSize != settings.terminalFontSize
+            {
+                try ghosttyRuntime?.apply(next)
+            }
+            try settingsStore.save(next)
+        } catch {
+            NSAlert(error: error).runModal()
+            return false
+        }
+
+        settings = next
+        AppTheme.configure(next)
+        NSApp.appearance = NSAppearance(
+            named: next.theme == .dark ? .darkAqua : .aqua
+        )
+        window?.backgroundColor = AppTheme.background
+        workspaceViewController?.applyTheme()
+        return true
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
     }
@@ -93,6 +129,12 @@ final class PinataApp: NSObject, NSApplicationDelegate {
             action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
             keyEquivalent: ""
         )
+        let settingsItem = appMenu.addItem(
+            withTitle: "Settings…",
+            action: #selector(toggleSettings(_:)),
+            keyEquivalent: ","
+        )
+        settingsItem.target = self
         appMenu.addItem(.separator())
         appMenu.addItem(
             withTitle: "Quit Piñata",

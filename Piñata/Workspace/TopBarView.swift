@@ -13,6 +13,7 @@ final class TopBarView: NSView {
         symbolName: "sidebar.right",
         accessibilityLabel: "Toggle right panel"
     )
+    private let separator = NSView()
     private var leftLeadingConstraint: NSLayoutConstraint?
     private weak var observedWindow: NSWindow?
 
@@ -24,7 +25,6 @@ final class TopBarView: NSView {
         wantsLayer = true
         layer?.backgroundColor = AppTheme.chromeBackground.cgColor
 
-        let separator = NSView()
         separator.translatesAutoresizingMaskIntoConstraints = false
         separator.wantsLayer = true
         separator.layer?.backgroundColor = AppTheme.border.cgColor
@@ -96,6 +96,13 @@ final class TopBarView: NSView {
     func setPanelVisibility(left: Bool, right: Bool) {
         leftToggle.panelVisible = left
         rightToggle.panelVisible = right
+    }
+
+    func applyTheme() {
+        layer?.backgroundColor = AppTheme.chromeBackground.cgColor
+        separator.layer?.backgroundColor = AppTheme.border.cgColor
+        leftToggle.applyTheme()
+        rightToggle.applyTheme()
     }
 
     @objc private func toggleLeftPanel() {
@@ -236,12 +243,22 @@ private final class PanelToggleButton: NSButton {
         updateAppearance()
     }
 
+    func applyTheme() {
+        updateAppearance()
+    }
+
     private func updateAppearance() {
-        contentTintColor = panelVisible ? AppTheme.accent : AppTheme.tertiaryText
-        backgroundLayer.backgroundColor = if panelVisible {
-            AppTheme.accent.withAlphaComponent(0.18).cgColor
+        contentTintColor = if panelVisible {
+            AppTheme.panelAccentIcon
         } else if isHovering {
-            AppTheme.border.cgColor
+            AppTheme.panelToggleHoverText
+        } else {
+            AppTheme.tertiaryText
+        }
+        backgroundLayer.backgroundColor = if panelVisible {
+            AppTheme.panelAccentBackground.cgColor
+        } else if isHovering {
+            AppTheme.panelToggleHoverBackground.cgColor
         } else {
             NSColor.clear.cgColor
         }

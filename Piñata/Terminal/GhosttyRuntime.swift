@@ -9,23 +9,18 @@ private final class GhosttyRuntimeState: @unchecked Sendable {
 @MainActor
 final class GhosttyRuntime {
     nonisolated(unsafe) let app: ghostty_app_t
-    nonisolated(unsafe) private let config: ghostty_config_t
+    nonisolated(unsafe) private var config: ghostty_config_t
     private let callbackState: GhosttyRuntimeState
     nonisolated(unsafe) private let callbackOpaque: UnsafeMutableRawPointer
 
-    init() throws {
+    init(settings: UserSettings) throws {
         GhosttyResources.configureEnvironment()
 
         let initialization = ghostty_init(UInt(CommandLine.argc), CommandLine.unsafeArgv)
         guard initialization == GHOSTTY_SUCCESS else {
             throw GhosttyError.initialization(Int32(initialization))
         }
-        guard let config = ghostty_config_new() else {
-            throw GhosttyError.appCreation
-        }
-        ghostty_config_load_default_files(config)
-        ghostty_config_load_recursive_files(config)
-        ghostty_config_finalize(config)
+        let config = try Self.makeConfig(settings)
         self.config = config
 
         let state = GhosttyRuntimeState()
@@ -64,6 +59,39 @@ final class GhosttyRuntime {
 
     func setApplicationFocused(_ focused: Bool) {
         ghostty_app_set_focus(app, focused)
+    }
+
+    func apply(_ settings: UserSettings) throws {
+        let nextConfig = try Self.makeConfig(settings)
+        ghostty_app_update_config(app, nextConfig)
+        ghostty_config_free(config)
+        config = nextConfig
+        tick()
+    }
+
+    private static func makeConfig(_ settings: UserSettings) throws -> ghostty_config_t {
+        guard let config = ghostty_config_new() else {
+            throw GhosttyError.appCreation
+        }
+        ghostty_config_load_default_files(config)
+        ghostty_config_load_recursive_files(config)
+
+        let palette = settings.theme.palette
+        let configuration = """
+        background = \(String(format: "%06x", palette.terminalBackground))
+        foreground = \(String(format: "%06x", palette.terminalForeground))
+        font-size = \(settings.terminalFontSize.points)
+        """
+        configuration.withCString {
+            ghostty_config_load_string(
+                config,
+                $0,
+                UInt(strlen($0)),
+                "Piñata user settings"
+            )
+        }
+        ghostty_config_finalize(config)
+        return config
     }
 }
 
