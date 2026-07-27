@@ -14,8 +14,9 @@ final class PinataApp: NSObject, NSApplicationDelegate {
         let delegate = PinataApp()
         application.delegate = delegate
         application.setActivationPolicy(.regular)
-        application.run()
-        _ = delegate
+        withExtendedLifetime(delegate) {
+            application.run()
+        }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -73,6 +74,10 @@ final class PinataApp: NSObject, NSApplicationDelegate {
 
     @objc private func toggleRightPanel(_ sender: Any?) {
         workspaceViewController?.toggleRightPanel(sender)
+    }
+
+    @objc private func createTerminalTab(_ sender: Any?) {
+        workspaceViewController?.createTerminalTab(sender)
     }
 
     @objc private func splitTerminalVertically(_ sender: Any?) {
@@ -158,11 +163,25 @@ final class PinataApp: NSObject, NSApplicationDelegate {
             keyEquivalent: "l"
         )
         rightPanelItem.target = self
+        viewMenu.addItem(.separator())
+        let fullScreenItem = viewMenu.addItem(
+            withTitle: "Toggle Full Screen",
+            action: #selector(NSWindow.toggleFullScreen(_:)),
+            keyEquivalent: "f"
+        )
+        fullScreenItem.keyEquivalentModifierMask = [.command, .control]
         viewItem.submenu = viewMenu
         mainMenu.addItem(viewItem)
 
         let terminalItem = NSMenuItem()
         let terminalMenu = NSMenu(title: "Terminal")
+        let newTabItem = terminalMenu.addItem(
+            withTitle: "New Terminal Tab",
+            action: #selector(createTerminalTab(_:)),
+            keyEquivalent: "t"
+        )
+        newTabItem.target = self
+        terminalMenu.addItem(.separator())
         let splitVerticalItem = terminalMenu.addItem(
             withTitle: "Split Vertically",
             action: #selector(splitTerminalVertically(_:)),
@@ -185,6 +204,28 @@ final class PinataApp: NSObject, NSApplicationDelegate {
         closePaneItem.target = self
         terminalItem.submenu = terminalMenu
         mainMenu.addItem(terminalItem)
+
+        let windowItem = NSMenuItem()
+        let windowMenu = NSMenu(title: "Window")
+        windowMenu.addItem(
+            withTitle: "Minimize",
+            action: #selector(NSWindow.performMiniaturize(_:)),
+            keyEquivalent: "m"
+        )
+        windowMenu.addItem(
+            withTitle: "Zoom",
+            action: #selector(NSWindow.performZoom(_:)),
+            keyEquivalent: ""
+        )
+        windowMenu.addItem(.separator())
+        windowMenu.addItem(
+            withTitle: "Bring All to Front",
+            action: #selector(NSApplication.arrangeInFront(_:)),
+            keyEquivalent: ""
+        )
+        windowItem.submenu = windowMenu
+        mainMenu.addItem(windowItem)
+        NSApp.windowsMenu = windowMenu
         NSApp.mainMenu = mainMenu
     }
 }

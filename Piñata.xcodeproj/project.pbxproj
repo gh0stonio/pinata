@@ -11,7 +11,7 @@
 		000000000000000000000002 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000004 /* Assets.xcassets */; };
 		000000000000000000000020 /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000024 /* AppTheme.swift */; };
 		000000000000000000000021 /* PanelViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000025 /* PanelViewController.swift */; };
-		000000000000000000000022 /* TopBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000026 /* TopBarView.swift */; };
+		000000000000000000000022 /* PanelToggleButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000026 /* PanelToggleButton.swift */; };
 		000000000000000000000023 /* WorkspaceViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000027 /* WorkspaceViewController.swift */; };
 		000000000000000000000030 /* GhosttyKit.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 000000000000000000000033 /* GhosttyKit.xcframework */; };
 		000000000000000000000031 /* GhosttyRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000034 /* GhosttyRuntime.swift */; };
@@ -31,7 +31,7 @@
 		000000000000000000000005 /* Piñata.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Piñata.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		000000000000000000000024 /* AppTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTheme.swift; sourceTree = "<group>"; };
 		000000000000000000000025 /* PanelViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelViewController.swift; sourceTree = "<group>"; };
-		000000000000000000000026 /* TopBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopBarView.swift; sourceTree = "<group>"; };
+		000000000000000000000026 /* PanelToggleButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelToggleButton.swift; sourceTree = "<group>"; };
 		000000000000000000000027 /* WorkspaceViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceViewController.swift; sourceTree = "<group>"; };
 		000000000000000000000033 /* GhosttyKit.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = GhosttyKit.xcframework; sourceTree = SOURCE_ROOT; };
 		000000000000000000000034 /* GhosttyRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttyRuntime.swift; sourceTree = "<group>"; };
@@ -95,7 +95,7 @@
 			children = (
 				000000000000000000000024 /* AppTheme.swift */,
 				000000000000000000000025 /* PanelViewController.swift */,
-				000000000000000000000026 /* TopBarView.swift */,
+				000000000000000000000026 /* PanelToggleButton.swift */,
 				000000000000000000000027 /* WorkspaceViewController.swift */,
 			);
 			path = Workspace;
@@ -196,7 +196,7 @@
 				000000000000000000000001 /* PinataApp.swift in Sources */,
 				000000000000000000000020 /* AppTheme.swift in Sources */,
 				000000000000000000000021 /* PanelViewController.swift in Sources */,
-				000000000000000000000022 /* TopBarView.swift in Sources */,
+				000000000000000000000022 /* PanelToggleButton.swift in Sources */,
 				000000000000000000000023 /* WorkspaceViewController.swift in Sources */,
 				000000000000000000000031 /* GhosttyRuntime.swift in Sources */,
 				000000000000000000000032 /* GhosttySurfaceView.swift in Sources */,
