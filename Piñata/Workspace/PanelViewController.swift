@@ -4,13 +4,18 @@ import AppKit
 final class PanelViewController: NSViewController {
     enum Role {
         case left
-        case main
         case right
     }
 
+    var onTogglePanel: (() -> Void)?
+    var onHoverChanged: ((Bool) -> Void)?
+
     private let role: Role
-    private weak var contentContainer: NSView?
-    private var contentWidthConstraint: NSLayoutConstraint?
+    private weak var trackingRoot: PanelTrackingView?
+    private weak var leftHeader: LeftSidebarHeaderView?
+    private weak var sectionHeader: SidebarSectionHeaderView?
+    private weak var rightHeader: RightPanelHeaderView?
+    private weak var messageLabel: NSTextField?
 
     init(role: Role) {
         self.role = role
@@ -23,112 +28,316 @@ final class PanelViewController: NSViewController {
     }
 
     override func loadView() {
-        let rootView = NSView()
+        let rootView = PanelTrackingView()
         rootView.translatesAutoresizingMaskIntoConstraints = false
         rootView.wantsLayer = true
-        rootView.layer?.backgroundColor = backgroundColor.cgColor
+        rootView.layer?.backgroundColor = AppTheme.chromeBackground.cgColor
         rootView.setAccessibilityRole(.group)
-        rootView.setAccessibilityLabel(accessibilityLabel)
+        rootView.setAccessibilityLabel(role == .left ? "Tasks" : "Inspector")
+        rootView.onHoverChanged = { [weak self] hovering in
+            self?.onHoverChanged?(hovering)
+        }
+        trackingRoot = rootView
         view = rootView
 
         switch role {
         case .left:
-            installSidePanel(title: "TASKS", message: "No tasks yet.")
-        case .main:
-            installMainPlaceholder()
+            installLeftPanel()
         case .right:
-            installSidePanel(title: "SIDE PANEL", message: "Nothing here yet.")
+            installRightPanel()
         }
     }
 
-    func setContentVisible(_ visible: Bool) {
-        contentContainer?.isHidden = !visible
+    func setToggleActive(_ active: Bool) {
+        leftHeader?.setPanelActive(active)
+        rightHeader?.setPanelActive(active)
     }
 
-    func setContentWidth(_ width: CGFloat) {
-        contentWidthConstraint?.constant = width
+    func setFullScreen(_ fullScreen: Bool) {
+        leftHeader?.setFullScreen(fullScreen)
     }
 
-    private var backgroundColor: NSColor {
-        role == .main ? AppTheme.background : AppTheme.chromeBackground
+    func applyTheme() {
+        view.layer?.backgroundColor = AppTheme.chromeBackground.cgColor
+        leftHeader?.applyTheme()
+        sectionHeader?.applyTheme()
+        rightHeader?.applyTheme()
+        messageLabel?.font = AppTheme.font(ofSize: AppTheme.typography.body)
+        messageLabel?.textColor = AppTheme.tertiaryText
     }
 
-    private var accessibilityLabel: String {
-        switch role {
-        case .left: "Task panel"
-        case .main: "Main content"
-        case .right: "Right panel"
-        }
-    }
+    private func installLeftPanel() {
+        let topHeader = LeftSidebarHeaderView()
+        let sectionHeader = SidebarSectionHeaderView(title: "TASKS")
+        let messageLabel = makeMessageLabel("No tasks yet.")
+        topHeader.onToggle = { [weak self] in self?.onTogglePanel?() }
 
-    private func installSidePanel(title: String, message: String) {
-        let contentContainer = NSView()
-        contentContainer.translatesAutoresizingMaskIntoConstraints = false
-        contentContainer.wantsLayer = true
+        topHeader.translatesAutoresizingMaskIntoConstraints = false
+        sectionHeader.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(topHeader)
+        view.addSubview(sectionHeader)
+        view.addSubview(messageLabel)
 
-        let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = .systemFont(ofSize: 11, weight: .bold)
-        titleLabel.textColor = AppTheme.tertiaryText
-        titleLabel.usesSingleLineMode = true
-
-        let separator = NSView()
-        separator.translatesAutoresizingMaskIntoConstraints = false
-        separator.wantsLayer = true
-        separator.layer?.backgroundColor = AppTheme.subtleBorder.cgColor
-
-        let messageLabel = NSTextField(labelWithString: message)
-        messageLabel.translatesAutoresizingMaskIntoConstraints = false
-        messageLabel.font = .systemFont(ofSize: 13)
-        messageLabel.textColor = AppTheme.tertiaryText
-
-        view.addSubview(contentContainer)
-        contentContainer.addSubview(titleLabel)
-        contentContainer.addSubview(separator)
-        contentContainer.addSubview(messageLabel)
-
-        let initialWidth =
-            role == .left ? AppTheme.leftPanelWidth : AppTheme.rightPanelWidth
-        let contentWidthConstraint =
-            contentContainer.widthAnchor.constraint(equalToConstant: initialWidth)
-        let contentEdgeConstraint =
-            role == .right
-            ? contentContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor)
-            : contentContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor)
-
-        self.contentContainer = contentContainer
-        self.contentWidthConstraint = contentWidthConstraint
+        leftHeader = topHeader
+        self.sectionHeader = sectionHeader
+        self.messageLabel = messageLabel
 
         NSLayoutConstraint.activate([
-            contentEdgeConstraint,
-            contentWidthConstraint,
-            contentContainer.topAnchor.constraint(equalTo: view.topAnchor),
-            contentContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            topHeader.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            topHeader.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            topHeader.topAnchor.constraint(equalTo: view.topAnchor),
+            topHeader.heightAnchor.constraint(equalToConstant: AppTheme.workspaceHeaderHeight),
 
-            titleLabel.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor, constant: 14),
-            titleLabel.topAnchor.constraint(equalTo: contentContainer.topAnchor),
-            titleLabel.heightAnchor.constraint(equalToConstant: 42),
+            sectionHeader.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            sectionHeader.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            sectionHeader.topAnchor.constraint(equalTo: topHeader.bottomAnchor),
+            sectionHeader.heightAnchor.constraint(equalToConstant: AppTheme.paneHeaderHeight),
 
-            separator.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
-            separator.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
-            separator.topAnchor.constraint(equalTo: contentContainer.topAnchor, constant: 41),
-            separator.heightAnchor.constraint(equalToConstant: 1),
-
-            messageLabel.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor, constant: 14),
-            messageLabel.topAnchor.constraint(equalTo: separator.bottomAnchor, constant: 18),
+            messageLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 14),
+            messageLabel.topAnchor.constraint(equalTo: sectionHeader.bottomAnchor, constant: 16),
+            messageLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -14),
         ])
     }
 
-    private func installMainPlaceholder() {
-        let label = NSTextField(labelWithString: "Main content")
+    private func installRightPanel() {
+        let header = RightPanelHeaderView()
+        let messageLabel = makeMessageLabel("Nothing here yet.")
+        header.onToggle = { [weak self] in self?.onTogglePanel?() }
+
+        header.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(header)
+        view.addSubview(messageLabel)
+
+        rightHeader = header
+        self.messageLabel = messageLabel
+
+        NSLayoutConstraint.activate([
+            header.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            header.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            header.topAnchor.constraint(equalTo: view.topAnchor),
+            header.heightAnchor.constraint(equalToConstant: AppTheme.mainHeaderHeight),
+
+            messageLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 14),
+            messageLabel.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 16),
+            messageLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -14),
+        ])
+    }
+
+    private func makeMessageLabel(_ message: String) -> NSTextField {
+        let label = NSTextField(labelWithString: message)
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = .systemFont(ofSize: 13, weight: .medium)
+        label.font = AppTheme.font(ofSize: AppTheme.typography.body)
         label.textColor = AppTheme.tertiaryText
-        view.addSubview(label)
+        return label
+    }
+}
+
+@MainActor
+private final class PanelTrackingView: NSView {
+    var onHoverChanged: ((Bool) -> Void)?
+    private var trackingArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let trackingArea = NSTrackingArea(
+            rect: bounds,
+            options: [.activeInKeyWindow, .mouseEnteredAndExited, .inVisibleRect],
+            owner: self
+        )
+        addTrackingArea(trackingArea)
+        self.trackingArea = trackingArea
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        onHoverChanged?(true)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        onHoverChanged?(false)
+    }
+}
+
+@MainActor
+private final class LeftSidebarHeaderView: NSView {
+    var onToggle: (() -> Void)?
+
+    private let toggle = PanelToggleButton(
+        symbolName: "sidebar.left",
+        accessibilityLabel: "Toggle tasks"
+    )
+    private var leadingConstraint: NSLayoutConstraint!
+    private var centerYConstraint: NSLayoutConstraint!
+
+    override var mouseDownCanMoveWindow: Bool { true }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        addSubview(toggle)
+        leadingConstraint = toggle.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 82)
+        centerYConstraint = toggle.centerYAnchor.constraint(
+            equalTo: centerYAnchor,
+            constant: 1
+        )
+        NSLayoutConstraint.activate([
+            leadingConstraint,
+            centerYConstraint,
+        ])
+        toggle.target = self
+        toggle.action = #selector(togglePanel)
+        toggle.toolTip = "Toggle tasks (⌘B)"
+        applyTheme()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is unavailable")
+    }
+
+    func setPanelActive(_ active: Bool) {
+        toggle.panelVisible = active
+    }
+
+    func setFullScreen(_ fullScreen: Bool) {
+        leadingConstraint.constant = fullScreen ? 12 : 82
+    }
+
+    func applyTheme() {
+        layer?.backgroundColor = AppTheme.chromeBackground.cgColor
+        toggle.applyTheme()
+    }
+
+    @objc private func togglePanel() {
+        onToggle?()
+    }
+}
+
+@MainActor
+private final class SidebarSectionHeaderView: NSView {
+    private let titleLabel: NSTextField
+
+    init(title: String) {
+        titleLabel = NSTextField(labelWithString: title)
+        super.init(frame: .zero)
+        wantsLayer = true
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.usesSingleLineMode = true
+        addSubview(titleLabel)
+        NSLayoutConstraint.activate([
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+        applyTheme()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is unavailable")
+    }
+
+    func applyTheme() {
+        layer?.backgroundColor = AppTheme.chromeBackground.cgColor
+        titleLabel.font = AppTheme.font(ofSize: AppTheme.typography.label, weight: 600)
+        titleLabel.textColor = AppTheme.tertiaryText
+    }
+}
+
+@MainActor
+private final class RightPanelHeaderView: NSView {
+    var onToggle: (() -> Void)?
+
+    private let filesButton = PanelTabButton(title: "Files", selected: true)
+    private let reviewButton = PanelTabButton(title: "Review")
+    private let pullRequestButton = PanelTabButton(title: "PR")
+    private let closeButton = PanelToggleButton(
+        symbolName: "sidebar.right",
+        accessibilityLabel: "Toggle inspector"
+    )
+
+    override var mouseDownCanMoveWindow: Bool { true }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        reviewButton.isEnabled = false
+        pullRequestButton.isEnabled = false
+
+        let tabs = NSStackView(views: [filesButton, reviewButton, pullRequestButton])
+        tabs.translatesAutoresizingMaskIntoConstraints = false
+        tabs.orientation = .horizontal
+        tabs.alignment = .centerY
+        tabs.spacing = 2
+        addSubview(tabs)
+        addSubview(closeButton)
 
         NSLayoutConstraint.activate([
-            label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            label.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            tabs.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            tabs.centerYAnchor.constraint(equalTo: centerYAnchor),
+            tabs.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor, constant: -6),
+            closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
+
+        closeButton.target = self
+        closeButton.action = #selector(togglePanel)
+        closeButton.toolTip = "Toggle inspector (⌘L)"
+        applyTheme()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is unavailable")
+    }
+
+    func setPanelActive(_ active: Bool) {
+        closeButton.panelVisible = active
+    }
+
+    func applyTheme() {
+        layer?.backgroundColor = AppTheme.chromeBackground.cgColor
+        filesButton.applyTheme()
+        reviewButton.applyTheme()
+        pullRequestButton.applyTheme()
+        closeButton.applyTheme()
+    }
+
+    @objc private func togglePanel() {
+        onToggle?()
+    }
+}
+
+@MainActor
+private final class PanelTabButton: NSButton {
+    private let selected: Bool
+
+    init(title: String, selected: Bool = false) {
+        self.selected = selected
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        layer?.cornerRadius = 6
+        isBordered = false
+        bezelStyle = .regularSquare
+        self.title = title
+        focusRingType = .none
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 26),
+            widthAnchor.constraint(greaterThanOrEqualToConstant: 46),
+        ])
+        applyTheme()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is unavailable")
+    }
+
+    func applyTheme() {
+        contentTintColor = selected ? AppTheme.primaryText : AppTheme.tertiaryText
+        layer?.backgroundColor = selected ? AppTheme.controlSelection.cgColor : NSColor.clear.cgColor
+        font = AppTheme.font(ofSize: AppTheme.typography.label, weight: selected ? 600 : 500)
     }
 }

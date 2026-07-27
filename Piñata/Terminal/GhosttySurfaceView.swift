@@ -141,7 +141,6 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
                 )
                 config.userdata = Unmanaged.passUnretained(self).toOpaque()
                 config.scale_factor = scale
-                config.font_size = 13
                 config.working_directory = directory
                 config.command = command
                 config.context = GHOSTTY_SURFACE_CONTEXT_SPLIT

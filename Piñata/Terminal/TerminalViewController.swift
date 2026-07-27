@@ -65,7 +65,7 @@ private indirect enum PaneNode {
             return self
         case .split(var split):
             if split.id == splitID {
-                split.ratio = min(0.85, max(0.15, ratio))
+                split.ratio = ratio
             } else {
                 split.first = split.first.settingRatio(splitID: splitID, ratio: ratio)
                 split.second = split.second.settingRatio(splitID: splitID, ratio: ratio)
@@ -97,6 +97,7 @@ final class TerminalViewController: NSViewController {
     private var activePaneID: PaneID
     private var paneControllers: [PaneID: TerminalPaneViewController] = [:]
     private var rootController: NSViewController?
+    var onCloseLastPane: (() -> Void)?
 
     init(runtime: GhosttyRuntime) {
         let paneID = UUID()
@@ -140,6 +141,17 @@ final class TerminalViewController: NSViewController {
         close(activePaneID)
     }
 
+    func focusActiveTerminal() {
+        focusActivePane()
+    }
+
+    func applyTheme() {
+        view.layer?.backgroundColor = AppTheme.background.cgColor
+        paneControllers.values.forEach { $0.applyTheme() }
+        rebuild()
+        updateActivePane()
+    }
+
     private func split(_ paneID: PaneID, axis: SplitAxis) {
         guard paneControllers.count < 8, let source = paneControllers[paneID] else {
             NSSound.beep()
@@ -167,10 +179,11 @@ final class TerminalViewController: NSViewController {
     }
 
     private func close(_ paneID: PaneID) {
-        guard paneControllers.count > 1, let nextRoot = root.removing(paneID) else {
-            NSSound.beep()
+        guard paneControllers.count > 1 else {
+            onCloseLastPane?()
             return
         }
+        guard let nextRoot = root.removing(paneID) else { return }
         let nearest = root.nearestPane(to: paneID)
         if let removed = paneControllers.removeValue(forKey: paneID) {
             removed.view.removeFromSuperview()
@@ -213,7 +226,7 @@ final class TerminalViewController: NSViewController {
     }
 
     private func updateActivePane() {
-        let canClose = paneControllers.count > 1
+        let canClose = paneControllers.count > 1 || onCloseLastPane != nil
         for (paneID, controller) in paneControllers {
             controller.setActive(paneID == activePaneID, canClose: canClose)
         }
@@ -286,7 +299,7 @@ private final class TerminalPaneViewController: NSViewController {
     init(paneID: PaneID, runtime: GhosttyRuntime, workingDirectory: String) {
         self.paneID = paneID
         terminalView = GhosttySurfaceView(runtime: runtime, workingDirectory: workingDirectory)
-        header = PaneHeaderView(title: terminalView.defaultTitle)
+        header = PaneHeaderView(title: PaneHeaderView.displayTitle(terminalView.defaultTitle))
         super.init(nibName: nil, bundle: nil)
 
         terminalView.didFocus = { [weak self] in
@@ -332,18 +345,36 @@ private final class TerminalPaneViewController: NSViewController {
             header.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             header.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             header.topAnchor.constraint(equalTo: container.topAnchor),
-            header.heightAnchor.constraint(equalToConstant: 30),
-            terminalView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            terminalView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            terminalView.topAnchor.constraint(equalTo: header.bottomAnchor),
-            terminalView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            header.heightAnchor.constraint(equalToConstant: AppTheme.paneHeaderHeight),
+            terminalView.leadingAnchor.constraint(
+                equalTo: container.leadingAnchor,
+                constant: AppTheme.terminalContentInset
+            ),
+            terminalView.trailingAnchor.constraint(
+                equalTo: container.trailingAnchor,
+                constant: -AppTheme.terminalContentInset
+            ),
+            terminalView.topAnchor.constraint(
+                equalTo: header.bottomAnchor,
+                constant: AppTheme.terminalVerticalInset
+            ),
+            terminalView.bottomAnchor.constraint(
+                equalTo: container.bottomAnchor,
+                constant: -AppTheme.terminalVerticalInset
+            ),
         ])
         view = container
     }
 
+
     func setActive(_ active: Bool, canClose: Bool) {
         header.setActive(active, canClose: canClose)
-        terminalView.alphaValue = active ? 1 : 0.4
+        terminalView.alphaValue = active ? 1 : 0.82
+    }
+
+    func applyTheme() {
+        view.layer?.backgroundColor = AppTheme.background.cgColor
+        header.applyTheme()
     }
 
     func focus() {
@@ -359,6 +390,8 @@ private final class PaneHeaderView: NSView {
     var didClose: (() -> Void)?
 
     private let titleLabel = NSTextField(labelWithString: "")
+    private let icon = NSImageView()
+    private var active = true
     private let verticalButton = PaneActionButton(
         symbolName: "square.split.2x1",
         accessibilityLabel: "Split vertically",
@@ -378,9 +411,8 @@ private final class PaneHeaderView: NSView {
     init(title: String) {
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.backgroundColor = AppTheme.chromeBackground.cgColor
+        layer?.backgroundColor = AppTheme.background.cgColor
 
-        let icon = NSImageView()
         icon.translatesAutoresizingMaskIntoConstraints = false
         icon.image = NSImage(systemSymbolName: "terminal", accessibilityDescription: nil)
         icon.contentTintColor = AppTheme.tertiaryText
@@ -389,22 +421,17 @@ private final class PaneHeaderView: NSView {
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.stringValue = title
-        titleLabel.font = .systemFont(ofSize: 11, weight: .semibold)
+        titleLabel.font = AppTheme.font(ofSize: AppTheme.typography.label, weight: 600)
         titleLabel.textColor = AppTheme.secondaryText
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let separator = NSView()
-        separator.translatesAutoresizingMaskIntoConstraints = false
-        separator.wantsLayer = true
-        separator.layer?.backgroundColor = AppTheme.border.cgColor
 
         for button in [verticalButton, horizontalButton, closeButton] {
             addSubview(button)
         }
         addSubview(icon)
         addSubview(titleLabel)
-        addSubview(separator)
 
         verticalButton.target = self
         verticalButton.action = #selector(splitVertically)
@@ -427,10 +454,6 @@ private final class PaneHeaderView: NSView {
             horizontalButton.centerYAnchor.constraint(equalTo: centerYAnchor),
             verticalButton.trailingAnchor.constraint(equalTo: horizontalButton.leadingAnchor, constant: -2),
             verticalButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            separator.leadingAnchor.constraint(equalTo: leadingAnchor),
-            separator.trailingAnchor.constraint(equalTo: trailingAnchor),
-            separator.bottomAnchor.constraint(equalTo: bottomAnchor),
-            separator.heightAnchor.constraint(equalToConstant: 1),
         ])
     }
 
@@ -438,8 +461,20 @@ private final class PaneHeaderView: NSView {
         fatalError("init(coder:) is unavailable")
     }
 
+
     override func mouseDown(with event: NSEvent) {
         didActivate?()
+        window?.performDrag(with: event)
+    }
+
+    func applyTheme() {
+        layer?.backgroundColor = AppTheme.background.cgColor
+        icon.contentTintColor = AppTheme.tertiaryText
+        titleLabel.font = AppTheme.font(ofSize: AppTheme.typography.label, weight: 600)
+        titleLabel.textColor = active ? AppTheme.secondaryText : AppTheme.tertiaryText
+        for button in [verticalButton, horizontalButton, closeButton] {
+            button.applyTheme()
+        }
     }
 
     func setTitle(_ title: String) {
@@ -447,7 +482,7 @@ private final class PaneHeaderView: NSView {
         titleLabel.stringValue = Self.displayTitle(title)
     }
 
-    private static func displayTitle(_ title: String) -> String {
+    static func displayTitle(_ title: String) -> String {
         guard
             let at = title.firstIndex(of: "@"),
             let colon = title[title.index(after: at)...].firstIndex(of: ":")
@@ -465,6 +500,7 @@ private final class PaneHeaderView: NSView {
     }
 
     func setActive(_ active: Bool, canClose: Bool) {
+        self.active = active
         titleLabel.textColor = active ? AppTheme.secondaryText : AppTheme.tertiaryText
         alphaValue = active ? 1 : 0.7
         closeButton.isEnabled = canClose
@@ -502,6 +538,10 @@ private final class PaneActionButton: NSButton {
         ])
     }
 
+    func applyTheme() {
+        contentTintColor = AppTheme.tertiaryText
+    }
+
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is unavailable")
@@ -510,8 +550,58 @@ private final class PaneActionButton: NSButton {
 
 @MainActor
 private final class PaneSplitView: NSSplitView {
+    private var trackingArea: NSTrackingArea?
+    private var hoveringDivider = false
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let trackingArea = NSTrackingArea(
+            rect: bounds,
+            options: [.activeInKeyWindow, .mouseMoved, .mouseEnteredAndExited, .inVisibleRect],
+            owner: self
+        )
+        addTrackingArea(trackingArea)
+        self.trackingArea = trackingArea
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        guard let firstPane = subviews.first else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        let divider = if isVertical {
+            NSRect(
+                x: firstPane.frame.maxX,
+                y: bounds.minY,
+                width: dividerThickness,
+                height: bounds.height
+            )
+        } else {
+            NSRect(
+                x: bounds.minX,
+                y: firstPane.frame.maxY,
+                width: bounds.width,
+                height: dividerThickness
+            )
+        }
+        let hitArea = divider.insetBy(
+            dx: isVertical ? -4 : 0,
+            dy: isVertical ? 0 : -4
+        )
+        let hovering = hitArea.contains(point)
+        guard hovering != hoveringDivider else { return }
+        hoveringDivider = hovering
+        needsDisplay = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hoveringDivider = false
+        needsDisplay = true
+    }
+
     override func drawDivider(in rect: NSRect) {
-        AppTheme.border.setFill()
+        (hoveringDivider ? AppTheme.separator : AppTheme.border).setFill()
         rect.fill()
     }
 }
