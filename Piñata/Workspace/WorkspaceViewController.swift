@@ -9,6 +9,7 @@ final class WorkspaceViewController: NSViewController {
     private let rightPanelController = PanelViewController(role: .right)
     private let leftResizeHandle = PanelResizeHandle()
     private let rightResizeHandle = PanelResizeHandle()
+    private var settingsController: SettingsViewController?
 
     private var leftWidthConstraint: NSLayoutConstraint!
     private var rightWidthConstraint: NSLayoutConstraint!
@@ -144,6 +145,53 @@ final class WorkspaceViewController: NSViewController {
         mainContentController.closeActivePane()
     }
 
+    func toggleSettings(
+        _ settings: UserSettings,
+        onChange: @escaping (UserSettings) -> Bool
+    ) {
+        if settingsController != nil {
+            dismissSettings()
+            return
+        }
+
+        let controller = SettingsViewController(settings: settings)
+        controller.onChange = onChange
+        controller.onClose = { [weak self] in
+            self?.dismissSettings()
+        }
+        addChild(controller)
+        controller.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(controller.view)
+        NSLayoutConstraint.activate([
+            controller.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            controller.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            controller.view.topAnchor.constraint(equalTo: view.topAnchor),
+            controller.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        settingsController = controller
+    }
+
+    func applyTheme() {
+        view.layer?.backgroundColor = AppTheme.background.cgColor
+        bodyView.layer?.backgroundColor = AppTheme.background.cgColor
+        topBar.applyTheme()
+        leftPanelController.applyTheme()
+        mainContentController.applyTheme()
+        rightPanelController.applyTheme()
+        leftResizeHandle.applyTheme()
+        rightResizeHandle.applyTheme()
+        settingsController?.applyTheme()
+    }
+
+    private func dismissSettings() {
+        settingsController?.view.removeFromSuperview()
+        settingsController?.removeFromParent()
+        settingsController = nil
+        mainContentController.view.window?.makeFirstResponder(
+            mainContentController.view
+        )
+    }
+
     private func setLeftPanelVisible(_ visible: Bool) {
         guard visible != leftPanelVisible else { return }
 
@@ -261,6 +309,10 @@ private final class PanelResizeHandle: NSView {
             line.bottomAnchor.constraint(equalTo: bottomAnchor),
             line.widthAnchor.constraint(equalToConstant: 1),
         ])
+    }
+
+    func applyTheme() {
+        line.layer?.backgroundColor = AppTheme.border.cgColor
     }
 
     @available(*, unavailable)

@@ -19,6 +19,10 @@
 		000000000000000000000036 /* TerminalViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000037 /* TerminalViewController.swift */; };
 		000000000000000000000040 /* GhosttyResources/ghostty in Resources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000038 /* GhosttyResources/ghostty */; };
 		000000000000000000000041 /* GhosttyResources/terminfo in Resources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000039 /* GhosttyResources/terminfo */; };
+		000000000000000000000042 /* UserSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000043 /* UserSettings.swift */; };
+		000000000000000000000045 /* SettingsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000046 /* SettingsViewController.swift */; };
+		000000000000000000000047 /* SpaceGrotesk-VariableFont_wght.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000049 /* SpaceGrotesk-VariableFont_wght.ttf */; };
+		000000000000000000000048 /* SpaceGrotesk-OFL.txt in Resources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000050 /* SpaceGrotesk-OFL.txt */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -35,6 +39,10 @@
 		000000000000000000000037 /* TerminalViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalViewController.swift; sourceTree = "<group>"; };
 		000000000000000000000038 /* GhosttyResources/ghostty */ = {isa = PBXFileReference; lastKnownFileType = folder; path = GhosttyResources/ghostty; sourceTree = "<group>"; };
 		000000000000000000000039 /* GhosttyResources/terminfo */ = {isa = PBXFileReference; lastKnownFileType = folder; path = GhosttyResources/terminfo; sourceTree = "<group>"; };
+		000000000000000000000043 /* UserSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserSettings.swift; sourceTree = "<group>"; };
+		000000000000000000000046 /* SettingsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViewController.swift; sourceTree = "<group>"; };
+		000000000000000000000049 /* SpaceGrotesk-VariableFont_wght.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Resources/SpaceGrotesk-VariableFont_wght.ttf"; sourceTree = "<group>"; };
+		000000000000000000000050 /* SpaceGrotesk-OFL.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Resources/SpaceGrotesk-OFL.txt"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -62,10 +70,13 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000003 /* PinataApp.swift */,
+				000000000000000000000044 /* Settings */,
 				000000000000000000000028 /* Workspace */,
 				000000000000000000000029 /* Terminal */,
 				000000000000000000000038 /* GhosttyResources/ghostty */,
 				000000000000000000000039 /* GhosttyResources/terminfo */,
+				000000000000000000000049 /* SpaceGrotesk-VariableFont_wght.ttf */,
+				000000000000000000000050 /* SpaceGrotesk-OFL.txt */,
 				000000000000000000000004 /* Assets.xcassets */,
 			);
 			path = "Piñata";
@@ -98,6 +109,15 @@
 				000000000000000000000037 /* TerminalViewController.swift */,
 			);
 			path = Terminal;
+			sourceTree = "<group>";
+		};
+		000000000000000000000044 /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000043 /* UserSettings.swift */,
+				000000000000000000000046 /* SettingsViewController.swift */,
+			);
+			path = Settings;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -161,6 +181,8 @@
 				000000000000000000000002 /* Assets.xcassets in Resources */,
 				000000000000000000000040 /* GhosttyResources/ghostty in Resources */,
 				000000000000000000000041 /* GhosttyResources/terminfo in Resources */,
+				000000000000000000000047 /* SpaceGrotesk-VariableFont_wght.ttf in Resources */,
+				000000000000000000000048 /* SpaceGrotesk-OFL.txt in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -179,6 +201,8 @@
 				000000000000000000000031 /* GhosttyRuntime.swift in Sources */,
 				000000000000000000000032 /* GhosttySurfaceView.swift in Sources */,
 				000000000000000000000036 /* TerminalViewController.swift in Sources */,
+				000000000000000000000042 /* UserSettings.swift in Sources */,
+				000000000000000000000045 /* SettingsViewController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
