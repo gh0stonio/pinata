@@ -12,11 +12,20 @@ struct AppTypography {
 
 @MainActor
 enum AppTheme {
-    static let titleBarHeight: CGFloat = 46
     static let leftPanelWidth: CGFloat = 264
+    static let fullScreenSidebarWidth: CGFloat = 320
     static let rightPanelWidth: CGFloat = 300
     static let leftPanelRange: ClosedRange<CGFloat> = 200...440
     static let rightPanelRange: ClosedRange<CGFloat> = 260...520
+    static let workspaceHeaderHeight: CGFloat = 36
+    static let mainHeaderHeight: CGFloat = 44
+    static let paneHeaderHeight: CGFloat = 34
+    static let workspaceInset: CGFloat = 8
+    static let terminalContentInset: CGFloat = 10
+    static let terminalVerticalInset: CGFloat = 2
+    static let workspaceCornerRadius: CGFloat = 10
+    static let minimumCenterWidth: CGFloat = 480
+    static let edgeRevealWidth: CGFloat = 6
 
     static private(set) var background = color(0x282C34)
     static private(set) var chromeBackground = color(0x21252B)
@@ -33,6 +42,10 @@ enum AppTheme {
     static private(set) var panelToggleHoverText = color(0xB6BDC0)
     static private(set) var panelToggleHoverBackground = color(0x2F3335)
     static private(set) var typography = typography(for: AppFontSize.regular)
+
+    static var separator: NSColor {
+        tertiaryText.withAlphaComponent(0.28)
+    }
     private static let spaceGroteskRegistered: Bool = {
         guard
             let url = Bundle.main.url(
