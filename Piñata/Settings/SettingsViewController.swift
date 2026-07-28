@@ -77,8 +77,8 @@ final class SettingsViewController: NSViewController {
             $0.font = AppTheme.font(ofSize: AppTheme.typography.settingsBody)
         }
         cards.forEach {
-            $0.layer?.backgroundColor = AppTheme.surface.cgColor
-            $0.layer?.borderColor = AppTheme.subtleBorder.cgColor
+            $0.layer?.backgroundColor = AppTheme.chromeBackground.cgColor
+            $0.layer?.borderColor = AppTheme.border.cgColor
         }
         themeControl.applyTheme()
         accentControl.applyTheme()
@@ -121,7 +121,7 @@ final class SettingsViewController: NSViewController {
             rail.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             rail.topAnchor.constraint(equalTo: view.topAnchor),
             rail.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            rail.widthAnchor.constraint(equalToConstant: AppTheme.leftPanelWidth),
+            rail.widthAnchor.constraint(equalToConstant: 280),
 
             backButton.leadingAnchor.constraint(equalTo: rail.leadingAnchor, constant: 20),
             backButton.trailingAnchor.constraint(equalTo: rail.trailingAnchor, constant: -20),
@@ -207,32 +207,35 @@ final class SettingsViewController: NSViewController {
 
         let responsiveWidth = column.widthAnchor.constraint(
             equalTo: content.widthAnchor,
-            multiplier: 0.88
+            constant: -80
         )
-        responsiveWidth.priority = .defaultHigh
+        responsiveWidth.priority = .defaultLow
+
 
         NSLayoutConstraint.activate([
-            column.topAnchor.constraint(equalTo: content.topAnchor, constant: 40),
+            column.topAnchor.constraint(equalTo: content.topAnchor, constant: 34),
             column.centerXAnchor.constraint(equalTo: content.centerXAnchor),
             responsiveWidth,
-            column.widthAnchor.constraint(lessThanOrEqualToConstant: 1_100),
+            column.widthAnchor.constraint(greaterThanOrEqualToConstant: 660),
+            column.widthAnchor.constraint(lessThanOrEqualToConstant: 750),
             column.leadingAnchor.constraint(greaterThanOrEqualTo: content.leadingAnchor, constant: 40),
             column.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor, constant: -40),
+            column.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor, constant: -40),
 
             titleLabel.leadingAnchor.constraint(equalTo: column.leadingAnchor),
             titleLabel.topAnchor.constraint(equalTo: column.topAnchor),
 
             sectionLabels[0].leadingAnchor.constraint(equalTo: column.leadingAnchor),
-            sectionLabels[0].topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 24),
+            sectionLabels[0].topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 16),
             themeCard.leadingAnchor.constraint(equalTo: column.leadingAnchor),
             themeCard.trailingAnchor.constraint(equalTo: column.trailingAnchor),
-            themeCard.topAnchor.constraint(equalTo: sectionLabels[0].bottomAnchor, constant: 12),
+            themeCard.topAnchor.constraint(equalTo: sectionLabels[0].bottomAnchor, constant: 8),
 
             sectionLabels[1].leadingAnchor.constraint(equalTo: column.leadingAnchor),
-            sectionLabels[1].topAnchor.constraint(equalTo: themeCard.bottomAnchor, constant: 22),
+            sectionLabels[1].topAnchor.constraint(equalTo: themeCard.bottomAnchor, constant: 16),
             textCard.leadingAnchor.constraint(equalTo: column.leadingAnchor),
             textCard.trailingAnchor.constraint(equalTo: column.trailingAnchor),
-            textCard.topAnchor.constraint(equalTo: sectionLabels[1].bottomAnchor, constant: 12),
+            textCard.topAnchor.constraint(equalTo: sectionLabels[1].bottomAnchor, constant: 8),
             textCard.bottomAnchor.constraint(equalTo: column.bottomAnchor),
         ])
 
@@ -264,7 +267,7 @@ final class SettingsViewController: NSViewController {
             stack.trailingAnchor.constraint(equalTo: card.trailingAnchor),
             stack.topAnchor.constraint(equalTo: card.topAnchor),
             stack.bottomAnchor.constraint(equalTo: card.bottomAnchor),
-            card.heightAnchor.constraint(equalToConstant: CGFloat(rows.count * 68)),
+            card.heightAnchor.constraint(equalToConstant: CGFloat(rows.count * 56)),
         ])
         return card
     }
@@ -287,20 +290,20 @@ final class SettingsViewController: NSViewController {
         labels.translatesAutoresizingMaskIntoConstraints = false
         labels.orientation = .vertical
         labels.alignment = .leading
-        labels.spacing = 4
+        labels.spacing = 2
 
         control.translatesAutoresizingMaskIntoConstraints = false
         row.addSubview(labels)
         row.addSubview(control)
 
         NSLayoutConstraint.activate([
-            labels.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 24),
+            labels.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 18),
             labels.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-            labels.trailingAnchor.constraint(lessThanOrEqualTo: control.leadingAnchor, constant: -18),
-            control.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -22),
+            labels.trailingAnchor.constraint(lessThanOrEqualTo: control.leadingAnchor, constant: -16),
+            control.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -18),
             control.centerYAnchor.constraint(equalTo: row.centerYAnchor),
             control.widthAnchor.constraint(equalToConstant: controlWidth),
-            control.heightAnchor.constraint(equalToConstant: 30),
+            control.heightAnchor.constraint(equalToConstant: 28),
         ])
         return row
     }
