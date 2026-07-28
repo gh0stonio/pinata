@@ -21,6 +21,8 @@ final class WorkspaceViewController: NSViewController {
     }
 
     private static let sidebarDefaultsKey = "pinata.sidebar.presentation.v1"
+    private static let leftPanelWidthDefaultsKey = "pinata.panel.left.width.v1"
+    private static let rightPanelWidthDefaultsKey = "pinata.panel.right.width.v1"
     private static let revealDelay: TimeInterval = 0.15
     private static let dismissDelay: TimeInterval = 0.30
 
@@ -76,6 +78,19 @@ final class WorkspaceViewController: NSViewController {
         activeTerminalTabID = initialTabID
         let stored = UserDefaults.standard.string(forKey: Self.sidebarDefaultsKey)
         sidebarPresentation = stored == SidebarPresentation.hidden.rawValue ? .hidden : .docked
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: Self.leftPanelWidthDefaultsKey) != nil {
+            leftPanelWidth = min(
+                max(CGFloat(defaults.double(forKey: Self.leftPanelWidthDefaultsKey)), AppTheme.leftPanelRange.lowerBound),
+                AppTheme.leftPanelRange.upperBound
+            )
+        }
+        if defaults.object(forKey: Self.rightPanelWidthDefaultsKey) != nil {
+            rightPanelWidth = min(
+                max(CGFloat(defaults.double(forKey: Self.rightPanelWidthDefaultsKey)), AppTheme.rightPanelRange.lowerBound),
+                AppTheme.rightPanelRange.upperBound
+            )
+        }
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -763,6 +778,7 @@ final class WorkspaceViewController: NSViewController {
             maximum
         )
         leftWidthConstraint.constant = leftPanelWidth
+        UserDefaults.standard.set(Double(leftPanelWidth), forKey: Self.leftPanelWidthDefaultsKey)
         view.layoutSubtreeIfNeeded()
         updateInspectorPresentation(force: true)
     }
@@ -778,6 +794,7 @@ final class WorkspaceViewController: NSViewController {
             maximum
         )
         rightWidthConstraint.constant = rightPanelWidth
+        UserDefaults.standard.set(Double(rightPanelWidth), forKey: Self.rightPanelWidthDefaultsKey)
         workspaceCard.layoutSubtreeIfNeeded()
         updateInspectorPresentation(force: true)
     }
