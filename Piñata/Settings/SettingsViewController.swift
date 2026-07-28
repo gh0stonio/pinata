@@ -125,16 +125,16 @@ final class SettingsViewController: NSViewController {
 
             backButton.leadingAnchor.constraint(equalTo: rail.leadingAnchor, constant: 20),
             backButton.trailingAnchor.constraint(equalTo: rail.trailingAnchor, constant: -20),
-            backButton.topAnchor.constraint(equalTo: rail.topAnchor, constant: 62),
+            backButton.topAnchor.constraint(equalTo: rail.topAnchor, constant: 40),
             backButton.heightAnchor.constraint(equalToConstant: 28),
 
             personalLabel.leadingAnchor.constraint(equalTo: backButton.leadingAnchor),
-            personalLabel.topAnchor.constraint(equalTo: backButton.bottomAnchor, constant: 32),
+            personalLabel.topAnchor.constraint(equalTo: backButton.bottomAnchor, constant: 20),
 
             appearanceRow.leadingAnchor.constraint(equalTo: rail.leadingAnchor, constant: 12),
             appearanceRow.trailingAnchor.constraint(equalTo: rail.trailingAnchor, constant: -12),
-            appearanceRow.topAnchor.constraint(equalTo: personalLabel.bottomAnchor, constant: 10),
-            appearanceRow.heightAnchor.constraint(equalToConstant: 35),
+            appearanceRow.topAnchor.constraint(equalTo: personalLabel.bottomAnchor, constant: 8),
+            appearanceRow.heightAnchor.constraint(equalToConstant: 32),
         ])
     }
 
@@ -367,9 +367,9 @@ private final class SettingsNavigationRow: NSView {
     }
 
     func applyTheme() {
-        layer?.backgroundColor = AppTheme.surface.cgColor
-        icon.contentTintColor = AppTheme.secondaryText
-        label.textColor = AppTheme.primaryText
+        layer?.backgroundColor = AppTheme.panelAccentBackground.cgColor
+        icon.contentTintColor = AppTheme.panelAccentIcon
+        label.textColor = AppTheme.panelAccentIcon
         label.font = AppTheme.font(ofSize: AppTheme.typography.settingsHeading, weight: 550)
     }
 }
