@@ -52,7 +52,11 @@ final class PinataApp: NSObject, NSApplicationDelegate {
         let workspaceViewController = WorkspaceViewController(runtime: runtime)
         window.contentViewController = workspaceViewController
         self.workspaceViewController = workspaceViewController
-        window.center()
+        let restoredWindow = window.setFrameUsingName("PiñataMainWindow")
+        window.setFrameAutosaveName("PiñataMainWindow")
+        if !restoredWindow {
+            window.center()
+        }
         window.makeKeyAndOrderFront(nil)
         self.window = window
 
