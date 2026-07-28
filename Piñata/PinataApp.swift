@@ -38,7 +38,7 @@ final class PinataApp: NSObject, NSApplicationDelegate {
         ghosttyRuntime = runtime
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 960, height: 640),
+            contentRect: NSRect(x: 0, y: 0, width: AppTheme.minimumWindowWidth, height: 640),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -48,11 +48,15 @@ final class PinataApp: NSObject, NSApplicationDelegate {
         window.titlebarAppearsTransparent = true
         window.titlebarSeparatorStyle = .none
         window.backgroundColor = AppTheme.background
-        window.minSize = NSSize(width: 900, height: 600)
+        window.minSize = NSSize(width: AppTheme.minimumWindowWidth, height: 600)
         let workspaceViewController = WorkspaceViewController(runtime: runtime)
         window.contentViewController = workspaceViewController
         self.workspaceViewController = workspaceViewController
-        window.center()
+        let restoredWindow = window.setFrameUsingName("PiñataMainWindow")
+        window.setFrameAutosaveName("PiñataMainWindow")
+        if !restoredWindow {
+            window.center()
+        }
         window.makeKeyAndOrderFront(nil)
         self.window = window
 

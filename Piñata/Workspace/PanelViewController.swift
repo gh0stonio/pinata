@@ -13,6 +13,7 @@ final class PanelViewController: NSViewController {
     private let role: Role
     private weak var trackingRoot: PanelTrackingView?
     private weak var leftHeader: LeftSidebarHeaderView?
+    private weak var brandView: SidebarBrandView?
     private weak var sectionHeader: SidebarSectionHeaderView?
     private weak var rightHeader: RightPanelHeaderView?
     private weak var messageLabel: NSTextField?
@@ -60,6 +61,7 @@ final class PanelViewController: NSViewController {
     func applyTheme() {
         view.layer?.backgroundColor = AppTheme.chromeBackground.cgColor
         leftHeader?.applyTheme()
+        brandView?.applyTheme()
         sectionHeader?.applyTheme()
         rightHeader?.applyTheme()
         messageLabel?.font = AppTheme.font(ofSize: AppTheme.typography.body)
@@ -68,17 +70,21 @@ final class PanelViewController: NSViewController {
 
     private func installLeftPanel() {
         let topHeader = LeftSidebarHeaderView()
+        let brand = SidebarBrandView()
         let sectionHeader = SidebarSectionHeaderView(title: "TASKS")
         let messageLabel = makeMessageLabel("No tasks yet.")
         topHeader.onToggle = { [weak self] in self?.onTogglePanel?() }
 
         topHeader.translatesAutoresizingMaskIntoConstraints = false
+        brand.translatesAutoresizingMaskIntoConstraints = false
         sectionHeader.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(topHeader)
+        view.addSubview(brand)
         view.addSubview(sectionHeader)
         view.addSubview(messageLabel)
 
         leftHeader = topHeader
+        brandView = brand
         self.sectionHeader = sectionHeader
         self.messageLabel = messageLabel
 
@@ -88,9 +94,13 @@ final class PanelViewController: NSViewController {
             topHeader.topAnchor.constraint(equalTo: view.topAnchor),
             topHeader.heightAnchor.constraint(equalToConstant: AppTheme.workspaceHeaderHeight),
 
+            brand.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 14),
+            brand.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -14),
+            brand.topAnchor.constraint(equalTo: topHeader.bottomAnchor, constant: 14),
+
             sectionHeader.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             sectionHeader.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            sectionHeader.topAnchor.constraint(equalTo: topHeader.bottomAnchor),
+            sectionHeader.topAnchor.constraint(equalTo: brand.bottomAnchor, constant: 16),
             sectionHeader.heightAnchor.constraint(equalToConstant: AppTheme.paneHeaderHeight),
 
             messageLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 14),
@@ -212,6 +222,52 @@ private final class LeftSidebarHeaderView: NSView {
 
     @objc private func togglePanel() {
         onToggle?()
+    }
+}
+
+@MainActor
+private final class SidebarBrandView: NSView {
+    private let logo = NSImageView()
+    private let nameLabel = NSTextField(labelWithString: "Piñata")
+
+    override var mouseDownCanMoveWindow: Bool { true }
+
+    init() {
+        super.init(frame: .zero)
+
+        logo.image = NSImage(named: "BrandLogo")
+        logo.imageScaling = .scaleProportionallyUpOrDown
+        logo.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(logo)
+        addSubview(nameLabel)
+
+        NSLayoutConstraint.activate([
+            logo.leadingAnchor.constraint(equalTo: leadingAnchor),
+            logo.topAnchor.constraint(equalTo: topAnchor),
+            logo.bottomAnchor.constraint(equalTo: bottomAnchor),
+            logo.widthAnchor.constraint(equalToConstant: 34),
+            logo.heightAnchor.constraint(equalToConstant: 34),
+
+            nameLabel.leadingAnchor.constraint(equalTo: logo.trailingAnchor, constant: 10),
+            nameLabel.trailingAnchor.constraint(equalTo: trailingAnchor),
+            nameLabel.centerYAnchor.constraint(equalTo: logo.centerYAnchor),
+        ])
+
+        setAccessibilityElement(true)
+        setAccessibilityRole(.staticText)
+        setAccessibilityLabel("Piñata")
+        applyTheme()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is unavailable")
+    }
+
+    func applyTheme() {
+        nameLabel.font = AppTheme.font(ofSize: AppTheme.typography.title, weight: 700)
+        nameLabel.textColor = AppTheme.primaryText.withAlphaComponent(0.86)
     }
 }
 

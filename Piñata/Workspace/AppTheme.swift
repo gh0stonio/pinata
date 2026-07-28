@@ -2,6 +2,7 @@ import AppKit
 import CoreText
 
 struct AppTypography {
+    let title: CGFloat
     let body: CGFloat
     let label: CGFloat
     let settingsDisplay: CGFloat
@@ -25,6 +26,7 @@ enum AppTheme {
     static let terminalVerticalInset: CGFloat = 2
     static let workspaceCornerRadius: CGFloat = 10
     static let minimumCenterWidth: CGFloat = 480
+    static let minimumWindowWidth: CGFloat = 1_020
     static let edgeRevealWidth: CGFloat = 6
 
     static private(set) var background = color(0x282C34)
@@ -33,7 +35,6 @@ enum AppTheme {
     static private(set) var controlBackground = color(0x34393B)
     static private(set) var controlSelection = color(0x272C2E)
     static private(set) var border = color(0x353A3C)
-    static private(set) var subtleBorder = color(0x2A2F31)
     static private(set) var primaryText = color(0xFFFFFF)
     static private(set) var secondaryText = color(0xB6BDC0)
     static private(set) var tertiaryText = color(0xA6AEB2)
@@ -66,7 +67,6 @@ enum AppTheme {
         controlBackground = color(palette.controlBackground)
         controlSelection = color(palette.controlSelection)
         border = color(palette.border)
-        subtleBorder = color(palette.subtleBorder)
         primaryText = color(palette.primaryText)
         secondaryText = color(palette.secondaryText)
         tertiaryText = color(palette.tertiaryText)
@@ -112,6 +112,7 @@ enum AppTheme {
         switch size {
         case .small:
             AppTypography(
+                title: 16.5,
                 body: 12,
                 label: 10.5,
                 settingsDisplay: 23,
@@ -121,6 +122,7 @@ enum AppTheme {
             )
         case .regular:
             AppTypography(
+                title: 17.5,
                 body: 13,
                 label: 11,
                 settingsDisplay: 24,
@@ -130,6 +132,7 @@ enum AppTheme {
             )
         case .large:
             AppTypography(
+                title: 18.5,
                 body: 14,
                 label: 12,
                 settingsDisplay: 25,

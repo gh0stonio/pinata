@@ -21,6 +21,8 @@ final class WorkspaceViewController: NSViewController {
     }
 
     private static let sidebarDefaultsKey = "pinata.sidebar.presentation.v1"
+    private static let leftPanelWidthDefaultsKey = "pinata.panel.left.width.v1"
+    private static let rightPanelWidthDefaultsKey = "pinata.panel.right.width.v1"
     private static let revealDelay: TimeInterval = 0.15
     private static let dismissDelay: TimeInterval = 0.30
 
@@ -38,6 +40,7 @@ final class WorkspaceViewController: NSViewController {
     private var activeTerminalTabID: UUID?
     private var nextTerminalTabNumber = 2
     private var settingsController: SettingsViewController?
+    private var activeFullScreenController: NSViewController?
 
     private var leftWidthConstraint: NSLayoutConstraint!
     private var rightWidthConstraint: NSLayoutConstraint!
@@ -76,6 +79,19 @@ final class WorkspaceViewController: NSViewController {
         activeTerminalTabID = initialTabID
         let stored = UserDefaults.standard.string(forKey: Self.sidebarDefaultsKey)
         sidebarPresentation = stored == SidebarPresentation.hidden.rawValue ? .hidden : .docked
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: Self.leftPanelWidthDefaultsKey) != nil {
+            leftPanelWidth = min(
+                max(CGFloat(defaults.double(forKey: Self.leftPanelWidthDefaultsKey)), AppTheme.leftPanelRange.lowerBound),
+                AppTheme.leftPanelRange.upperBound
+            )
+        }
+        if defaults.object(forKey: Self.rightPanelWidthDefaultsKey) != nil {
+            rightPanelWidth = min(
+                max(CGFloat(defaults.double(forKey: Self.rightPanelWidthDefaultsKey)), AppTheme.rightPanelRange.lowerBound),
+                AppTheme.rightPanelRange.upperBound
+            )
+        }
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -189,6 +205,8 @@ final class WorkspaceViewController: NSViewController {
             controller.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
         settingsController = controller
+        activeFullScreenController = controller
+        applySidebarPresentation()
     }
 
     func applyTheme() {
@@ -479,8 +497,8 @@ final class WorkspaceViewController: NSViewController {
         leftPanel.layer?.cornerCurve = .continuous
         leftPanel.layer?.masksToBounds = sidebarPresentation == .transient
 
-        leftResizeHandle.setEnabled(docked)
-        edgeRevealZone.setEnabled(sidebarPresentation == .hidden)
+        leftResizeHandle.setEnabled(docked && activeFullScreenController == nil)
+        edgeRevealZone.setEnabled(sidebarPresentation == .hidden && activeFullScreenController == nil)
         leftPanelController.setToggleActive(docked)
         leftPanelController.setFullScreen(fullScreen)
         updateTrafficLights()
@@ -504,7 +522,7 @@ final class WorkspaceViewController: NSViewController {
         let rightPanel = rightPanelController.view
         let open = next != .closed
         rightPanel.isHidden = !open
-        rightResizeHandle.setEnabled(open)
+        rightResizeHandle.setEnabled(open && activeFullScreenController == nil)
         mainTrailingToInspector.isActive = next == .column
         mainTrailingToCard.isActive = next != .column
         workspaceHeader.setInspectorOpen(open)
@@ -744,6 +762,8 @@ final class WorkspaceViewController: NSViewController {
         settingsController?.view.removeFromSuperview()
         settingsController?.removeFromParent()
         settingsController = nil
+        activeFullScreenController = nil
+        applySidebarPresentation()
         activeTerminalController?.focusActiveTerminal()
     }
 
@@ -763,6 +783,7 @@ final class WorkspaceViewController: NSViewController {
             maximum
         )
         leftWidthConstraint.constant = leftPanelWidth
+        UserDefaults.standard.set(Double(leftPanelWidth), forKey: Self.leftPanelWidthDefaultsKey)
         view.layoutSubtreeIfNeeded()
         updateInspectorPresentation(force: true)
     }
@@ -778,6 +799,7 @@ final class WorkspaceViewController: NSViewController {
             maximum
         )
         rightWidthConstraint.constant = rightPanelWidth
+        UserDefaults.standard.set(Double(rightPanelWidth), forKey: Self.rightPanelWidthDefaultsKey)
         workspaceCard.layoutSubtreeIfNeeded()
         updateInspectorPresentation(force: true)
     }
