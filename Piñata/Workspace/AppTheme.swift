@@ -2,6 +2,7 @@ import AppKit
 import CoreText
 
 struct AppTypography {
+    let title: CGFloat
     let body: CGFloat
     let label: CGFloat
     let settingsDisplay: CGFloat
@@ -112,6 +113,7 @@ enum AppTheme {
         switch size {
         case .small:
             AppTypography(
+                title: 16.5,
                 body: 12,
                 label: 10.5,
                 settingsDisplay: 23,
@@ -121,6 +123,7 @@ enum AppTheme {
             )
         case .regular:
             AppTypography(
+                title: 17.5,
                 body: 13,
                 label: 11,
                 settingsDisplay: 24,
@@ -130,6 +133,7 @@ enum AppTheme {
             )
         case .large:
             AppTypography(
+                title: 18.5,
                 body: 14,
                 label: 12,
                 settingsDisplay: 25,
