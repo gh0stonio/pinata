@@ -14,6 +14,8 @@ struct AppTypography {
 @MainActor
 enum AppTheme {
     static let leftPanelWidth: CGFloat = 264
+    static let settingsRailWidth: CGFloat = 300
+    static let panelContentInset: CGFloat = 14
     static let fullScreenSidebarWidth: CGFloat = 320
     static let rightPanelWidth: CGFloat = 300
     static let leftPanelRange: ClosedRange<CGFloat> = 200...440
@@ -38,6 +40,7 @@ enum AppTheme {
     static private(set) var primaryText = color(0xFFFFFF)
     static private(set) var secondaryText = color(0xB6BDC0)
     static private(set) var tertiaryText = color(0xA6AEB2)
+    static private(set) var accent = color(0xFF746B)
     static private(set) var panelAccentIcon = color(0xFF746B)
     static private(set) var panelAccentBackground = color(0xFF746B).withAlphaComponent(0.14)
     static private(set) var panelToggleHoverText = color(0xB6BDC0)
@@ -71,6 +74,7 @@ enum AppTheme {
         secondaryText = color(palette.secondaryText)
         tertiaryText = color(palette.tertiaryText)
 
+        accent = accentColor(for: settings.accent)
         let panelAccent = panelAccentColors(
             theme: settings.theme,
             accent: settings.accent,
