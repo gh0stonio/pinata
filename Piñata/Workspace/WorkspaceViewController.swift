@@ -840,6 +840,7 @@ private final class EdgeRevealView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         translatesAutoresizingMaskIntoConstraints = false
+        isHidden = true
         setAccessibilityElement(false)
     }
 
@@ -866,10 +867,6 @@ private final class EdgeRevealView: NSView {
         self.trackingArea = trackingArea
     }
 
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        enabled ? self : nil
-    }
-
     override func mouseEntered(with event: NSEvent) {
         guard enabled else { return }
         onHoverChanged?(true)
@@ -883,6 +880,7 @@ private final class EdgeRevealView: NSView {
     func setEnabled(_ enabled: Bool) {
         guard enabled != self.enabled else { return }
         self.enabled = enabled
+        isHidden = !enabled
         updateTrackingAreas()
     }
 }
@@ -958,10 +956,6 @@ private final class PanelResizeHandle: NSView {
         updateLineVisibility()
     }
 
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        enabled ? super.hitTest(point) : nil
-    }
-
     override func resetCursorRects() {
         super.resetCursorRects()
         guard enabled else { return }
@@ -990,7 +984,7 @@ private final class PanelResizeHandle: NSView {
 
     func setEnabled(_ enabled: Bool) {
         self.enabled = enabled
-        alphaValue = enabled ? 1 : 0
+        isHidden = !enabled
         updateTrackingAreas()
         updateLineVisibility()
         window?.invalidateCursorRects(for: self)
