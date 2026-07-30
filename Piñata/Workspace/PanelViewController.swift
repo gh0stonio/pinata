@@ -94,8 +94,8 @@ final class PanelViewController: NSViewController {
             topHeader.topAnchor.constraint(equalTo: view.topAnchor),
             topHeader.heightAnchor.constraint(equalToConstant: AppTheme.workspaceHeaderHeight),
 
-            brand.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 14),
-            brand.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -14),
+            brand.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: AppTheme.panelContentInset),
+            brand.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -AppTheme.panelContentInset),
             brand.topAnchor.constraint(equalTo: topHeader.bottomAnchor, constant: 14),
 
             sectionHeader.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -103,9 +103,9 @@ final class PanelViewController: NSViewController {
             sectionHeader.topAnchor.constraint(equalTo: brand.bottomAnchor, constant: 16),
             sectionHeader.heightAnchor.constraint(equalToConstant: AppTheme.paneHeaderHeight),
 
-            messageLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 14),
+            messageLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: AppTheme.panelContentInset),
             messageLabel.topAnchor.constraint(equalTo: sectionHeader.bottomAnchor, constant: 16),
-            messageLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -14),
+            messageLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -AppTheme.panelContentInset),
         ])
     }
 
@@ -283,7 +283,7 @@ private final class SidebarSectionHeaderView: NSView {
         titleLabel.usesSingleLineMode = true
         addSubview(titleLabel)
         NSLayoutConstraint.activate([
-            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: AppTheme.panelContentInset),
             titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
         applyTheme()
