@@ -27,7 +27,18 @@
 		000000000000000000000052 /* RepositorySettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000054 /* RepositorySettingsView.swift */; };
 		000000000000000000000055 /* git-pull-request.png in Resources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000056 /* git-pull-request.png */; };
 		000000000000000000000057 /* SettingsComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000058 /* SettingsComponents.swift */; };
+		000000000000000000000059 /* CoreLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000060 /* CoreLogicTests.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		000000000000000000000067 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 000000000000000000000013 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 000000000000000000000012;
+			remoteInfo = "Piñata";
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		000000000000000000000003 /* PinataApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinataApp.swift; sourceTree = "<group>"; };
@@ -51,6 +62,8 @@
 		000000000000000000000054 /* RepositorySettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositorySettingsView.swift; sourceTree = "<group>"; };
 		000000000000000000000056 /* git-pull-request.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "Resources/git-pull-request.png"; sourceTree = "<group>"; };
 		000000000000000000000058 /* SettingsComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsComponents.swift; sourceTree = "<group>"; };
+		000000000000000000000060 /* CoreLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreLogicTests.swift; sourceTree = "<group>"; };
+		000000000000000000000061 /* PiñataTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "PiñataTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -62,6 +75,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		000000000000000000000064 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -69,6 +89,7 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000007 /* Piñata */,
+				000000000000000000000062 /* PiñataTests */,
 				000000000000000000000033 /* GhosttyKit.xcframework */,
 				000000000000000000000008 /* Products */,
 			);
@@ -95,6 +116,7 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000005 /* Piñata.app */,
+				000000000000000000000061 /* PiñataTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -132,6 +154,14 @@
 			path = Settings;
 			sourceTree = "<group>";
 		};
+		000000000000000000000062 /* PiñataTests */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000060 /* CoreLogicTests.swift */,
+			);
+			path = "PiñataTests";
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -152,6 +182,24 @@
 			productReference = 000000000000000000000005 /* Piñata.app */;
 			productType = "com.apple.product-type.application";
 		};
+		000000000000000000000066 /* PiñataTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 000000000000000000000071 /* Build configuration list for PBXNativeTarget "PiñataTests" */;
+			buildPhases = (
+				000000000000000000000063 /* Sources */,
+				000000000000000000000064 /* Frameworks */,
+				000000000000000000000065 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				000000000000000000000068 /* PBXTargetDependency */,
+			);
+			name = "PiñataTests";
+			productName = "PiñataTests";
+			productReference = 000000000000000000000061 /* PiñataTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -164,6 +212,10 @@
 				TargetAttributes = {
 					000000000000000000000012 = {
 						CreatedOnToolsVersion = 16.0;
+					};
+					000000000000000000000066 = {
+						CreatedOnToolsVersion = 16.0;
+						TestTargetID = 000000000000000000000012;
 					};
 				};
 			};
@@ -181,6 +233,7 @@
 			projectRoot = "";
 			targets = (
 				000000000000000000000012 /* Piñata */,
+				000000000000000000000066 /* PiñataTests */,
 			);
 		};
 /* End PBXProject section */
@@ -196,6 +249,13 @@
 				000000000000000000000047 /* SpaceGrotesk-VariableFont_wght.ttf in Resources */,
 				000000000000000000000048 /* SpaceGrotesk-OFL.txt in Resources */,
 				000000000000000000000055 /* git-pull-request.png in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		000000000000000000000065 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -222,7 +282,23 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		000000000000000000000063 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				000000000000000000000059 /* CoreLogicTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		000000000000000000000068 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 000000000000000000000012 /* Piñata */;
+			targetProxy = 000000000000000000000067 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		000000000000000000000014 /* Debug */ = {
@@ -434,6 +510,36 @@
 			};
 			name = Release;
 		};
+		000000000000000000000069 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.pinata.app.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Piñata.app/Contents/MacOS/Piñata";
+			};
+			name = Debug;
+		};
+		000000000000000000000070 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.pinata.app.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Piñata.app/Contents/MacOS/Piñata";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -451,6 +557,15 @@
 			buildConfigurations = (
 				000000000000000000000016 /* Debug */,
 				000000000000000000000017 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		000000000000000000000071 /* Build configuration list for PBXNativeTarget "PiñataTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				000000000000000000000069 /* Debug */,
+				000000000000000000000070 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
