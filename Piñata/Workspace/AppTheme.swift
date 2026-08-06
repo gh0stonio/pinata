@@ -5,31 +5,65 @@ struct AppTypography {
     let title: CGFloat
     let body: CGFloat
     let label: CGFloat
-    let settingsDisplay: CGFloat
     let settingsHeading: CGFloat
     let settingsBody: CGFloat
+    let settingsValue: CGFloat
     let settingsLabel: CGFloat
 }
 
 @MainActor
 enum AppTheme {
     static let leftPanelWidth: CGFloat = 264
-    static let settingsRailWidth: CGFloat = 300
+    static let settingsRailWidth: CGFloat = 210
     static let panelContentInset: CGFloat = 14
     static let fullScreenSidebarWidth: CGFloat = 320
-    static let rightPanelWidth: CGFloat = 300
     static let leftPanelRange: ClosedRange<CGFloat> = 200...440
-    static let rightPanelRange: ClosedRange<CGFloat> = 260...520
     static let workspaceHeaderHeight: CGFloat = 36
     static let mainHeaderHeight: CGFloat = 44
+    static let workspaceContentInset: CGFloat = 10
     static let paneHeaderHeight: CGFloat = 34
     static let workspaceInset: CGFloat = 8
     static let terminalContentInset: CGFloat = 10
     static let terminalVerticalInset: CGFloat = 2
     static let workspaceCornerRadius: CGFloat = 10
     static let minimumCenterWidth: CGFloat = 480
-    static let minimumWindowWidth: CGFloat = 1_020
+    static let minimumWindowWidth: CGFloat = 1_250
     static let edgeRevealWidth: CGFloat = 6
+    static let resizeHandleWidth: CGFloat = 10
+    static let keyboardResizeStep: CGFloat = 12
+    static let panelSectionSpacing: CGFloat = 16
+    static let sidebarBrandSize: CGFloat = 34
+    static let sidebarToggleLeading: CGFloat = 82
+    static let fullScreenSidebarToggleLeading: CGFloat = 12
+    static let workspaceTabHeight: CGFloat = 26
+    static let workspaceTabSpacing: CGFloat = 4
+    static let workspaceControlGap: CGFloat = 2
+    static let workspaceControlCornerRadius: CGFloat = 6
+    static let workspaceDividerThickness: CGFloat = 1
+    static let workspaceTabCloseInset: CGFloat = 3
+    static let workspaceTabMinimumWidth: CGFloat = 82
+    static let workspaceTabMaximumWidth: CGFloat = 180
+    static let workspaceNewTabSymbolSize: CGFloat = 12
+    static let workspaceTabCloseControlSize: CGFloat = 20
+    static let workspaceTabCloseSymbolSize: CGFloat = 8
+    static let panelToggleControlSize: CGFloat = 28
+    static let symbolVerticalAdjustment: CGFloat = 2
+    static let paneMinimumSize: CGFloat = 80
+    static let paneHeaderIconWidth: CGFloat = 18
+    static let paneHeaderIconHeight: CGFloat = 14
+    static let paneHeaderIconPointSize: CGFloat = 14
+    static let paneHeaderContentGap: CGFloat = 6
+    static let paneHeaderTrailingInset: CGFloat = 4
+    static let paneHeaderActionGap: CGFloat = 2
+    static let paneHeaderActionSize: CGFloat = 22
+    static let splitHitSlop: CGFloat = 4
+    static let inactivePaneAlpha: CGFloat = 0.82
+    static let inactivePaneHeaderAlpha: CGFloat = 0.7
+    static let sidebarToggleVerticalOffset: CGFloat = 1
+    static let resizeIndicatorWidth: CGFloat = 2
+    static let resizeIndicatorHeightRatio: CGFloat = 0.15
+    static let resizeIndicatorCornerRadius: CGFloat = 1
+    static let trafficLightVerticalOffset: CGFloat = 3
 
     static private(set) var background = color(0x282C34)
     static private(set) var chromeBackground = color(0x21252B)
@@ -119,9 +153,9 @@ enum AppTheme {
                 title: 16.5,
                 body: 12,
                 label: 10.5,
-                settingsDisplay: 23,
                 settingsHeading: 12,
                 settingsBody: 11.5,
+                settingsValue: 10.5,
                 settingsLabel: 9.5
             )
         case .regular:
@@ -129,9 +163,9 @@ enum AppTheme {
                 title: 17.5,
                 body: 13,
                 label: 11,
-                settingsDisplay: 24,
                 settingsHeading: 13,
                 settingsBody: 12,
+                settingsValue: 11,
                 settingsLabel: 10
             )
         case .large:
@@ -139,9 +173,9 @@ enum AppTheme {
                 title: 18.5,
                 body: 14,
                 label: 12,
-                settingsDisplay: 25,
                 settingsHeading: 14,
                 settingsBody: 13,
+                settingsValue: 12,
                 settingsLabel: 10.5
             )
         }
@@ -227,7 +261,6 @@ enum AppTheme {
         let white = color(0xFFFFFF)
         return contrastRatio(black, background) >= contrastRatio(white, background) ? black : white
     }
-
 
     private static func composited(_ foreground: NSColor, over background: NSColor) -> NSColor {
         let foreground = srgbComponents(foreground)

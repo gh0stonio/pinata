@@ -8,12 +8,6 @@ final class WorkspaceViewController: NSViewController {
         case docked
     }
 
-    private enum InspectorPresentation {
-        case closed
-        case column
-        case overlay
-    }
-
     private struct TerminalTab {
         let id: UUID
         let title: String
@@ -22,28 +16,26 @@ final class WorkspaceViewController: NSViewController {
 
     private static let sidebarDefaultsKey = "pinata.sidebar.presentation.v1"
     private static let leftPanelWidthDefaultsKey = "pinata.panel.left.width.v1"
-    private static let rightPanelWidthDefaultsKey = "pinata.panel.right.width.v1"
     private static let revealDelay: TimeInterval = 0.15
     private static let dismissDelay: TimeInterval = 0.30
+    private static let revealAnimationDuration: TimeInterval = 0.12
+    private static let dismissAnimationDuration: TimeInterval = 0.10
 
     private let runtime: GhosttyRuntime
     private let workspaceCard = NSView()
     private let mainColumn = NSView()
     private let terminalHost = NSView()
     private let workspaceHeader = WorkspaceHeaderView()
-    private let leftPanelController = PanelViewController(role: .left)
-    private let rightPanelController = PanelViewController(role: .right)
+    private let leftPanelController = PanelViewController()
     private let leftResizeHandle = PanelResizeHandle()
-    private let rightResizeHandle = PanelResizeHandle()
     private let edgeRevealZone = EdgeRevealView()
     private var terminalTabs: [TerminalTab]
     private var activeTerminalTabID: UUID?
     private var nextTerminalTabNumber = 2
     private var settingsController: SettingsViewController?
-    private var activeFullScreenController: NSViewController?
+    private var leftResizeWindowWidth: CGFloat?
 
     private var leftWidthConstraint: NSLayoutConstraint!
-    private var rightWidthConstraint: NSLayoutConstraint!
     private var leftPanelLeadingConstraint: NSLayoutConstraint!
     private var leftPanelTopConstraint: NSLayoutConstraint!
     private var leftPanelBottomConstraint: NSLayoutConstraint!
@@ -52,14 +44,9 @@ final class WorkspaceViewController: NSViewController {
     private var workspaceTopConstraint: NSLayoutConstraint!
     private var workspaceBottomConstraint: NSLayoutConstraint!
     private var workspaceTrailingConstraint: NSLayoutConstraint!
-    private var mainTrailingToCard: NSLayoutConstraint!
-    private var mainTrailingToInspector: NSLayoutConstraint!
 
     private var sidebarPresentation: SidebarPresentation
-    private var inspectorPresentation: InspectorPresentation = .closed
-    private var rightPanelOpen = false
     private var leftPanelWidth = AppTheme.leftPanelWidth
-    private var rightPanelWidth = AppTheme.rightPanelWidth
     private var fullScreen = false
     private var menuTracking = false
     private var keyEventMonitor: Any?
@@ -86,12 +73,6 @@ final class WorkspaceViewController: NSViewController {
                 AppTheme.leftPanelRange.upperBound
             )
         }
-        if defaults.object(forKey: Self.rightPanelWidthDefaultsKey) != nil {
-            rightPanelWidth = min(
-                max(CGFloat(defaults.double(forKey: Self.rightPanelWidthDefaultsKey)), AppTheme.rightPanelRange.lowerBound),
-                AppTheme.rightPanelRange.upperBound
-            )
-        }
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -99,7 +80,6 @@ final class WorkspaceViewController: NSViewController {
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is unavailable")
     }
-
 
     override func loadView() {
         let rootView = NSView()
@@ -112,7 +92,6 @@ final class WorkspaceViewController: NSViewController {
         configureConstraints(in: rootView)
         configureInteractions()
         applySidebarPresentation()
-        updateInspectorPresentation(force: true)
     }
 
     override func viewDidAppear() {
@@ -137,7 +116,6 @@ final class WorkspaceViewController: NSViewController {
 
     override func viewDidLayout() {
         super.viewDidLayout()
-        updateInspectorPresentation()
         updateTrafficLights()
     }
 
@@ -148,24 +126,23 @@ final class WorkspaceViewController: NSViewController {
         applySidebarPresentation()
     }
 
-    @objc func toggleRightPanel(_ sender: Any?) {
-        rightPanelOpen.toggle()
-        updateInspectorPresentation(force: true)
-    }
-
     @objc func splitTerminalVertically(_ sender: Any?) {
+        guard settingsController == nil else { return }
         activeTerminalController?.splitActiveVertically()
     }
 
     @objc func splitTerminalHorizontally(_ sender: Any?) {
+        guard settingsController == nil else { return }
         activeTerminalController?.splitActiveHorizontally()
     }
 
     @objc func closeTerminalPane(_ sender: Any?) {
+        guard settingsController == nil else { return }
         activeTerminalController?.closeActivePane()
     }
 
     @objc func createTerminalTab(_ sender: Any?) {
+        guard settingsController == nil else { return }
         let id = UUID()
         let tab = TerminalTab(
             id: id,
@@ -189,24 +166,26 @@ final class WorkspaceViewController: NSViewController {
             return
         }
 
-        dismissTransientSidebar(animated: false)
         let controller = SettingsViewController(settings: settings)
         controller.onChange = onChange
-        controller.onClose = { [weak self] in
-            self?.dismissSettings()
-        }
         addChild(controller)
         controller.view.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(controller.view)
+        mainColumn.addSubview(controller.view)
         NSLayoutConstraint.activate([
-            controller.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            controller.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            controller.view.topAnchor.constraint(equalTo: view.topAnchor),
-            controller.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            controller.view.leadingAnchor.constraint(equalTo: mainColumn.leadingAnchor),
+            controller.view.trailingAnchor.constraint(equalTo: mainColumn.trailingAnchor),
+            controller.view.topAnchor.constraint(equalTo: mainColumn.topAnchor),
+            controller.view.bottomAnchor.constraint(equalTo: mainColumn.bottomAnchor),
         ])
         settingsController = controller
-        activeFullScreenController = controller
+        workspaceHeader.setTabs(
+            terminalTabs.map { (id: $0.id, title: $0.title) },
+            activeID: nil
+        )
         applySidebarPresentation()
+        DispatchQueue.main.async {
+            controller.focusInitialSection()
+        }
     }
 
     func applyTheme() {
@@ -217,9 +196,7 @@ final class WorkspaceViewController: NSViewController {
         workspaceHeader.applyTheme()
         leftPanelController.applyTheme()
         terminalTabs.forEach { $0.controller.applyTheme() }
-        rightPanelController.applyTheme()
         leftResizeHandle.applyTheme()
-        rightResizeHandle.applyTheme()
         settingsController?.applyTheme()
         applySidebarPresentation()
     }
@@ -239,19 +216,9 @@ final class WorkspaceViewController: NSViewController {
 
     private func configureControllers(in rootView: NSView) {
         addChild(leftPanelController)
-        addChild(rightPanelController)
 
         let leftPanel = leftPanelController.view
-        let rightPanel = rightPanelController.view
         leftPanel.translatesAutoresizingMaskIntoConstraints = false
-        rightPanel.translatesAutoresizingMaskIntoConstraints = false
-        rightPanel.layer?.cornerRadius = AppTheme.workspaceCornerRadius
-        rightPanel.layer?.maskedCorners = [
-            .layerMinXMinYCorner,
-            .layerMinXMaxYCorner,
-        ]
-        rightPanel.layer?.cornerCurve = .continuous
-        rightPanel.layer?.masksToBounds = true
         terminalHost.translatesAutoresizingMaskIntoConstraints = false
         terminalHost.wantsLayer = true
         terminalHost.layer?.backgroundColor = AppTheme.background.cgColor
@@ -260,8 +227,6 @@ final class WorkspaceViewController: NSViewController {
         workspaceCard.addSubview(mainColumn)
         mainColumn.addSubview(workspaceHeader)
         mainColumn.addSubview(terminalHost)
-        workspaceCard.addSubview(rightPanel)
-        workspaceCard.addSubview(rightResizeHandle)
         rootView.addSubview(leftPanel)
         rootView.addSubview(leftResizeHandle)
         rootView.addSubview(edgeRevealZone)
@@ -270,10 +235,8 @@ final class WorkspaceViewController: NSViewController {
 
     private func configureConstraints(in rootView: NSView) {
         let leftPanel = leftPanelController.view
-        let rightPanel = rightPanelController.view
 
         leftWidthConstraint = leftPanel.widthAnchor.constraint(equalToConstant: leftPanelWidth)
-        rightWidthConstraint = rightPanel.widthAnchor.constraint(equalToConstant: rightPanelWidth)
         leftPanelLeadingConstraint = leftPanel.leadingAnchor.constraint(equalTo: rootView.leadingAnchor)
         leftPanelTopConstraint = leftPanel.topAnchor.constraint(equalTo: rootView.topAnchor)
         leftPanelBottomConstraint = leftPanel.bottomAnchor.constraint(equalTo: rootView.bottomAnchor)
@@ -297,9 +260,6 @@ final class WorkspaceViewController: NSViewController {
             equalTo: rootView.trailingAnchor,
             constant: -AppTheme.workspaceInset
         )
-        mainTrailingToCard = mainColumn.trailingAnchor.constraint(equalTo: workspaceCard.trailingAnchor)
-        mainTrailingToInspector = mainColumn.trailingAnchor.constraint(equalTo: rightPanel.leadingAnchor)
-
         NSLayoutConstraint.activate([
             leftPanelLeadingConstraint,
             leftPanelTopConstraint,
@@ -311,9 +271,9 @@ final class WorkspaceViewController: NSViewController {
             workspaceTrailingConstraint,
 
             mainColumn.leadingAnchor.constraint(equalTo: workspaceCard.leadingAnchor),
+            mainColumn.trailingAnchor.constraint(equalTo: workspaceCard.trailingAnchor),
             mainColumn.topAnchor.constraint(equalTo: workspaceCard.topAnchor),
             mainColumn.bottomAnchor.constraint(equalTo: workspaceCard.bottomAnchor),
-            mainColumn.widthAnchor.constraint(greaterThanOrEqualToConstant: 0),
 
             workspaceHeader.leadingAnchor.constraint(equalTo: mainColumn.leadingAnchor),
             workspaceHeader.trailingAnchor.constraint(equalTo: mainColumn.trailingAnchor),
@@ -325,20 +285,10 @@ final class WorkspaceViewController: NSViewController {
             terminalHost.topAnchor.constraint(equalTo: workspaceHeader.bottomAnchor),
             terminalHost.bottomAnchor.constraint(equalTo: mainColumn.bottomAnchor),
 
-            rightPanel.trailingAnchor.constraint(equalTo: workspaceCard.trailingAnchor),
-            rightPanel.topAnchor.constraint(equalTo: workspaceCard.topAnchor),
-            rightPanel.bottomAnchor.constraint(equalTo: workspaceCard.bottomAnchor),
-            rightWidthConstraint,
-
             leftResizeHandle.centerXAnchor.constraint(equalTo: leftPanel.trailingAnchor),
             leftResizeHandle.topAnchor.constraint(equalTo: rootView.topAnchor),
             leftResizeHandle.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
-            leftResizeHandle.widthAnchor.constraint(equalToConstant: 10),
-
-            rightResizeHandle.centerXAnchor.constraint(equalTo: rightPanel.leadingAnchor),
-            rightResizeHandle.topAnchor.constraint(equalTo: workspaceCard.topAnchor),
-            rightResizeHandle.bottomAnchor.constraint(equalTo: workspaceCard.bottomAnchor),
-            rightResizeHandle.widthAnchor.constraint(equalToConstant: 10),
+            leftResizeHandle.widthAnchor.constraint(equalToConstant: AppTheme.resizeHandleWidth),
 
             edgeRevealZone.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
             edgeRevealZone.topAnchor.constraint(equalTo: rootView.topAnchor),
@@ -357,14 +307,8 @@ final class WorkspaceViewController: NSViewController {
         workspaceHeader.onCloseTab = { [weak self] id in
             self?.closeTerminalTab(id)
         }
-        workspaceHeader.onToggleRightPanel = { [weak self] in
-            self?.toggleRightPanel(nil)
-        }
         leftPanelController.onTogglePanel = { [weak self] in
             self?.toggleLeftPanel(nil)
-        }
-        rightPanelController.onTogglePanel = { [weak self] in
-            self?.toggleRightPanel(nil)
         }
         leftPanelController.onHoverChanged = { [weak self] hovering in
             guard let self else { return }
@@ -385,14 +329,14 @@ final class WorkspaceViewController: NSViewController {
         leftResizeHandle.onDrag = { [weak self] delta in
             self?.resizeLeftPanel(by: delta)
         }
-        rightResizeHandle.onDrag = { [weak self] delta in
-            self?.resizeRightPanel(by: delta)
+        leftResizeHandle.onDragBegan = { [weak self] in
+            self?.leftResizeWindowWidth = self?.view.bounds.width
+        }
+        leftResizeHandle.onDragEnded = { [weak self] in
+            self?.leftResizeWindowWidth = nil
         }
         leftResizeHandle.onKeyboardResize = { [weak self] command in
             self?.resizeLeftPanel(with: command)
-        }
-        rightResizeHandle.onKeyboardResize = { [weak self] command in
-            self?.resizeRightPanel(with: command)
         }
     }
 
@@ -497,37 +441,12 @@ final class WorkspaceViewController: NSViewController {
         leftPanel.layer?.cornerCurve = .continuous
         leftPanel.layer?.masksToBounds = sidebarPresentation == .transient
 
-        leftResizeHandle.setEnabled(docked && activeFullScreenController == nil)
-        edgeRevealZone.setEnabled(sidebarPresentation == .hidden && activeFullScreenController == nil)
+        leftResizeHandle.setEnabled(docked)
+        edgeRevealZone.setEnabled(sidebarPresentation == .hidden)
         leftPanelController.setToggleActive(docked)
         leftPanelController.setFullScreen(fullScreen)
         updateTrafficLights()
         view.layoutSubtreeIfNeeded()
-        updateInspectorPresentation(force: true)
-    }
-
-    private func updateInspectorPresentation(force: Bool = false) {
-        guard isViewLoaded else { return }
-        let next: InspectorPresentation
-        if !rightPanelOpen {
-            next = .closed
-        } else if workspaceCard.bounds.width - rightPanelWidth >= AppTheme.minimumCenterWidth {
-            next = .column
-        } else {
-            next = .overlay
-        }
-        guard force || next != inspectorPresentation else { return }
-        inspectorPresentation = next
-
-        let rightPanel = rightPanelController.view
-        let open = next != .closed
-        rightPanel.isHidden = !open
-        rightResizeHandle.setEnabled(open && activeFullScreenController == nil)
-        mainTrailingToInspector.isActive = next == .column
-        mainTrailingToCard.isActive = next != .column
-        workspaceHeader.setInspectorOpen(open)
-        rightPanelController.setToggleActive(open)
-        workspaceCard.layoutSubtreeIfNeeded()
     }
 
     private func scheduleTransientReveal() {
@@ -548,7 +467,7 @@ final class WorkspaceViewController: NSViewController {
         applySidebarPresentation()
         guard !shouldReduceMotion else { return }
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.12
+            context.duration = Self.revealAnimationDuration
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             leftPanelController.view.animator().alphaValue = 1
         }
@@ -585,14 +504,14 @@ final class WorkspaceViewController: NSViewController {
             return
         }
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.10
+            context.duration = Self.dismissAnimationDuration
             context.timingFunction = CAMediaTimingFunction(name: .easeIn)
             leftPanelController.view.animator().alphaValue = 0
         }
         perform(
             #selector(completeTransientDismissal),
             with: nil,
-            afterDelay: 0.10
+            afterDelay: Self.dismissAnimationDuration
         )
     }
 
@@ -701,7 +620,14 @@ final class WorkspaceViewController: NSViewController {
     private func installKeyEventMonitorIfNeeded() {
         guard keyEventMonitor == nil else { return }
         keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, self.sidebarPresentation == .transient, event.keyCode == 53 else {
+            guard let self else { return event }
+            if self.settingsController != nil,
+               event.window === self.view.window,
+               event.keyCode == 53 {
+                self.dismissSettings()
+                return nil
+            }
+            guard self.sidebarPresentation == .transient, event.keyCode == 53 else {
                 return event
             }
             self.dismissTransientSidebar(animated: true)
@@ -726,7 +652,7 @@ final class WorkspaceViewController: NSViewController {
         trafficLightBaselineY = baselineY
         for button in buttons {
             var frame = button.frame
-            frame.origin.y = baselineY - 3
+            frame.origin.y = baselineY - AppTheme.trafficLightVerticalOffset
             button.frame = frame
         }
     }
@@ -762,17 +688,21 @@ final class WorkspaceViewController: NSViewController {
         settingsController?.view.removeFromSuperview()
         settingsController?.removeFromParent()
         settingsController = nil
-        activeFullScreenController = nil
+        workspaceHeader.setTabs(
+            terminalTabs.map { (id: $0.id, title: $0.title) },
+            activeID: activeTerminalTabID
+        )
         applySidebarPresentation()
         activeTerminalController?.focusActiveTerminal()
     }
 
     private func resizeLeftPanel(by delta: CGFloat) {
         guard sidebarPresentation == .docked else { return }
-        let inspectorWidth = inspectorPresentation == .column ? rightPanelWidth : 0
-        let maximumFromWindow = view.bounds.width
-            - inspectorWidth
-            - AppTheme.minimumCenterWidth
+        let minimumCenterWidth = settingsController == nil
+            ? AppTheme.minimumCenterWidth
+            : AppTheme.settingsRailWidth + SettingsLayout.contentMinimumWidth
+        let maximumFromWindow = (leftResizeWindowWidth ?? view.bounds.width)
+            - minimumCenterWidth
             - AppTheme.workspaceInset * 2
         let maximum = max(
             AppTheme.leftPanelRange.lowerBound,
@@ -785,31 +715,14 @@ final class WorkspaceViewController: NSViewController {
         leftWidthConstraint.constant = leftPanelWidth
         UserDefaults.standard.set(Double(leftPanelWidth), forKey: Self.leftPanelWidthDefaultsKey)
         view.layoutSubtreeIfNeeded()
-        updateInspectorPresentation(force: true)
-    }
-
-    private func resizeRightPanel(by delta: CGFloat) {
-        guard rightPanelOpen else { return }
-        let maximum = max(
-            AppTheme.rightPanelRange.lowerBound,
-            min(AppTheme.rightPanelRange.upperBound, workspaceCard.bounds.width - 240)
-        )
-        rightPanelWidth = min(
-            max(rightWidthConstraint.constant - delta, AppTheme.rightPanelRange.lowerBound),
-            maximum
-        )
-        rightWidthConstraint.constant = rightPanelWidth
-        UserDefaults.standard.set(Double(rightPanelWidth), forKey: Self.rightPanelWidthDefaultsKey)
-        workspaceCard.layoutSubtreeIfNeeded()
-        updateInspectorPresentation(force: true)
     }
 
     private func resizeLeftPanel(with command: PanelResizeHandle.KeyboardCommand) {
         switch command {
         case .decrease:
-            resizeLeftPanel(by: -12)
+            resizeLeftPanel(by: -AppTheme.keyboardResizeStep)
         case .increase:
-            resizeLeftPanel(by: 12)
+            resizeLeftPanel(by: AppTheme.keyboardResizeStep)
         case .minimum:
             resizeLeftPanel(by: -AppTheme.leftPanelRange.upperBound)
         case .maximum:
@@ -817,18 +730,6 @@ final class WorkspaceViewController: NSViewController {
         }
     }
 
-    private func resizeRightPanel(with command: PanelResizeHandle.KeyboardCommand) {
-        switch command {
-        case .decrease:
-            resizeRightPanel(by: 12)
-        case .increase:
-            resizeRightPanel(by: -12)
-        case .minimum:
-            resizeRightPanel(by: AppTheme.rightPanelRange.upperBound)
-        case .maximum:
-            resizeRightPanel(by: -AppTheme.rightPanelRange.upperBound)
-        }
-    }
 }
 
 @MainActor
@@ -895,6 +796,8 @@ private final class PanelResizeHandle: NSView {
     }
 
     var onDrag: ((CGFloat) -> Void)?
+    var onDragBegan: (() -> Void)?
+    var onDragEnded: (() -> Void)?
     var onKeyboardResize: ((KeyboardCommand) -> Void)?
 
     private let line = NSView()
@@ -912,13 +815,16 @@ private final class PanelResizeHandle: NSView {
 
         line.translatesAutoresizingMaskIntoConstraints = false
         line.wantsLayer = true
-        line.layer?.cornerRadius = 1
+        line.layer?.cornerRadius = AppTheme.resizeIndicatorCornerRadius
         addSubview(line)
         NSLayoutConstraint.activate([
             line.centerXAnchor.constraint(equalTo: centerXAnchor),
             line.centerYAnchor.constraint(equalTo: centerYAnchor),
-            line.heightAnchor.constraint(equalTo: heightAnchor, multiplier: 0.15),
-            line.widthAnchor.constraint(equalToConstant: 2),
+            line.heightAnchor.constraint(
+                equalTo: heightAnchor,
+                multiplier: AppTheme.resizeIndicatorHeightRatio
+            ),
+            line.widthAnchor.constraint(equalToConstant: AppTheme.resizeIndicatorWidth),
         ])
         updateLineVisibility()
     }
@@ -964,6 +870,16 @@ private final class PanelResizeHandle: NSView {
 
     override func mouseDragged(with event: NSEvent) {
         onDrag?(event.deltaX)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        onDragBegan?()
+        super.mouseDown(with: event)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        super.mouseUp(with: event)
+        onDragEnded?()
     }
 
     override func keyDown(with event: NSEvent) {
