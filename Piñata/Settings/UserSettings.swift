@@ -70,7 +70,6 @@ enum AccentIntensity: String, Codable, CaseIterable {
     case vibrant
 }
 
-
 enum AppFontSize: String, Codable, CaseIterable {
     case small
     case regular
@@ -114,6 +113,29 @@ struct UserSettings: Codable, Equatable {
         appFontSize: .regular,
         terminalFontSize: .regular,
     )
+}
+
+extension UserSettings {
+    private enum CodingKeys: String, CodingKey {
+        case theme
+        case accent
+        case accentIntensity
+        case appFontSize
+        case terminalFontSize
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = Self.defaults
+        theme = (try? values.decode(ThemePreference.self, forKey: .theme)) ?? defaults.theme
+        accent = (try? values.decode(AccentPreference.self, forKey: .accent)) ?? defaults.accent
+        accentIntensity = (try? values.decode(AccentIntensity.self, forKey: .accentIntensity))
+            ?? defaults.accentIntensity
+        appFontSize = (try? values.decode(AppFontSize.self, forKey: .appFontSize))
+            ?? defaults.appFontSize
+        terminalFontSize = (try? values.decode(TerminalFontSize.self, forKey: .terminalFontSize))
+            ?? defaults.terminalFontSize
+    }
 }
 
 struct UserSettingsStore {
