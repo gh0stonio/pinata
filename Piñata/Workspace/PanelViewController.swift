@@ -2,24 +2,16 @@ import AppKit
 
 @MainActor
 final class PanelViewController: NSViewController {
-    enum Role {
-        case left
-        case right
-    }
-
     var onTogglePanel: (() -> Void)?
     var onHoverChanged: ((Bool) -> Void)?
 
-    private let role: Role
     private weak var trackingRoot: PanelTrackingView?
     private weak var leftHeader: LeftSidebarHeaderView?
     private weak var brandView: SidebarBrandView?
     private weak var sectionHeader: SidebarSectionHeaderView?
-    private weak var rightHeader: RightPanelHeaderView?
     private weak var messageLabel: NSTextField?
 
-    init(role: Role) {
-        self.role = role
+    init() {
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -34,24 +26,18 @@ final class PanelViewController: NSViewController {
         rootView.wantsLayer = true
         rootView.layer?.backgroundColor = AppTheme.chromeBackground.cgColor
         rootView.setAccessibilityRole(.group)
-        rootView.setAccessibilityLabel(role == .left ? "Tasks" : "Inspector")
+        rootView.setAccessibilityLabel("Tasks")
         rootView.onHoverChanged = { [weak self] hovering in
             self?.onHoverChanged?(hovering)
         }
         trackingRoot = rootView
         view = rootView
 
-        switch role {
-        case .left:
-            installLeftPanel()
-        case .right:
-            installRightPanel()
-        }
+        installLeftPanel()
     }
 
     func setToggleActive(_ active: Bool) {
         leftHeader?.setPanelActive(active)
-        rightHeader?.setPanelActive(active)
     }
 
     func setFullScreen(_ fullScreen: Bool) {
@@ -63,7 +49,6 @@ final class PanelViewController: NSViewController {
         leftHeader?.applyTheme()
         brandView?.applyTheme()
         sectionHeader?.applyTheme()
-        rightHeader?.applyTheme()
         messageLabel?.font = AppTheme.font(ofSize: AppTheme.typography.body)
         messageLabel?.textColor = AppTheme.tertiaryText
     }
@@ -96,40 +81,25 @@ final class PanelViewController: NSViewController {
 
             brand.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: AppTheme.panelContentInset),
             brand.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -AppTheme.panelContentInset),
-            brand.topAnchor.constraint(equalTo: topHeader.bottomAnchor, constant: 14),
+            brand.topAnchor.constraint(
+                equalTo: topHeader.bottomAnchor,
+                constant: AppTheme.panelContentInset
+            ),
 
             sectionHeader.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             sectionHeader.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            sectionHeader.topAnchor.constraint(equalTo: brand.bottomAnchor, constant: 16),
+            sectionHeader.topAnchor.constraint(
+                equalTo: brand.bottomAnchor,
+                constant: AppTheme.panelSectionSpacing
+            ),
             sectionHeader.heightAnchor.constraint(equalToConstant: AppTheme.paneHeaderHeight),
 
             messageLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: AppTheme.panelContentInset),
-            messageLabel.topAnchor.constraint(equalTo: sectionHeader.bottomAnchor, constant: 16),
+            messageLabel.topAnchor.constraint(
+                equalTo: sectionHeader.bottomAnchor,
+                constant: AppTheme.panelSectionSpacing
+            ),
             messageLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -AppTheme.panelContentInset),
-        ])
-    }
-
-    private func installRightPanel() {
-        let header = RightPanelHeaderView()
-        let messageLabel = makeMessageLabel("Nothing here yet.")
-        header.onToggle = { [weak self] in self?.onTogglePanel?() }
-
-        header.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(header)
-        view.addSubview(messageLabel)
-
-        rightHeader = header
-        self.messageLabel = messageLabel
-
-        NSLayoutConstraint.activate([
-            header.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            header.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            header.topAnchor.constraint(equalTo: view.topAnchor),
-            header.heightAnchor.constraint(equalToConstant: AppTheme.mainHeaderHeight),
-
-            messageLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 14),
-            messageLabel.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 16),
-            messageLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -14),
         ])
     }
 
@@ -187,10 +157,13 @@ private final class LeftSidebarHeaderView: NSView {
         super.init(frame: frameRect)
         wantsLayer = true
         addSubview(toggle)
-        leadingConstraint = toggle.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 82)
+        leadingConstraint = toggle.leadingAnchor.constraint(
+            equalTo: leadingAnchor,
+            constant: AppTheme.sidebarToggleLeading
+        )
         centerYConstraint = toggle.centerYAnchor.constraint(
             equalTo: centerYAnchor,
-            constant: 1
+            constant: AppTheme.sidebarToggleVerticalOffset
         )
         NSLayoutConstraint.activate([
             leadingConstraint,
@@ -212,7 +185,9 @@ private final class LeftSidebarHeaderView: NSView {
     }
 
     func setFullScreen(_ fullScreen: Bool) {
-        leadingConstraint.constant = fullScreen ? 12 : 82
+        leadingConstraint.constant = fullScreen
+            ? AppTheme.fullScreenSidebarToggleLeading
+            : AppTheme.sidebarToggleLeading
     }
 
     func applyTheme() {
@@ -246,10 +221,13 @@ private final class SidebarBrandView: NSView {
             logo.leadingAnchor.constraint(equalTo: leadingAnchor),
             logo.topAnchor.constraint(equalTo: topAnchor),
             logo.bottomAnchor.constraint(equalTo: bottomAnchor),
-            logo.widthAnchor.constraint(equalToConstant: 34),
-            logo.heightAnchor.constraint(equalToConstant: 34),
+            logo.widthAnchor.constraint(equalToConstant: AppTheme.sidebarBrandSize),
+            logo.heightAnchor.constraint(equalToConstant: AppTheme.sidebarBrandSize),
 
-            nameLabel.leadingAnchor.constraint(equalTo: logo.trailingAnchor, constant: 10),
+            nameLabel.leadingAnchor.constraint(
+                equalTo: logo.trailingAnchor,
+                constant: AppTheme.workspaceContentInset
+            ),
             nameLabel.trailingAnchor.constraint(equalTo: trailingAnchor),
             nameLabel.centerYAnchor.constraint(equalTo: logo.centerYAnchor),
         ])
@@ -298,102 +276,5 @@ private final class SidebarSectionHeaderView: NSView {
         layer?.backgroundColor = AppTheme.chromeBackground.cgColor
         titleLabel.font = AppTheme.font(ofSize: AppTheme.typography.label, weight: 600)
         titleLabel.textColor = AppTheme.tertiaryText
-    }
-}
-
-@MainActor
-private final class RightPanelHeaderView: NSView {
-    var onToggle: (() -> Void)?
-
-    private let filesButton = PanelTabButton(title: "Files", selected: true)
-    private let reviewButton = PanelTabButton(title: "Review")
-    private let pullRequestButton = PanelTabButton(title: "PR")
-    private let closeButton = PanelToggleButton(
-        symbolName: "sidebar.right",
-        accessibilityLabel: "Toggle inspector"
-    )
-
-    override var mouseDownCanMoveWindow: Bool { true }
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        wantsLayer = true
-        reviewButton.isEnabled = false
-        pullRequestButton.isEnabled = false
-
-        let tabs = NSStackView(views: [filesButton, reviewButton, pullRequestButton])
-        tabs.translatesAutoresizingMaskIntoConstraints = false
-        tabs.orientation = .horizontal
-        tabs.alignment = .centerY
-        tabs.spacing = 2
-        addSubview(tabs)
-        addSubview(closeButton)
-
-        NSLayoutConstraint.activate([
-            tabs.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            tabs.centerYAnchor.constraint(equalTo: centerYAnchor),
-            tabs.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor, constant: -6),
-            closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-            closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-        ])
-
-        closeButton.target = self
-        closeButton.action = #selector(togglePanel)
-        closeButton.toolTip = "Toggle inspector (⌘L)"
-        applyTheme()
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) is unavailable")
-    }
-
-    func setPanelActive(_ active: Bool) {
-        closeButton.panelVisible = active
-    }
-
-    func applyTheme() {
-        layer?.backgroundColor = AppTheme.chromeBackground.cgColor
-        filesButton.applyTheme()
-        reviewButton.applyTheme()
-        pullRequestButton.applyTheme()
-        closeButton.applyTheme()
-    }
-
-    @objc private func togglePanel() {
-        onToggle?()
-    }
-}
-
-@MainActor
-private final class PanelTabButton: NSButton {
-    private let selected: Bool
-
-    init(title: String, selected: Bool = false) {
-        self.selected = selected
-        super.init(frame: .zero)
-        translatesAutoresizingMaskIntoConstraints = false
-        wantsLayer = true
-        layer?.cornerRadius = 6
-        isBordered = false
-        bezelStyle = .regularSquare
-        self.title = title
-        focusRingType = .none
-        NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: 26),
-            widthAnchor.constraint(greaterThanOrEqualToConstant: 46),
-        ])
-        applyTheme()
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) is unavailable")
-    }
-
-    func applyTheme() {
-        contentTintColor = selected ? AppTheme.primaryText : AppTheme.tertiaryText
-        layer?.backgroundColor = selected ? AppTheme.controlSelection.cgColor : NSColor.clear.cgColor
-        font = AppTheme.font(ofSize: AppTheme.typography.label, weight: selected ? 600 : 500)
     }
 }

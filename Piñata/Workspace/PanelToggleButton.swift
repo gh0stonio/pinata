@@ -5,7 +5,6 @@ final class WorkspaceHeaderView: NSView {
     var onCreateTab: (() -> Void)?
     var onSelectTab: ((UUID) -> Void)?
     var onCloseTab: ((UUID) -> Void)?
-    var onToggleRightPanel: (() -> Void)?
 
     private let tabsStack = NSStackView()
     private let tabsScrollView = NSScrollView()
@@ -13,13 +12,9 @@ final class WorkspaceHeaderView: NSView {
     private let newTabButton = PanelToggleButton(
         symbolName: "plus",
         accessibilityLabel: "New terminal tab",
-        controlSide: 26,
-        symbolPointSize: 12,
+        controlSide: AppTheme.workspaceTabHeight,
+        symbolPointSize: AppTheme.workspaceNewTabSymbolSize,
         hoverStyle: .foregroundOnly
-    )
-    private let rightToggle = PanelToggleButton(
-        symbolName: "sidebar.right",
-        accessibilityLabel: "Toggle inspector"
     )
 
     override var mouseDownCanMoveWindow: Bool { true }
@@ -40,13 +35,12 @@ final class WorkspaceHeaderView: NSView {
         tabsStack.translatesAutoresizingMaskIntoConstraints = false
         tabsStack.orientation = .horizontal
         tabsStack.alignment = .centerY
-        tabsStack.spacing = 4
+        tabsStack.spacing = AppTheme.workspaceTabSpacing
         tabsStack.setContentHuggingPriority(.required, for: .horizontal)
         tabsScrollView.documentView = tabsStack
 
         addSubview(tabsScrollView)
         addSubview(newTabButton)
-        addSubview(rightToggle)
         addSubview(separator)
 
         NSLayoutConstraint.activate([
@@ -55,10 +49,10 @@ final class WorkspaceHeaderView: NSView {
                 constant: AppTheme.workspaceContentInset
             ),
             tabsScrollView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            tabsScrollView.heightAnchor.constraint(equalToConstant: 26),
+            tabsScrollView.heightAnchor.constraint(equalToConstant: AppTheme.workspaceTabHeight),
             tabsScrollView.trailingAnchor.constraint(
                 equalTo: newTabButton.leadingAnchor,
-                constant: -2
+                constant: -AppTheme.workspaceControlGap
             ),
             tabsStack.leadingAnchor.constraint(
                 equalTo: tabsScrollView.contentView.leadingAnchor
@@ -75,28 +69,19 @@ final class WorkspaceHeaderView: NSView {
 
             newTabButton.centerYAnchor.constraint(equalTo: centerYAnchor),
             newTabButton.trailingAnchor.constraint(
-                lessThanOrEqualTo: rightToggle.leadingAnchor,
-                constant: -2
-            ),
-
-            rightToggle.trailingAnchor.constraint(
                 equalTo: trailingAnchor,
                 constant: -AppTheme.workspaceContentInset
             ),
-            rightToggle.centerYAnchor.constraint(equalTo: centerYAnchor),
 
             separator.leadingAnchor.constraint(equalTo: leadingAnchor),
             separator.trailingAnchor.constraint(equalTo: trailingAnchor),
             separator.bottomAnchor.constraint(equalTo: bottomAnchor),
-            separator.heightAnchor.constraint(equalToConstant: 1),
+            separator.heightAnchor.constraint(equalToConstant: AppTheme.workspaceDividerThickness),
         ])
 
         newTabButton.target = self
         newTabButton.action = #selector(createTab)
         newTabButton.toolTip = "New terminal tab (⌘T)"
-        rightToggle.target = self
-        rightToggle.action = #selector(toggleRightPanel)
-        rightToggle.toolTip = "Toggle inspector (⌘L)"
         applyTheme()
     }
 
@@ -131,11 +116,6 @@ final class WorkspaceHeaderView: NSView {
         }
     }
 
-    func setInspectorOpen(_ open: Bool) {
-        rightToggle.panelVisible = open
-        rightToggle.isHidden = open
-    }
-
     func applyTheme() {
         layer?.backgroundColor = AppTheme.background.cgColor
         separator.layer?.backgroundColor = AppTheme.border.cgColor
@@ -143,16 +123,12 @@ final class WorkspaceHeaderView: NSView {
             .compactMap { $0 as? WorkspaceTabItemView }
             .forEach { $0.applyTheme() }
         newTabButton.applyTheme()
-        rightToggle.applyTheme()
     }
 
     @objc private func createTab() {
         onCreateTab?()
     }
 
-    @objc private func toggleRightPanel() {
-        onToggleRightPanel?()
-    }
 }
 
 @MainActor
@@ -173,25 +149,28 @@ private final class WorkspaceTabItemView: NSView {
         closeButton = PanelToggleButton(
             symbolName: "xmark",
             accessibilityLabel: "Close \(title)",
-            controlSide: 20,
-            symbolPointSize: 8,
+            controlSide: AppTheme.workspaceTabCloseControlSize,
+            symbolPointSize: AppTheme.workspaceTabCloseSymbolSize,
             hoverStyle: .none
         )
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
         layer?.insertSublayer(backgroundLayer, at: 0)
-        backgroundLayer.cornerRadius = 6
+        backgroundLayer.cornerRadius = AppTheme.workspaceControlCornerRadius
 
         addSubview(selectButton)
         addSubview(closeButton)
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: 26),
+            heightAnchor.constraint(equalToConstant: AppTheme.workspaceTabHeight),
             selectButton.leadingAnchor.constraint(equalTo: leadingAnchor),
             selectButton.topAnchor.constraint(equalTo: topAnchor),
             selectButton.bottomAnchor.constraint(equalTo: bottomAnchor),
             closeButton.leadingAnchor.constraint(equalTo: selectButton.trailingAnchor),
-            closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -3),
+            closeButton.trailingAnchor.constraint(
+                equalTo: trailingAnchor,
+                constant: -AppTheme.workspaceTabCloseInset
+            ),
             closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
 
@@ -254,9 +233,9 @@ private final class WorkspaceTabButton: NSButton {
         setAccessibilityLabel(title)
 
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: 26),
-            widthAnchor.constraint(greaterThanOrEqualToConstant: 82),
-            widthAnchor.constraint(lessThanOrEqualToConstant: 180),
+            heightAnchor.constraint(equalToConstant: AppTheme.workspaceTabHeight),
+            widthAnchor.constraint(greaterThanOrEqualToConstant: AppTheme.workspaceTabMinimumWidth),
+            widthAnchor.constraint(lessThanOrEqualToConstant: AppTheme.workspaceTabMaximumWidth),
         ])
         applyTheme()
     }
@@ -303,7 +282,7 @@ final class PanelToggleButton: NSButton {
     init(
         symbolName: String,
         accessibilityLabel: String,
-        controlSide: CGFloat = 28,
+        controlSide: CGFloat = AppTheme.panelToggleControlSize,
         symbolPointSize: CGFloat? = nil,
         hoverStyle: HoverStyle = .background
     ) {
@@ -312,7 +291,7 @@ final class PanelToggleButton: NSButton {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
-        backgroundLayer.cornerRadius = 6
+        backgroundLayer.cornerRadius = AppTheme.workspaceControlCornerRadius
         layer?.insertSublayer(backgroundLayer, at: 0)
         isBordered = false
         bezelStyle = .regularSquare
@@ -395,7 +374,10 @@ final class PanelToggleButton: NSButton {
             source.isTemplate = true
             return source
         }
-        let size = NSSize(width: source.size.width, height: source.size.height + 2)
+        let size = NSSize(
+            width: source.size.width,
+            height: source.size.height + AppTheme.symbolVerticalAdjustment
+        )
         let image = NSImage(size: size, flipped: false) { rect in
             source.draw(in: rect)
             return true

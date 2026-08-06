@@ -71,13 +71,8 @@ final class PinataApp: NSObject, NSApplicationDelegate {
         ghosttyRuntime?.setApplicationFocused(false)
     }
 
-
     @objc private func toggleLeftPanel(_ sender: Any?) {
         workspaceViewController?.toggleLeftPanel(sender)
-    }
-
-    @objc private func toggleRightPanel(_ sender: Any?) {
-        workspaceViewController?.toggleRightPanel(sender)
     }
 
     @objc private func createTerminalTab(_ sender: Any?) {
@@ -161,13 +156,6 @@ final class PinataApp: NSObject, NSApplicationDelegate {
             keyEquivalent: "b"
         )
         leftPanelItem.target = self
-        let rightPanelItem = viewMenu.addItem(
-            withTitle: "Toggle Right Panel",
-            action: #selector(toggleRightPanel(_:)),
-            keyEquivalent: "l"
-        )
-        rightPanelItem.target = self
-        viewMenu.addItem(.separator())
         let fullScreenItem = viewMenu.addItem(
             withTitle: "Toggle Full Screen",
             action: #selector(NSWindow.toggleFullScreen(_:)),
