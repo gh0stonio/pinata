@@ -77,8 +77,9 @@ enum AppFontSize: String, Codable, CaseIterable {
     case large
 }
 
-
 enum TerminalFontSize: String, Codable, CaseIterable {
+    case tiny
+    case extraSmall
     case small
     case regular
     case large
@@ -88,6 +89,8 @@ enum TerminalFontSize: String, Codable, CaseIterable {
 extension TerminalFontSize {
     var points: Float {
         switch self {
+        case .tiny: 10
+        case .extraSmall: 11
         case .small: 12
         case .regular: 13
         case .large: 14
