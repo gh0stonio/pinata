@@ -382,7 +382,7 @@ private enum GitPullRequestIcon {
 }
 
 @MainActor
-private final class FlatChoiceControl: NSView {
+private final class FlatChoiceControl: NSView, SettingsThemeApplying {
     var onChange: ((Int) -> Void)?
     var selectedIndex = 0 {
         didSet { applyTheme() }
@@ -455,7 +455,10 @@ private final class FlatChoiceButton: NSButton {
 
     override var intrinsicContentSize: NSSize {
         let size = super.intrinsicContentSize
-        return NSSize(width: size.width + 18, height: size.height)
+        return NSSize(
+            width: size.width + SettingsLayout.choiceHorizontalPadding,
+            height: size.height
+        )
     }
 
     func applyTheme(selected: Bool) {
@@ -472,7 +475,13 @@ private final class FlatChoiceButton: NSButton {
 }
 
 @MainActor
-private final class AccentChoiceControl: NSView {
+private final class AccentChoiceControl: NSView, SettingsThemeApplying {
+    static var requiredWidth: CGFloat {
+        let count = CGFloat(AccentPreference.allCases.count)
+        return count * SettingsLayout.colorChoiceDiameter
+            + max(0, count - 1) * SettingsLayout.colorChoiceGap
+    }
+
     var onChange: ((Int) -> Void)?
     var selectedIndex = 0 {
         didSet { applyTheme() }
@@ -491,6 +500,7 @@ private final class AccentChoiceControl: NSView {
         stack.distribution = .fillEqually
         addSubview(stack)
         NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor),
             stack.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
@@ -546,7 +556,10 @@ private final class AccentChoiceButton: NSButton {
         attributedTitle = NSAttributedString(
             string: selected ? "✓" : "",
             attributes: [
-                .font: NSFont.systemFont(ofSize: 15, weight: .bold),
+                .font: NSFont.systemFont(
+                    ofSize: SettingsLayout.accentCheckmarkSize,
+                    weight: .bold
+                ),
                 .foregroundColor: AppTheme.accentForegroundColor(for: accent),
             ]
         )
@@ -555,7 +568,7 @@ private final class AccentChoiceButton: NSButton {
 }
 
 @MainActor
-private final class FontStepperControl: NSView {
+private final class FontStepperControl: NSView, SettingsThemeApplying {
     var onChange: ((Int) -> Void)?
     var selectedIndex = 0 {
         didSet { applyTheme() }
@@ -693,19 +706,19 @@ private final class AppearanceSettingsContentView: NSView, SettingsPageContent {
                 title: "Color theme",
                 description: "Piñata dark, or a matched light variant",
                 control: themeControl,
-                controlWidth: 122
+                controlWidth: SettingsLayout.themeControlWidth
             ),
             SettingsRowView(
                 title: "Accent color",
                 description: "Highlights, active tabs and primary actions",
                 control: accentControl,
-                controlWidth: 170
+                controlWidth: AccentChoiceControl.requiredWidth
             ),
             SettingsRowView(
                 title: "Accent intensity",
                 description: "How loud accent surfaces feel",
                 control: intensityControl,
-                controlWidth: 272
+                controlWidth: SettingsLayout.intensityControlWidth
             ),
         ]
         let textRows = [
@@ -713,13 +726,13 @@ private final class AppearanceSettingsContentView: NSView, SettingsPageContent {
                 title: "App font size",
                 description: "Side panels, settings and task dialogs",
                 control: appFontControl,
-                controlWidth: 180
+                controlWidth: SettingsLayout.appFontControlWidth
             ),
             SettingsRowView(
                 title: "Terminal font size",
                 description: "Embedded terminal text only",
                 control: terminalFontControl,
-                controlWidth: 82
+                controlWidth: SettingsLayout.terminalFontControlWidth
             ),
         ]
         page.addSection(
