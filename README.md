@@ -37,7 +37,7 @@ The application is being rebuilt as a fully native macOS app. AppKit owns the ap
 
 ## Current State
 
-The current `main` branch is the minimal native foundation:
+The current `main` branch includes:
 
 - Swift 6 and AppKit.
 - Standard Xcode macOS application target.
@@ -46,9 +46,12 @@ The current `main` branch is the minimal native foundation:
 - Asset catalog with the Piñata application icon.
 - macOS 14 or newer.
 - App version `0.0.1`, build `1`.
-- One embedded `libghostty` terminal in the main content area.
+- Native Ghostty terminal tabs and split panes.
+- Resizable task sidebar.
+- Workspace-native appearance and repository settings.
+- Local repository registration, Git metadata, branches, tags, and worktree defaults.
 
-Task, repository, file, Git, and GitHub features are not implemented on this branch yet.
+Tasks, file browsing, diffs, reviews, checks, and pull request workflows are not implemented yet.
 
 ## Project Structure
 
@@ -57,7 +60,9 @@ Piñata.xcodeproj/       Xcode project and shared scheme
 Piñata/
   PinataApp.swift       AppKit entry point and application lifecycle
   Assets.xcassets/      Application assets and icon catalog
+  Settings/             Shared settings layout, appearance, and repositories
   Terminal/             Ghostty runtime, surface, and AppKit host
+  Workspace/            Workspace shell and side panels
 Scripts/                Local dependency bootstrap
 DerivedData/            Generated local Xcode output, ignored by Git
 ```
