@@ -50,7 +50,10 @@ final class WorkspaceHeaderView: NSView {
         addSubview(separator)
 
         NSLayoutConstraint.activate([
-            tabsScrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            tabsScrollView.leadingAnchor.constraint(
+                equalTo: leadingAnchor,
+                constant: AppTheme.workspaceContentInset
+            ),
             tabsScrollView.centerYAnchor.constraint(equalTo: centerYAnchor),
             tabsScrollView.heightAnchor.constraint(equalToConstant: 26),
             tabsScrollView.trailingAnchor.constraint(
@@ -76,7 +79,10 @@ final class WorkspaceHeaderView: NSView {
                 constant: -2
             ),
 
-            rightToggle.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            rightToggle.trailingAnchor.constraint(
+                equalTo: trailingAnchor,
+                constant: -AppTheme.workspaceContentInset
+            ),
             rightToggle.centerYAnchor.constraint(equalTo: centerYAnchor),
 
             separator.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -143,7 +149,6 @@ final class WorkspaceHeaderView: NSView {
     @objc private func createTab() {
         onCreateTab?()
     }
-
 
     @objc private func toggleRightPanel() {
         onToggleRightPanel?()
