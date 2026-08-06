@@ -2,20 +2,57 @@ import AppKit
 
 @MainActor
 enum SettingsLayout {
-    static let contentTop: CGFloat = 34
-    static let contentHorizontalMargin: CGFloat = 40
-    static let contentMinimumWidth: CGFloat = 660
-    static let contentMaximumWidth: CGFloat = 800
-    static let titleToSectionGap: CGFloat = 18
-    static let sectionContentGap: CGFloat = 12
-    static let sectionGap: CGFloat = 24
-    static let blockHorizontalPadding: CGFloat = 24
+    static let summaryMinimumWidth: CGFloat = 216
+    static let summaryMaximumWidth: CGFloat = 280
+    static let rowLabelMinimumWidth: CGFloat = 200
+    static let rowControlMinimumWidth: CGFloat = 240
+    static let rowControlMaximumWidth: CGFloat = 430
+    static let rowColumnGap: CGFloat = 20
+    static let splitColumnGap: CGFloat = 20
+    static let contentMinimumWidth: CGFloat = 752
+    static let sectionGap: CGFloat = 16
+    static let pageHorizontalPadding: CGFloat = 24
+    static let pageVerticalPadding: CGFloat = 18
     static let blockVerticalPadding: CGFloat = 20
+    static let titleToDetailGap: CGFloat = 5
     static let rowHeight: CGFloat = 64
-    static let expandedRowHeight: CGFloat = 92
-    static let detailRowHeight: CGFloat = 70
-    static let detailHeaderHeight: CGFloat = 80
     static let controlHeight: CGFloat = 32
+    static let controlCornerRadius: CGFloat = 6
+    static let choiceInset: CGFloat = 2
+    static let choiceCornerRadius: CGFloat = 4
+    static let colorChoiceDiameter: CGFloat = 24
+    static let colorChoiceGap: CGFloat = 7
+    static let stepperButtonWidth: CGFloat = 24
+    static let navigationCornerRadius: CGFloat = 7
+    static let compactRowHeight: CGFloat = 48
+    static let compactRowCornerRadius: CGFloat = 8
+    static let compactContentInset: CGFloat = 12
+    static let compactIconSize: CGFloat = 14
+    static let compactMetadataGap: CGFloat = 16
+    static let compactChevronWidth: CGFloat = 10
+    static let compactChevronHeight: CGFloat = 14
+    static let navigationRowHeight: CGFloat = 28
+    static let navigationIconSize: CGFloat = 18
+    static let navigationItemGap: CGFloat = 12
+    static let navigationLabelGap: CGFloat = 8
+    static let navigationSectionGap: CGFloat = 24
+    static let dividerThickness: CGFloat = 1
+    static let skeletonHeight: CGFloat = 14
+    static let skeletonCornerRadius: CGFloat = 4
+    static let controlHorizontalPadding: CGFloat = 10
+    static let breadcrumbHeight: CGFloat = 24
+    static let breadcrumbGap: CGFloat = 6
+    static let breadcrumbToContentGap: CGFloat = 2
+
+    static func applyControlSurface(_ view: NSView, clipsContents: Bool = false) {
+        view.wantsLayer = true
+        view.layer?.cornerRadius = controlCornerRadius
+        view.layer?.cornerCurve = .continuous
+        view.layer?.borderWidth = 1
+        view.layer?.masksToBounds = clipsContents
+        view.layer?.backgroundColor = AppTheme.controlBackground.cgColor
+        view.layer?.borderColor = AppTheme.border.cgColor
+    }
 
     static func applySectionLabelStyle(_ label: NSTextField) {
         let fontSize = AppTheme.typography.settingsLabel
@@ -28,26 +65,36 @@ enum SettingsLayout {
             ]
         )
     }
+
+    static func applyTitleStyle(_ label: NSTextField) {
+        label.textColor = AppTheme.primaryText
+        label.font = AppTheme.font(ofSize: AppTheme.typography.settingsHeading, weight: 650)
+    }
+
+    static func applyDetailStyle(_ label: NSTextField) {
+        label.textColor = AppTheme.tertiaryText
+        label.font = AppTheme.font(ofSize: AppTheme.typography.settingsBody)
+    }
 }
 
-private final class SettingsDocumentView: NSView {
+final class SettingsDocumentView: NSView {
     override var isFlipped: Bool { true }
 }
 
 @MainActor
-final class SettingsPageView: NSView {
+final class SettingsSplitPageView: NSView, SettingsThemeApplying {
     private let scrollView = NSScrollView()
     private let document = SettingsDocumentView()
-    private let contentStack = NSStackView()
-    private let titleLabel: NSTextField
-    private var sections: [SettingsSectionView] = []
+    private let leftStack = NSStackView()
+    private let rightStack = NSStackView()
+    private var sectionCount = 0
+    private var previousSummary: NSView?
+    private var previousContent: NSView?
 
-    init(title: String) {
-        titleLabel = NSTextField(labelWithString: title)
-        super.init(frame: .zero)
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
         translatesAutoresizingMaskIntoConstraints = false
         installLayout()
-        applyTheme()
     }
 
     @available(*, unavailable)
@@ -55,18 +102,37 @@ final class SettingsPageView: NSView {
         fatalError("init(coder:) is unavailable")
     }
 
-    @discardableResult
-    func addSection(
-        title: String,
-        content: NSView,
-        action: NSView? = nil
-    ) -> SettingsSectionView {
-        let section = SettingsSectionView(title: title, content: content, action: action)
-        sections.append(section)
-        contentStack.addArrangedSubview(section)
-        section.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
-        contentStack.setCustomSpacing(SettingsLayout.sectionGap, after: section)
-        return section
+    func addSection(title: String, detail: String, content: NSView) {
+        if sectionCount > 0 {
+            let divider = SettingsSplitDivider()
+            document.addSubview(divider)
+            if let previousSummary, let previousContent {
+                let nextSectionGap = SettingsLayout.sectionGap * 2
+                    - SettingsLayout.blockVerticalPadding / 2
+                    + SettingsLayout.dividerThickness
+                leftStack.setCustomSpacing(nextSectionGap, after: previousSummary)
+                rightStack.setCustomSpacing(nextSectionGap, after: previousContent)
+                NSLayoutConstraint.activate([
+                    divider.leadingAnchor.constraint(equalTo: leftStack.leadingAnchor),
+                    divider.trailingAnchor.constraint(equalTo: rightStack.trailingAnchor),
+                    divider.topAnchor.constraint(
+                        equalTo: previousSummary.bottomAnchor,
+                        constant: SettingsLayout.sectionGap
+                    ),
+                ])
+            }
+        }
+        let summary = SettingsSplitSummary(title: title, detail: detail)
+        summary.translatesAutoresizingMaskIntoConstraints = false
+        content.translatesAutoresizingMaskIntoConstraints = false
+        leftStack.addArrangedSubview(summary)
+        rightStack.addArrangedSubview(content)
+        summary.widthAnchor.constraint(equalTo: leftStack.widthAnchor).isActive = true
+        content.widthAnchor.constraint(equalTo: rightStack.widthAnchor).isActive = true
+        summary.heightAnchor.constraint(equalTo: content.heightAnchor).isActive = true
+        previousSummary = summary
+        previousContent = content
+        sectionCount += 1
     }
 
     func scrollToTop() {
@@ -76,9 +142,10 @@ final class SettingsPageView: NSView {
     }
 
     func applyTheme() {
-        titleLabel.textColor = AppTheme.primaryText
-        titleLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsDisplay, weight: 550)
-        sections.forEach { $0.applyTheme() }
+        scrollView.drawsBackground = false
+        document.layer?.backgroundColor = AppTheme.background.cgColor
+        leftStack.arrangedSubviews.compactMap { $0 as? SettingsThemeApplying }.forEach { $0.applyTheme() }
+        rightStack.arrangedSubviews.compactMap { $0 as? SettingsThemeApplying }.forEach { $0.applyTheme() }
     }
 
     private func installLayout() {
@@ -90,216 +157,97 @@ final class SettingsPageView: NSView {
         scrollView.verticalScrollElasticity = .none
         scrollView.documentView = document
         document.translatesAutoresizingMaskIntoConstraints = false
-        contentStack.translatesAutoresizingMaskIntoConstraints = false
-        contentStack.orientation = .vertical
-        contentStack.alignment = .leading
-        contentStack.spacing = 0
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-
+        document.wantsLayer = true
+        [leftStack, rightStack].forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+            $0.orientation = .vertical
+            $0.alignment = .leading
+            $0.spacing = 0
+            document.addSubview($0)
+        }
         addSubview(scrollView)
-        document.addSubview(contentStack)
-        contentStack.addArrangedSubview(titleLabel)
-        contentStack.setCustomSpacing(SettingsLayout.titleToSectionGap, after: titleLabel)
-
-        let responsiveWidth = contentStack.widthAnchor.constraint(
-            equalTo: document.widthAnchor,
-            constant: -(SettingsLayout.contentHorizontalMargin * 2)
-        )
-        responsiveWidth.priority = .defaultLow
-        let preferredWidth = contentStack.widthAnchor.constraint(
-            equalToConstant: SettingsLayout.contentMaximumWidth
-        )
-        preferredWidth.priority = .defaultHigh
-        let minimumWidth = contentStack.widthAnchor.constraint(
-            greaterThanOrEqualToConstant: SettingsLayout.contentMinimumWidth
-        )
-        minimumWidth.priority = .init(rawValue: 749)
         let viewportHeight = document.heightAnchor.constraint(
             equalTo: scrollView.contentView.heightAnchor
         )
         viewportHeight.priority = .defaultHigh
-
+        let preferredSummaryWidth = leftStack.widthAnchor.constraint(
+            equalTo: document.widthAnchor,
+            multiplier: 0.25
+        )
+        preferredSummaryWidth.priority = .defaultHigh
         NSLayoutConstraint.activate([
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollView.topAnchor.constraint(equalTo: topAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
-
             document.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
             document.heightAnchor.constraint(greaterThanOrEqualTo: scrollView.contentView.heightAnchor),
             viewportHeight,
-
-            contentStack.topAnchor.constraint(equalTo: document.topAnchor, constant: SettingsLayout.contentTop),
-            contentStack.bottomAnchor.constraint(lessThanOrEqualTo: document.bottomAnchor),
-            contentStack.centerXAnchor.constraint(equalTo: document.centerXAnchor),
-            responsiveWidth,
-            preferredWidth,
-            minimumWidth,
-            contentStack.widthAnchor.constraint(lessThanOrEqualToConstant: SettingsLayout.contentMaximumWidth),
-            contentStack.leadingAnchor.constraint(
-                greaterThanOrEqualTo: document.leadingAnchor,
-                constant: SettingsLayout.contentHorizontalMargin
+            leftStack.leadingAnchor.constraint(
+                equalTo: document.leadingAnchor,
+                constant: SettingsLayout.pageHorizontalPadding
             ),
-            contentStack.trailingAnchor.constraint(
-                lessThanOrEqualTo: document.trailingAnchor,
-                constant: -SettingsLayout.contentHorizontalMargin
+            leftStack.topAnchor.constraint(
+                equalTo: document.topAnchor,
+                constant: SettingsLayout.pageVerticalPadding
             ),
-            titleLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            leftStack.widthAnchor.constraint(greaterThanOrEqualToConstant: SettingsLayout.summaryMinimumWidth),
+            leftStack.widthAnchor.constraint(lessThanOrEqualToConstant: SettingsLayout.summaryMaximumWidth),
+            preferredSummaryWidth,
+            rightStack.leadingAnchor.constraint(
+                equalTo: leftStack.trailingAnchor,
+                constant: SettingsLayout.splitColumnGap
+            ),
+            rightStack.trailingAnchor.constraint(
+                equalTo: document.trailingAnchor,
+                constant: -SettingsLayout.pageHorizontalPadding
+            ),
+            rightStack.widthAnchor.constraint(greaterThanOrEqualToConstant: SettingsLayout.rowLabelMinimumWidth + SettingsLayout.rowColumnGap + SettingsLayout.rowControlMinimumWidth),
+            rightStack.topAnchor.constraint(equalTo: leftStack.topAnchor),
+            document.bottomAnchor.constraint(
+                greaterThanOrEqualTo: leftStack.bottomAnchor,
+                constant: SettingsLayout.pageVerticalPadding
+            ),
+            document.bottomAnchor.constraint(
+                greaterThanOrEqualTo: rightStack.bottomAnchor,
+                constant: SettingsLayout.pageVerticalPadding
+            ),
         ])
+        applyTheme()
     }
 }
 
 @MainActor
-final class SettingsSheetController: NSWindowController, NSWindowDelegate {
-    var onDismiss: (() -> Void)?
-
-    private let root = NSView()
-    private let titleLabel = NSTextField(labelWithString: "")
-    private let closeButton = NSButton()
-    private let separator = NSBox()
-    private let scrollView = NSScrollView()
-    private let scrollDocument = SettingsDocumentView()
-    private var currentContent: NSView?
-
-    init() {
-        let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 820, height: 700),
-            styleMask: [.titled, .resizable, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
-        )
-        panel.titleVisibility = .hidden
-        panel.titlebarAppearsTransparent = true
-        panel.isMovableByWindowBackground = false
-        panel.minSize = NSSize(width: 680, height: 480)
-        super.init(window: panel)
-        panel.delegate = self
-        panel.contentView = root
-        installLayout()
-        applyTheme()
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) is unavailable")
-    }
-
-    func setContent(_ content: NSView, title: String) {
-        currentContent?.removeFromSuperview()
-        currentContent = content
-        titleLabel.stringValue = title
-        content.translatesAutoresizingMaskIntoConstraints = false
-        scrollDocument.addSubview(content)
-        NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: scrollDocument.leadingAnchor, constant: 32),
-            content.trailingAnchor.constraint(equalTo: scrollDocument.trailingAnchor, constant: -32),
-            content.topAnchor.constraint(equalTo: scrollDocument.topAnchor, constant: 24),
-            content.bottomAnchor.constraint(lessThanOrEqualTo: scrollDocument.bottomAnchor),
-        ])
-        root.layoutSubtreeIfNeeded()
-        scrollView.contentView.scroll(to: .zero)
-        scrollView.reflectScrolledClipView(scrollView.contentView)
-        applyTheme()
-    }
-
-    func present(from parent: NSWindow) {
-        guard let panel = window, panel.sheetParent == nil else { return }
-        parent.beginSheet(panel)
-    }
-
-    func dismiss() {
-        guard let panel = window else { return }
-        panel.sheetParent?.endSheet(panel)
-    }
-
-    func applyTheme() {
-        root.layer?.backgroundColor = AppTheme.background.cgColor
-        scrollView.backgroundColor = AppTheme.chromeBackground
-        scrollDocument.layer?.backgroundColor = AppTheme.chromeBackground.cgColor
-        titleLabel.textColor = AppTheme.primaryText
-        titleLabel.font = AppTheme.font(ofSize: AppTheme.typography.title, weight: 650)
-        closeButton.contentTintColor = AppTheme.secondaryText
-        (currentContent as? SettingsThemeApplying)?.applyTheme()
-    }
-
-    func windowShouldClose(_ sender: NSWindow) -> Bool {
-        onDismiss?()
-        return false
-    }
-
-    private func installLayout() {
-        root.wantsLayer = true
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.translatesAutoresizingMaskIntoConstraints = false
-        separator.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        scrollDocument.translatesAutoresizingMaskIntoConstraints = false
-
-        closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close")
-        closeButton.imageScaling = .scaleProportionallyDown
-        closeButton.isBordered = false
-        closeButton.keyEquivalent = "\u{1b}"
-        closeButton.target = self
-        closeButton.action = #selector(requestClose)
-        closeButton.setAccessibilityLabel("Close")
-        separator.boxType = .separator
-        scrollView.drawsBackground = true
-        scrollView.hasVerticalScroller = true
-        scrollView.autohidesScrollers = true
-        scrollView.automaticallyAdjustsContentInsets = false
-        scrollView.verticalScrollElasticity = .none
-        scrollDocument.wantsLayer = true
-        scrollView.documentView = scrollDocument
-
-        [titleLabel, closeButton, separator, scrollView].forEach(root.addSubview)
-        let viewportHeight = scrollDocument.heightAnchor.constraint(
-            equalTo: scrollView.contentView.heightAnchor
-        )
-        viewportHeight.priority = .defaultHigh
-        NSLayoutConstraint.activate([
-            titleLabel.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 32),
-            titleLabel.centerYAnchor.constraint(equalTo: closeButton.centerYAnchor),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor, constant: -16),
-
-            closeButton.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -24),
-            closeButton.topAnchor.constraint(equalTo: root.topAnchor, constant: 20),
-            closeButton.widthAnchor.constraint(equalToConstant: 28),
-            closeButton.heightAnchor.constraint(equalToConstant: 28),
-
-            separator.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            separator.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            separator.topAnchor.constraint(equalTo: root.topAnchor, constant: 68),
-
-            scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: separator.bottomAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-
-            scrollDocument.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
-            scrollDocument.heightAnchor.constraint(greaterThanOrEqualTo: scrollView.contentView.heightAnchor),
-            viewportHeight,
-
-        ])
-    }
-
-    @objc private func requestClose() {
-        onDismiss?()
-    }
-}
-
-@MainActor
-final class SettingsSectionView: NSView {
+private final class SettingsSplitSummary: NSView, SettingsThemeApplying {
     private let titleLabel: NSTextField
-    private let content: NSView
-    private let action: NSView?
+    private let detailLabel: NSTextField
 
-    init(title: String, content: NSView, action: NSView? = nil) {
-        titleLabel = NSTextField(labelWithString: title.uppercased())
-        self.content = content
-        self.action = action
+    init(title: String, detail: String) {
+        titleLabel = NSTextField(labelWithString: title)
+        detailLabel = NSTextField(wrappingLabelWithString: detail)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-        installLayout()
+        [titleLabel, detailLabel].forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+            addSubview($0)
+        }
+        NSLayoutConstraint.activate([
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
+            titleLabel.topAnchor.constraint(
+                equalTo: topAnchor,
+                constant: SettingsLayout.blockVerticalPadding / 2
+            ),
+            detailLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
+            detailLabel.trailingAnchor.constraint(equalTo: trailingAnchor),
+            detailLabel.topAnchor.constraint(
+                equalTo: titleLabel.bottomAnchor,
+                constant: SettingsLayout.titleToDetailGap
+            ),
+            detailLabel.bottomAnchor.constraint(
+                lessThanOrEqualTo: bottomAnchor,
+                constant: -(SettingsLayout.blockVerticalPadding / 2)
+            ),
+        ])
         applyTheme()
     }
 
@@ -309,42 +257,28 @@ final class SettingsSectionView: NSView {
     }
 
     func applyTheme() {
-        SettingsLayout.applySectionLabelStyle(titleLabel)
-        (content as? SettingsThemeApplying)?.applyTheme()
+        SettingsLayout.applyTitleStyle(titleLabel)
+        SettingsLayout.applyDetailStyle(detailLabel)
+    }
+}
+
+@MainActor
+private final class SettingsSplitDivider: NSView, SettingsThemeApplying {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        heightAnchor.constraint(equalToConstant: SettingsLayout.dividerThickness).isActive = true
+        applyTheme()
     }
 
-    private func installLayout() {
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        content.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(titleLabel)
-        addSubview(content)
-        if let action {
-            action.translatesAutoresizingMaskIntoConstraints = false
-            addSubview(action)
-        }
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is unavailable")
+    }
 
-        var constraints = [
-            heightAnchor.constraint(greaterThanOrEqualToConstant: 1),
-            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
-            titleLabel.topAnchor.constraint(equalTo: topAnchor),
-            content.leadingAnchor.constraint(equalTo: leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: trailingAnchor),
-            content.topAnchor.constraint(
-                equalTo: titleLabel.bottomAnchor,
-                constant: SettingsLayout.sectionContentGap
-            ),
-            content.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ]
-        if let action {
-            constraints += [
-                action.trailingAnchor.constraint(equalTo: trailingAnchor),
-                action.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
-                titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: action.leadingAnchor, constant: -12),
-            ]
-        } else {
-            constraints.append(titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor))
-        }
-        NSLayoutConstraint.activate(constraints)
+    func applyTheme() {
+        layer?.backgroundColor = AppTheme.border.cgColor
     }
 }
 
@@ -354,12 +288,86 @@ protocol SettingsThemeApplying: AnyObject {
 }
 
 @MainActor
-private final class SettingsCardDivider: NSView, SettingsThemeApplying {
+protocol SettingsPageContent: SettingsThemeApplying {
+    var settingsView: NSView { get }
+    func scrollToTop()
+    func didDeselect()
+}
+
+extension SettingsPageContent where Self: NSView {
+    var settingsView: NSView { self }
+    func didDeselect() {}
+}
+
+@MainActor
+class SettingsHoverView: NSView {
+    private var trackingArea: NSTrackingArea?
+    private(set) var isHovering = false {
+        didSet { hoverStateDidChange() }
+    }
+
+    func hoverStateDidChange() {}
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea { removeTrackingArea(trackingArea) }
+        let trackingArea = NSTrackingArea(
+            rect: bounds,
+            options: [.activeInKeyWindow, .mouseEnteredAndExited, .inVisibleRect],
+            owner: self
+        )
+        addTrackingArea(trackingArea)
+        self.trackingArea = trackingArea
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovering = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovering = false
+    }
+}
+
+@MainActor
+func settingsRowStack(_ rows: [SettingsRowView]) -> NSStackView {
+    SettingsRowStack(rows: rows)
+}
+
+private final class SettingsRowStack: NSStackView, SettingsThemeApplying {
+    init(rows: [SettingsRowView]) {
+        super.init(frame: .zero)
+        orientation = .vertical
+        alignment = .leading
+        spacing = 0
+        rows.forEach {
+            addArrangedSubview($0)
+            $0.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
+        }
+    }
+
+    @available(*, unavailable)
+    required init(coder: NSCoder) {
+        fatalError("init(coder:) is unavailable")
+    }
+
+    func applyTheme() {
+        arrangedSubviews.compactMap { $0 as? SettingsThemeApplying }.forEach { $0.applyTheme() }
+    }
+}
+
+@MainActor
+final class SettingsActionButton: NSButton, SettingsThemeApplying {
+    private var trackingArea: NSTrackingArea?
+    private var isHovering = false {
+        didSet { applyTheme() }
+    }
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        translatesAutoresizingMaskIntoConstraints = false
-        wantsLayer = true
-        heightAnchor.constraint(equalToConstant: 0.5).isActive = true
+        isBordered = false
+        bezelStyle = .shadowlessSquare
+        focusRingType = .none
         applyTheme()
     }
 
@@ -369,88 +377,38 @@ private final class SettingsCardDivider: NSView, SettingsThemeApplying {
     }
 
     func applyTheme() {
-        layer?.backgroundColor = AppTheme.tertiaryText.withAlphaComponent(0.10).cgColor
+        contentTintColor = isHovering ? AppTheme.accent : AppTheme.secondaryText
+        font = AppTheme.font(ofSize: AppTheme.typography.settingsHeading, weight: 600)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea { removeTrackingArea(trackingArea) }
+        let trackingArea = NSTrackingArea(
+            rect: bounds,
+            options: [.activeInKeyWindow, .mouseEnteredAndExited, .inVisibleRect],
+            owner: self
+        )
+        addTrackingArea(trackingArea)
+        self.trackingArea = trackingArea
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovering = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovering = false
     }
 }
 
 @MainActor
-final class SettingsCardView: NSView, SettingsThemeApplying {
-    private let stack = NSStackView()
-
-    init(rows: [NSView] = []) {
-        super.init(frame: .zero)
-        translatesAutoresizingMaskIntoConstraints = false
+final class SettingsSkeletonValueView: NSView, SettingsThemeApplying {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
         wantsLayer = true
-        layer?.cornerRadius = 12
-        layer?.cornerCurve = .continuous
+        layer?.cornerRadius = SettingsLayout.skeletonCornerRadius
         layer?.masksToBounds = true
-
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 0
-        addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
-        setRows(rows)
-        applyTheme()
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) is unavailable")
-    }
-
-    var rows: [NSView] {
-        stack.arrangedSubviews.filter { !($0 is SettingsCardDivider) }
-    }
-
-    func setRows(_ rows: [NSView]) {
-        stack.arrangedSubviews.forEach {
-            stack.removeArrangedSubview($0)
-            $0.removeFromSuperview()
-        }
-        rows.enumerated().forEach { index, row in
-            if index > 0 { addRow(SettingsCardDivider()) }
-            addRow(row)
-        }
-    }
-
-    func addRow(_ row: NSView) {
-        row.translatesAutoresizingMaskIntoConstraints = false
-        stack.addArrangedSubview(row)
-        row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-    }
-
-    func applyTheme() {
-        layer?.backgroundColor = AppTheme.chromeBackground.cgColor
-        stack.arrangedSubviews.compactMap { $0 as? SettingsThemeApplying }.forEach {
-            $0.applyTheme()
-        }
-    }
-}
-
-@MainActor
-final class SettingsDangerZoneView: NSView, SettingsThemeApplying {
-    var onAction: (() -> Void)?
-
-    private let headingLabel = NSTextField(labelWithString: "Danger Zone")
-    private let container = NSView()
-    private let titleLabel: NSTextField
-    private let descriptionLabel: NSTextField
-    private let actionButton: NSButton
-
-    init(title: String, description: String, actionTitle: String) {
-        titleLabel = NSTextField(labelWithString: title)
-        descriptionLabel = NSTextField(labelWithString: description)
-        actionButton = NSButton(title: actionTitle, target: nil, action: nil)
-        super.init(frame: .zero)
-        translatesAutoresizingMaskIntoConstraints = false
-        installLayout()
         applyTheme()
     }
 
@@ -460,119 +418,7 @@ final class SettingsDangerZoneView: NSView, SettingsThemeApplying {
     }
 
     func applyTheme() {
-        let danger = NSColor.systemRed
-        headingLabel.textColor = danger
-        headingLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsHeading, weight: 650)
-        titleLabel.textColor = AppTheme.primaryText
-        titleLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsHeading, weight: 650)
-        descriptionLabel.textColor = AppTheme.secondaryText
-        descriptionLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsBody)
-        container.layer?.borderColor = danger.cgColor
-        actionButton.contentTintColor = danger
-        actionButton.font = AppTheme.font(ofSize: AppTheme.typography.settingsHeading, weight: 650)
-        actionButton.layer?.backgroundColor = danger.withAlphaComponent(0.14).cgColor
-    }
-
-    private func installLayout() {
-        [headingLabel, container].forEach {
-            $0.translatesAutoresizingMaskIntoConstraints = false
-            addSubview($0)
-        }
-        [titleLabel, descriptionLabel, actionButton].forEach {
-            $0.translatesAutoresizingMaskIntoConstraints = false
-            container.addSubview($0)
-        }
-
-        container.wantsLayer = true
-        container.layer?.cornerRadius = 12
-        container.layer?.cornerCurve = .continuous
-        container.layer?.borderWidth = 1
-        actionButton.wantsLayer = true
-        actionButton.layer?.cornerRadius = 10
-        actionButton.layer?.cornerCurve = .continuous
-        actionButton.isBordered = false
-        actionButton.image = NSImage(systemSymbolName: "trash", accessibilityDescription: nil)
-        actionButton.imagePosition = .imageLeading
-        actionButton.imageHugsTitle = true
-        actionButton.target = self
-        actionButton.action = #selector(performAction)
-
-        NSLayoutConstraint.activate([
-            headingLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
-            headingLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
-            headingLabel.topAnchor.constraint(equalTo: topAnchor, constant: 32),
-
-            container.leadingAnchor.constraint(equalTo: leadingAnchor),
-            container.trailingAnchor.constraint(equalTo: trailingAnchor),
-            container.topAnchor.constraint(equalTo: headingLabel.bottomAnchor, constant: 16),
-            container.heightAnchor.constraint(equalToConstant: 96),
-            container.bottomAnchor.constraint(equalTo: bottomAnchor),
-
-            titleLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
-            titleLabel.topAnchor.constraint(equalTo: container.topAnchor, constant: 24),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: actionButton.leadingAnchor, constant: -24),
-
-            descriptionLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-            descriptionLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 5),
-            descriptionLabel.trailingAnchor.constraint(lessThanOrEqualTo: actionButton.leadingAnchor, constant: -24),
-
-            actionButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -24),
-            actionButton.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-            actionButton.widthAnchor.constraint(equalToConstant: 132),
-            actionButton.heightAnchor.constraint(equalToConstant: 44),
-        ])
-    }
-
-    @objc private func performAction() {
-        onAction?()
-    }
-}
-
-@MainActor
-final class SettingsDetailHeaderView: NSView, SettingsThemeApplying {
-    private let titleLabel: NSTextField
-    private let subtitleLabel: NSTextField
-    private let action: NSView
-
-    init(title: String, subtitle: String, action: NSView) {
-        titleLabel = NSTextField(labelWithString: title)
-        subtitleLabel = NSTextField(labelWithString: subtitle)
-        self.action = action
-        super.init(frame: .zero)
-        translatesAutoresizingMaskIntoConstraints = false
-        [titleLabel, subtitleLabel, action].forEach {
-            $0.translatesAutoresizingMaskIntoConstraints = false
-            addSubview($0)
-        }
-        NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: SettingsLayout.detailHeaderHeight),
-            titleLabel.leadingAnchor.constraint(
-                equalTo: leadingAnchor,
-                constant: SettingsLayout.blockHorizontalPadding
-            ),
-            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 16),
-            subtitleLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-            subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 2),
-            subtitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: action.leadingAnchor, constant: -16),
-            action.trailingAnchor.constraint(
-                equalTo: trailingAnchor,
-                constant: -SettingsLayout.blockHorizontalPadding
-            ),
-            action.centerYAnchor.constraint(equalTo: centerYAnchor),
-        ])
-        applyTheme()
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) is unavailable")
-    }
-
-    func applyTheme() {
-        titleLabel.textColor = AppTheme.primaryText
-        titleLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsDisplay, weight: 550)
-        subtitleLabel.textColor = AppTheme.tertiaryText
-        subtitleLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsBody)
+        layer?.backgroundColor = AppTheme.controlBackground.withAlphaComponent(0.72).cgColor
     }
 }
 
@@ -588,50 +434,64 @@ final class SettingsRowView: NSView, SettingsThemeApplying {
         control: NSView,
         controlWidth: CGFloat? = nil,
         controlHeight: CGFloat? = SettingsLayout.controlHeight,
-        minimumHeight: CGFloat = SettingsLayout.rowHeight,
-        allowsVerticalExpansion: Bool = false
+        minimumHeight: CGFloat = SettingsLayout.rowHeight
     ) {
-        titleLabel = NSTextField(labelWithString: title)
+        titleLabel = NSTextField(wrappingLabelWithString: title)
         helperLabel = NSTextField(wrappingLabelWithString: description)
+        titleLabel.lineBreakMode = .byWordWrapping
+        titleLabel.maximumNumberOfLines = 0
+        helperLabel.lineBreakMode = .byWordWrapping
+        helperLabel.maximumNumberOfLines = 0
         self.control = control
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
 
-        let labels = NSStackView(views: [titleLabel, helperLabel])
-        labels.translatesAutoresizingMaskIntoConstraints = false
-        labels.orientation = .vertical
-        labels.alignment = .leading
-        labels.spacing = 2
-        control.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(labels)
+        [titleLabel, helperLabel, control].forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+        }
+        addSubview(titleLabel)
+        addSubview(helperLabel)
         addSubview(control)
 
-        let heightConstraint = allowsVerticalExpansion
-            ? heightAnchor.constraint(greaterThanOrEqualToConstant: minimumHeight)
-            : heightAnchor.constraint(equalToConstant: minimumHeight)
+        titleLabel.setContentCompressionResistancePriority(.required, for: .vertical)
+        helperLabel.setContentCompressionResistancePriority(.required, for: .vertical)
+        let preferredHeight = heightAnchor.constraint(equalToConstant: minimumHeight)
+        preferredHeight.priority = .init(rawValue: 999)
         var constraints = [
-            heightConstraint,
-            labels.leadingAnchor.constraint(
-                equalTo: leadingAnchor,
-                constant: SettingsLayout.blockHorizontalPadding
-            ),
-            labels.centerYAnchor.constraint(equalTo: centerYAnchor),
-            labels.topAnchor.constraint(
-                greaterThanOrEqualTo: topAnchor,
+            heightAnchor.constraint(greaterThanOrEqualToConstant: minimumHeight),
+            preferredHeight,
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
+            titleLabel.topAnchor.constraint(
+                equalTo: topAnchor,
                 constant: SettingsLayout.blockVerticalPadding / 2
             ),
-            labels.bottomAnchor.constraint(
+            titleLabel.trailingAnchor.constraint(
+                equalTo: control.leadingAnchor,
+                constant: -SettingsLayout.rowColumnGap
+            ),
+            titleLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: SettingsLayout.rowLabelMinimumWidth),
+            helperLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
+            helperLabel.topAnchor.constraint(
+                equalTo: titleLabel.bottomAnchor,
+                constant: SettingsLayout.titleToDetailGap
+            ),
+            helperLabel.bottomAnchor.constraint(
                 lessThanOrEqualTo: bottomAnchor,
                 constant: -(SettingsLayout.blockVerticalPadding / 2)
             ),
-            labels.trailingAnchor.constraint(lessThanOrEqualTo: control.leadingAnchor, constant: -16),
-            control.trailingAnchor.constraint(
-                equalTo: trailingAnchor,
-                constant: -SettingsLayout.blockHorizontalPadding
+            helperLabel.trailingAnchor.constraint(
+                equalTo: control.leadingAnchor,
+                constant: -SettingsLayout.rowColumnGap
             ),
-            control.centerYAnchor.constraint(equalTo: centerYAnchor),
-            control.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: 10),
-            control.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -10),
+            control.trailingAnchor.constraint(equalTo: trailingAnchor),
+            control.topAnchor.constraint(
+                equalTo: topAnchor,
+                constant: SettingsLayout.blockVerticalPadding / 2
+            ),
+            control.bottomAnchor.constraint(
+                lessThanOrEqualTo: bottomAnchor,
+                constant: -(SettingsLayout.blockVerticalPadding / 2)
+            ),
         ]
         if let controlHeight {
             constraints.append(control.heightAnchor.constraint(equalToConstant: controlHeight))
@@ -639,9 +499,16 @@ final class SettingsRowView: NSView, SettingsThemeApplying {
         if let controlWidth {
             constraints.append(control.widthAnchor.constraint(equalToConstant: controlWidth))
         } else {
+            let preferredControlWidth = control.widthAnchor.constraint(
+                equalToConstant: SettingsLayout.rowControlMaximumWidth
+            )
+            preferredControlWidth.priority = .defaultHigh
             constraints += [
-                control.widthAnchor.constraint(lessThanOrEqualToConstant: 430),
-                control.widthAnchor.constraint(greaterThanOrEqualToConstant: 240),
+                preferredControlWidth,
+                control.widthAnchor.constraint(
+                    lessThanOrEqualToConstant: SettingsLayout.rowControlMaximumWidth
+                ),
+                control.widthAnchor.constraint(greaterThanOrEqualToConstant: SettingsLayout.rowControlMinimumWidth),
             ]
             control.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         }
@@ -655,10 +522,8 @@ final class SettingsRowView: NSView, SettingsThemeApplying {
     }
 
     func applyTheme() {
-        titleLabel.textColor = AppTheme.primaryText
-        titleLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsHeading, weight: 550)
-        helperLabel.textColor = AppTheme.tertiaryText
-        helperLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsBody)
+        SettingsLayout.applyTitleStyle(titleLabel)
+        SettingsLayout.applyDetailStyle(helperLabel)
         (control as? SettingsThemeApplying)?.applyTheme()
     }
 }
@@ -702,8 +567,8 @@ final class SettingsMessageRow: NSView, SettingsThemeApplying {
         addSubview(label)
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: SettingsLayout.rowHeight),
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: SettingsLayout.blockHorizontalPadding),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -SettingsLayout.blockHorizontalPadding),
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: SettingsLayout.pageHorizontalPadding),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -SettingsLayout.pageHorizontalPadding),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
         applyTheme()
@@ -736,11 +601,7 @@ final class SettingsTextField: NSTextField, SettingsThemeApplying {
         usesSingleLineMode = true
         cell?.isScrollable = true
         cell?.wraps = false
-        wantsLayer = true
-        layer?.cornerRadius = 6
-        layer?.cornerCurve = .continuous
-        layer?.borderWidth = 1
-        layer?.masksToBounds = true
+        SettingsLayout.applyControlSurface(self, clipsContents: true)
         applyTheme()
     }
 
@@ -751,35 +612,9 @@ final class SettingsTextField: NSTextField, SettingsThemeApplying {
 
     func applyTheme() {
         textColor = AppTheme.primaryText
-        layer?.backgroundColor = AppTheme.controlBackground.cgColor
-        font = .monospacedSystemFont(ofSize: AppTheme.typography.settingsBody, weight: .regular)
+        SettingsLayout.applyControlSurface(self, clipsContents: true)
+        font = AppTheme.font(ofSize: AppTheme.typography.settingsBody)
         updateBorder()
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        isEditing = true
-        updateBorder()
-        super.mouseDown(with: event)
-        isEditing = true
-        updateBorder()
-    }
-
-    override func textShouldBeginEditing(_ textObject: NSText) -> Bool {
-        let shouldBegin = super.textShouldBeginEditing(textObject)
-        if shouldBegin {
-            isEditing = true
-            updateBorder()
-        }
-        return shouldBegin
-    }
-
-    override func textShouldEndEditing(_ textObject: NSText) -> Bool {
-        let shouldEnd = super.textShouldEndEditing(textObject)
-        if shouldEnd {
-            isEditing = false
-            updateBorder()
-        }
-        return shouldEnd
     }
 
     override func textDidBeginEditing(_ notification: Notification) {
@@ -801,14 +636,38 @@ final class SettingsTextField: NSTextField, SettingsThemeApplying {
     }
 }
 
+@MainActor
+final class SettingsPopupButton: NSPopUpButton, SettingsThemeApplying {
+    init() {
+        super.init(frame: .zero, pullsDown: false)
+        isBordered = false
+        bezelStyle = .shadowlessSquare
+        focusRingType = .none
+        controlSize = .large
+        SettingsLayout.applyControlSurface(self, clipsContents: true)
+        applyTheme()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is unavailable")
+    }
+
+    func applyTheme() {
+        contentTintColor = AppTheme.primaryText
+        font = .monospacedSystemFont(ofSize: AppTheme.typography.settingsBody, weight: .regular)
+        SettingsLayout.applyControlSurface(self, clipsContents: true)
+    }
+}
+
 private final class SettingsTextFieldCell: NSTextFieldCell {
     override func drawingRect(forBounds rect: NSRect) -> NSRect {
         let rect = super.drawingRect(forBounds: rect)
         let height = min(cellSize.height, rect.height)
         return NSRect(
-            x: rect.minX + 10,
+            x: rect.minX + SettingsLayout.controlHorizontalPadding,
             y: rect.minY + (rect.height - height) / 2,
-            width: max(0, rect.width - 20),
+            width: max(0, rect.width - SettingsLayout.controlHorizontalPadding * 2),
             height: height
         )
     }

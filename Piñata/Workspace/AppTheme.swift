@@ -5,7 +5,6 @@ struct AppTypography {
     let title: CGFloat
     let body: CGFloat
     let label: CGFloat
-    let settingsDisplay: CGFloat
     let settingsHeading: CGFloat
     let settingsBody: CGFloat
     let settingsLabel: CGFloat
@@ -14,7 +13,7 @@ struct AppTypography {
 @MainActor
 enum AppTheme {
     static let leftPanelWidth: CGFloat = 264
-    static let settingsRailWidth: CGFloat = 300
+    static let settingsRailWidth: CGFloat = 210
     static let panelContentInset: CGFloat = 14
     static let fullScreenSidebarWidth: CGFloat = 320
     static let rightPanelWidth: CGFloat = 300
@@ -22,13 +21,14 @@ enum AppTheme {
     static let rightPanelRange: ClosedRange<CGFloat> = 260...520
     static let workspaceHeaderHeight: CGFloat = 36
     static let mainHeaderHeight: CGFloat = 44
+    static let workspaceContentInset: CGFloat = 10
     static let paneHeaderHeight: CGFloat = 34
     static let workspaceInset: CGFloat = 8
     static let terminalContentInset: CGFloat = 10
     static let terminalVerticalInset: CGFloat = 2
     static let workspaceCornerRadius: CGFloat = 10
     static let minimumCenterWidth: CGFloat = 480
-    static let minimumWindowWidth: CGFloat = 1_020
+    static let minimumWindowWidth: CGFloat = 1_250
     static let edgeRevealWidth: CGFloat = 6
 
     static private(set) var background = color(0x282C34)
@@ -119,7 +119,6 @@ enum AppTheme {
                 title: 16.5,
                 body: 12,
                 label: 10.5,
-                settingsDisplay: 23,
                 settingsHeading: 12,
                 settingsBody: 11.5,
                 settingsLabel: 9.5
@@ -129,7 +128,6 @@ enum AppTheme {
                 title: 17.5,
                 body: 13,
                 label: 11,
-                settingsDisplay: 24,
                 settingsHeading: 13,
                 settingsBody: 12,
                 settingsLabel: 10
@@ -139,7 +137,6 @@ enum AppTheme {
                 title: 18.5,
                 body: 14,
                 label: 12,
-                settingsDisplay: 25,
                 settingsHeading: 14,
                 settingsBody: 13,
                 settingsLabel: 10.5
@@ -227,7 +224,6 @@ enum AppTheme {
         let white = color(0xFFFFFF)
         return contrastRatio(black, background) >= contrastRatio(white, background) ? black : white
     }
-
 
     private static func composited(_ foreground: NSColor, over background: NSColor) -> NSColor {
         let foreground = srgbComponents(foreground)
