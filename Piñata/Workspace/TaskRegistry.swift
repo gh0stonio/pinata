@@ -3,6 +3,20 @@ import Foundation
 struct TaskRepositoryAttachment: Codable, Equatable, Identifiable, Sendable {
     let repositoryID: UUID
     let name: String
+    let worktreePath: String?
+    let worktreeProvisioning: WorktreeProvisioningReport?
+
+    init(
+        repositoryID: UUID,
+        name: String,
+        worktreePath: String? = nil,
+        worktreeProvisioning: WorktreeProvisioningReport? = nil
+    ) {
+        self.repositoryID = repositoryID
+        self.name = name
+        self.worktreePath = worktreePath
+        self.worktreeProvisioning = worktreeProvisioning
+    }
 
     var id: UUID { repositoryID }
 }

@@ -55,10 +55,11 @@ enum AppTheme {
     static let sidebarToggleLeading: CGFloat = 82
     static let fullScreenSidebarToggleLeading: CGFloat = 12
     static var sidebarNewTaskIconSize: CGFloat { typography.body + 5 }
+    static let sidebarNewTaskHeight: CGFloat = 38
     static let sidebarNewTaskTopSpacing: CGFloat = 20
     static let sidebarNewTaskBottomSpacing: CGFloat = 20
     static let sidebarTaskListTopSpacing: CGFloat = 8
-    static let sidebarSectionTitleInset: CGFloat = 22
+    static let sidebarSectionTitleInset: CGFloat = 28
     static let sidebarItemInset: CGFloat = 10
     static let sidebarTaskRowHeight: CGFloat = 28
     static func sidebarTrailingInset(for visualInset: CGFloat) -> CGFloat {
@@ -69,6 +70,7 @@ enum AppTheme {
     static let sidebarDisclosureControlWidth: CGFloat = 18
     static let sidebarDisclosureControlHeight: CGFloat = 22
     static let sidebarTaskTitleDisclosureInset: CGFloat = 21
+    static let sidebarRepositoryTitleInset: CGFloat = 26
     static let taskModalCardWidth: CGFloat = 522
     static let taskModalPadding: CGFloat = 16
     static let taskModalFieldHeight: CGFloat = 40

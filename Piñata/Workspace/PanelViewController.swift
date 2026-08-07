@@ -181,7 +181,7 @@ final class PanelViewController: NSViewController {
                 equalTo: brand.bottomAnchor,
                 constant: AppTheme.sidebarNewTaskTopSpacing
             ),
-            newTaskButton.heightAnchor.constraint(equalToConstant: 30),
+            newTaskButton.heightAnchor.constraint(equalToConstant: AppTheme.sidebarNewTaskHeight),
 
             sectionHeader.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             sectionHeader.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -546,7 +546,7 @@ private final class SidebarRepositoryRow: AppHoverView {
             button.bottomAnchor.constraint(equalTo: bottomAnchor),
             titleLabel.leadingAnchor.constraint(
                 equalTo: leadingAnchor,
-                constant: AppTheme.sidebarTaskTitleDisclosureInset
+                constant: AppTheme.sidebarRepositoryTitleInset
             ),
             titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: errorIcon.leadingAnchor, constant: -6),

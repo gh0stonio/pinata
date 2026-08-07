@@ -499,6 +499,15 @@ final class WorkspaceViewController: NSViewController {
 
     private func installActiveWorkspace() {
         terminalHost.subviews.forEach { $0.removeFromSuperview() }
+        if case .repository(let scope) = activeScope,
+           let task = tasks.first(where: { $0.id == scope.taskID }),
+           let attachment = task.repositories.first(where: { $0.repositoryID == scope.repositoryID }),
+           let report = attachment.worktreeProvisioning,
+           !report.succeeded {
+            setWorkspaceHeaderVisible(false)
+            installWorktreeProvisioning(report, repositoryName: attachment.name)
+            return
+        }
         guard let workspace = activeTerminalWorkspace else {
             setWorkspaceHeaderVisible(false)
             installScopeMessage()
@@ -537,6 +546,24 @@ final class WorkspaceViewController: NSViewController {
         DispatchQueue.main.async {
             controller.focusActiveTerminal()
         }
+    }
+
+    private func installWorktreeProvisioning(
+        _ report: WorktreeProvisioningReport,
+        repositoryName: String
+    ) {
+        let view = WorktreeProvisioningView(
+            repositoryName: repositoryName,
+            report: report
+        )
+        view.translatesAutoresizingMaskIntoConstraints = false
+        terminalHost.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: terminalHost.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: terminalHost.trailingAnchor),
+            view.topAnchor.constraint(equalTo: terminalHost.topAnchor),
+            view.bottomAnchor.constraint(equalTo: terminalHost.bottomAnchor),
+        ])
     }
 
     private func closeTerminalTab(_ id: UUID) {
@@ -624,15 +651,129 @@ final class WorkspaceViewController: NSViewController {
                     self.taskErrors.removeAll()
                 } catch {
                     self.taskErrors[task.id] = error.localizedDescription
+                    self.updateTaskSidebar()
+                    return
                 }
             } else {
                 self.taskErrors[task.id] = self.taskLoadError ?? "Task storage is unavailable."
+                self.updateTaskSidebar()
+                return
+            }
+
+            let worktreeBasePath = RepositoryDefaultsStore().loadWorktreeBasePath()
+            let provisioner = WorktreeProvisioner(globalBasePath: worktreeBasePath)
+            for repository in repositories {
+                let scope = TaskRepositoryScope(taskID: task.id, repositoryID: repository.id)
+                let report = provisioner.preparing(
+                    repository: repository,
+                    taskID: task.id,
+                    taskTitle: task.title
+                )
+                do {
+                    try self.storeWorktreeProvisioning(report, for: scope, in: task)
+                } catch {
+                    self.repositoryErrors[scope] = error.localizedDescription
+                }
+            }
+            if let firstRepository = task.repositories.first {
+                self.activeScope = .repository(TaskRepositoryScope(
+                    taskID: task.id,
+                    repositoryID: firstRepository.repositoryID
+                ))
             }
             self.updateTaskSidebar()
-            if self.activeScope == .task(task.id) {
-                self.installActiveWorkspace()
+            self.installActiveWorkspace()
+
+            let updates = AsyncStream<(TaskRepositoryScope, WorktreeProvisioningReport)> { continuation in
+                Task.detached { [repositories, task, worktreeBasePath] in
+                    await withTaskGroup(of: Void.self) { group in
+                        for repository in repositories {
+                            group.addTask {
+                                let scope = TaskRepositoryScope(
+                                    taskID: task.id,
+                                    repositoryID: repository.id
+                                )
+                                let provisioner = WorktreeProvisioner(
+                                    globalBasePath: worktreeBasePath
+                                )
+                                _ = provisioner.provision(
+                                    repository: repository,
+                                    taskID: task.id,
+                                    taskTitle: task.title
+                                ) { report in
+                                    continuation.yield((scope, report))
+                                }
+                            }
+                        }
+                        await group.waitForAll()
+                    }
+                    continuation.finish()
+                }
+            }
+            Task { @MainActor [weak self] in
+                for await (scope, report) in updates {
+                    self?.updateWorktreeProvisioning(report, for: scope, in: task)
+                }
             }
         }
+    }
+
+    private func updateWorktreeProvisioning(
+        _ report: WorktreeProvisioningReport,
+        for scope: TaskRepositoryScope,
+        in task: WorkspaceTask
+    ) {
+        do {
+            try storeWorktreeProvisioning(report, for: scope, in: task)
+            repositoryWorkspaces.removeValue(forKey: scope)
+            if let failureMessage = report.failureMessage {
+                repositoryErrors[scope] = failureMessage
+            } else if report.succeeded,
+                      let attachment = tasks.first(where: { $0.id == scope.taskID })?.repositories.first(where: {
+                          $0.repositoryID == scope.repositoryID
+                      }) {
+                try installRepositoryWorkspace(
+                    for: scope,
+                    name: attachment.name,
+                    workingDirectory: report.path
+                )
+                repositoryErrors.removeValue(forKey: scope)
+            } else {
+                repositoryErrors.removeValue(forKey: scope)
+            }
+        } catch {
+            repositoryErrors[scope] = error.localizedDescription
+        }
+        updateTaskSidebar()
+        if activeScope == .repository(scope) {
+            installActiveWorkspace()
+        }
+    }
+
+    private func storeWorktreeProvisioning(
+        _ report: WorktreeProvisioningReport,
+        for scope: TaskRepositoryScope,
+        in task: WorkspaceTask
+    ) throws {
+        guard let taskIndex = tasks.firstIndex(where: { $0.id == scope.taskID }) else { return }
+        var attachments = tasks[taskIndex].repositories
+        guard let attachmentIndex = attachments.firstIndex(where: { $0.repositoryID == scope.repositoryID }) else {
+            return
+        }
+        let attachment = attachments[attachmentIndex]
+        attachments[attachmentIndex] = TaskRepositoryAttachment(
+            repositoryID: attachment.repositoryID,
+            name: attachment.name,
+            worktreePath: report.succeeded ? report.path : nil,
+            worktreeProvisioning: report.succeeded ? nil : report
+        )
+        tasks[taskIndex] = WorkspaceTask(
+            id: task.id,
+            title: task.title,
+            repositories: attachments,
+            createdAt: task.createdAt
+        )
+        try taskStore.save(tasks)
     }
 
     private func selectTask(_ taskID: UUID) {
@@ -655,21 +796,24 @@ final class WorkspaceViewController: NSViewController {
         activeScope = .repository(scope)
         expandedTaskIDs.insert(scope.taskID)
 
+        if let report = attachment.worktreeProvisioning, let failureMessage = report.failureMessage {
+            repositoryErrors[scope] = failureMessage
+            updateTaskSidebar()
+            installActiveWorkspace()
+            return
+        }
+
         if repositoryWorkspaces[scope] == nil {
             do {
                 let repositories = try repositoryStore.load()
                 guard let repository = repositories.first(where: { $0.id == scope.repositoryID }) else {
                     throw WorkspaceTaskError.repositoryUnavailable(attachment.name)
                 }
-                var isDirectory: ObjCBool = false
-                guard FileManager.default.fileExists(atPath: repository.path, isDirectory: &isDirectory),
-                      isDirectory.boolValue else {
-                    throw WorkspaceTaskError.repositoryUnavailable(attachment.name)
-                }
-                repositoryWorkspaces[scope] = TerminalWorkspace(
-                    runtime: runtime,
-                    title: "~/\(attachment.name)",
-                    workingDirectory: repository.path,
+                let workingDirectory = attachment.worktreePath ?? repository.path
+                try installRepositoryWorkspace(
+                    for: scope,
+                    name: attachment.name,
+                    workingDirectory: workingDirectory,
                     startsWithTab: false
                 )
                 repositoryErrors.removeValue(forKey: scope)
@@ -679,6 +823,25 @@ final class WorkspaceViewController: NSViewController {
         }
         updateTaskSidebar()
         installActiveWorkspace()
+    }
+
+    private func installRepositoryWorkspace(
+        for scope: TaskRepositoryScope,
+        name: String,
+        workingDirectory: String,
+        startsWithTab: Bool = true
+    ) throws {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: workingDirectory, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            throw WorkspaceTaskError.repositoryUnavailable(name)
+        }
+        repositoryWorkspaces[scope] = TerminalWorkspace(
+            runtime: runtime,
+            title: "~/\(name)",
+            workingDirectory: workingDirectory,
+            startsWithTab: startsWithTab
+        )
     }
 
     private func toggleTaskExpansion(_ taskID: UUID) {
@@ -1070,6 +1233,169 @@ final class WorkspaceViewController: NSViewController {
 
 }
 
+@MainActor
+private final class WorktreeProvisioningView: NSView, SettingsThemeApplying {
+    private let content = NSStackView()
+    private let artwork: WorkspaceEmptyArtworkView
+    private let repositoryLabel: NSTextField
+    private let detailLabel: NSTextField
+    private let currentAction: WorktreeCurrentActionView
+    private let report: WorktreeProvisioningReport
+
+    init(repositoryName: String, report: WorktreeProvisioningReport) {
+        self.report = report
+        let step = Self.visibleStep(in: report)
+        artwork = WorkspaceEmptyArtworkView(
+            kind: report.failureMessage == nil ? .worktree : .error
+        )
+        repositoryLabel = NSTextField(labelWithString: report.failureMessage == nil
+            ? "Creating \(repositoryName) worktree"
+            : "Could not create \(repositoryName) worktree")
+        detailLabel = NSTextField(wrappingLabelWithString: report.failureMessage ?? "")
+        currentAction = WorktreeCurrentActionView(step: step)
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        installContent()
+        applyTheme()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is unavailable")
+    }
+
+    func applyTheme() {
+        repositoryLabel.textColor = report.failureMessage == nil ? AppTheme.primaryText : .systemRed
+        detailLabel.textColor = .systemRed
+        artwork.needsDisplay = true
+        currentAction.applyTheme()
+    }
+
+    private func installContent() {
+        content.translatesAutoresizingMaskIntoConstraints = false
+        content.orientation = .vertical
+        content.alignment = .centerX
+        content.spacing = 12
+        addSubview(content)
+        NSLayoutConstraint.activate([
+            content.centerXAnchor.constraint(equalTo: centerXAnchor),
+            content.centerYAnchor.constraint(equalTo: centerYAnchor, constant: -18),
+            content.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 32),
+            content.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -32),
+            content.widthAnchor.constraint(lessThanOrEqualToConstant: 520),
+        ])
+
+        artwork.translatesAutoresizingMaskIntoConstraints = false
+        content.addArrangedSubview(artwork)
+        artwork.widthAnchor.constraint(equalToConstant: 184).isActive = true
+        artwork.heightAnchor.constraint(equalToConstant: 122).isActive = true
+        content.setCustomSpacing(20, after: artwork)
+
+        repositoryLabel.font = AppTheme.font(ofSize: AppTheme.typography.title, weight: 650)
+        detailLabel.font = AppTheme.font(ofSize: AppTheme.typography.body)
+        detailLabel.alignment = .center
+        detailLabel.maximumNumberOfLines = 3
+        detailLabel.lineBreakMode = .byTruncatingTail
+        content.addArrangedSubview(repositoryLabel)
+        content.setCustomSpacing(14, after: repositoryLabel)
+        content.addArrangedSubview(currentAction)
+        if report.failureMessage != nil {
+            content.setCustomSpacing(12, after: currentAction)
+            content.addArrangedSubview(detailLabel)
+            detailLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 480).isActive = true
+        }
+    }
+
+    private static func visibleStep(in report: WorktreeProvisioningReport) -> WorktreeProvisioningStep {
+        if let failed = report.steps.last(where: { $0.status == .failed }) {
+            return failed
+        }
+        if let running = report.steps.last(where: { $0.status == .running }) {
+            return running
+        }
+        if let completed = report.steps.last(where: { $0.status == .completed }) {
+            return completed
+        }
+        return report.steps.first(where: { $0.status == .pending })
+            ?? WorktreeProvisioningStep(title: "Preparing", status: .running, detail: "")
+    }
+}
+
+@MainActor
+private final class WorktreeCurrentActionView: NSView, SettingsThemeApplying {
+    private let step: WorktreeProvisioningStep
+    private let progressIndicator = NSProgressIndicator()
+    private let statusIcon = NSImageView()
+    private let titleLabel: NSTextField
+
+    init(step: WorktreeProvisioningStep) {
+        self.step = step
+        titleLabel = NSTextField(labelWithString: Self.progressTitle(for: step.title))
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        installContent()
+        applyTheme()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is unavailable")
+    }
+
+    func applyTheme() {
+        titleLabel.textColor = step.status == .failed ? .systemRed : AppTheme.secondaryText
+        statusIcon.contentTintColor = step.status == .failed ? .systemRed : .systemGreen
+    }
+
+    private func installContent() {
+        titleLabel.font = AppTheme.font(ofSize: AppTheme.typography.body, weight: 500)
+        titleLabel.usesSingleLineMode = true
+        progressIndicator.style = .spinning
+        progressIndicator.controlSize = .small
+        progressIndicator.isIndeterminate = true
+        progressIndicator.translatesAutoresizingMaskIntoConstraints = false
+        statusIcon.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        if step.status == .running || step.status == .pending {
+            addSubview(progressIndicator)
+            progressIndicator.startAnimation(nil)
+        } else {
+            statusIcon.image = NSImage(
+                systemSymbolName: step.status == .failed ? "xmark.circle.fill" : "checkmark.circle.fill",
+                accessibilityDescription: nil
+            )
+            addSubview(statusIcon)
+        }
+        addSubview(titleLabel)
+        let indicator = step.status == .running || step.status == .pending
+            ? progressIndicator
+            : statusIcon
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 22),
+            indicator.leadingAnchor.constraint(equalTo: leadingAnchor),
+            indicator.centerYAnchor.constraint(equalTo: centerYAnchor),
+            indicator.widthAnchor.constraint(equalToConstant: 16),
+            indicator.heightAnchor.constraint(equalToConstant: 16),
+            titleLabel.leadingAnchor.constraint(equalTo: indicator.trailingAnchor, constant: 10),
+            titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor),
+            titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    private static func progressTitle(for title: String) -> String {
+        switch title {
+        case "Fetch origin": "Fetching origin"
+        case "Create branch": "Creating branch"
+        case "Create worktree": "Creating worktree"
+        case "Run post-worktree hook": "Running post-worktree hook"
+        case "Run post-checkout hook": "Running post-checkout hook"
+        case "Run setup script": "Running setup script"
+        default: title
+        }
+    }
+}
+
 private enum WorkspaceTaskError: LocalizedError {
     case repositoryUnavailable(String)
 
@@ -1271,6 +1597,7 @@ private final class WorkspaceEmptyArtworkView: NSView {
     enum Kind {
         case chooseTask
         case terminal
+        case worktree
         case error
     }
 
@@ -1301,6 +1628,8 @@ private final class WorkspaceEmptyArtworkView: NSView {
             drawSidebar(in: card, color: color)
         case .terminal:
             drawTerminal(in: card, color: color)
+        case .worktree:
+            drawWorktree(in: card, color: color)
         case .error:
             drawError(in: card, color: color)
         }
@@ -1362,6 +1691,55 @@ private final class WorkspaceEmptyArtworkView: NSView {
         NSBezierPath(roundedRect: NSRect(x: rect.minX + 57, y: rect.minY + 40, width: 40, height: 5), xRadius: 2.5, yRadius: 2.5).fill()
         AppTheme.tertiaryText.withAlphaComponent(0.3).setFill()
         NSBezierPath(roundedRect: NSRect(x: rect.minX + 57, y: rect.minY + 27, width: 25, height: 4), xRadius: 2, yRadius: 2).fill()
+    }
+
+    private func drawWorktree(in rect: NSRect, color: NSColor) {
+        let headerY = rect.maxY - 21
+        color.withAlphaComponent(0.7).setFill()
+        NSBezierPath(
+            roundedRect: NSRect(x: rect.minX + 13, y: headerY, width: 8, height: 8),
+            xRadius: 4,
+            yRadius: 4
+        ).fill()
+        AppTheme.tertiaryText.withAlphaComponent(0.36).setFill()
+        NSBezierPath(
+            roundedRect: NSRect(x: rect.minX + 25, y: headerY + 2, width: 35, height: 4),
+            xRadius: 2,
+            yRadius: 2
+        ).fill()
+
+        let root = NSPoint(x: rect.minX + 35, y: rect.minY + 25)
+        let split = NSPoint(x: root.x, y: rect.minY + 49)
+        let branch = NSPoint(x: rect.minX + 72, y: split.y)
+        let branchPath = NSBezierPath()
+        branchPath.move(to: root)
+        branchPath.line(to: split)
+        branchPath.line(to: branch)
+        color.withAlphaComponent(0.82).setStroke()
+        branchPath.lineWidth = 3
+        branchPath.lineCapStyle = .round
+        branchPath.stroke()
+        for point in [root, split, branch] {
+            AppTheme.surface.setFill()
+            NSBezierPath(ovalIn: NSRect(x: point.x - 6, y: point.y - 6, width: 12, height: 12)).fill()
+            color.setStroke()
+            let node = NSBezierPath(ovalIn: NSRect(x: point.x - 4.5, y: point.y - 4.5, width: 9, height: 9))
+            node.lineWidth = 2.2
+            node.stroke()
+        }
+
+        AppTheme.primaryText.withAlphaComponent(0.48).setFill()
+        NSBezierPath(
+            roundedRect: NSRect(x: rect.minX + 87, y: rect.minY + 46, width: 24, height: 5),
+            xRadius: 2.5,
+            yRadius: 2.5
+        ).fill()
+        AppTheme.tertiaryText.withAlphaComponent(0.28).setFill()
+        NSBezierPath(
+            roundedRect: NSRect(x: rect.minX + 87, y: rect.minY + 32, width: 16, height: 4),
+            xRadius: 2,
+            yRadius: 2
+        ).fill()
     }
 
     private func drawError(in rect: NSRect, color: NSColor) {
