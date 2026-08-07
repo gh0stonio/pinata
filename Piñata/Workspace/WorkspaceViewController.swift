@@ -761,6 +761,7 @@ final class WorkspaceViewController: NSViewController {
         leftPanelController.setFullScreen(fullScreen)
         updateTrafficLights()
         view.layoutSubtreeIfNeeded()
+        updateWindowMinimumSize()
     }
 
     private func scheduleTransientReveal() {
@@ -1013,11 +1014,30 @@ final class WorkspaceViewController: NSViewController {
         activeTerminalController?.focusActiveTerminal()
     }
 
+    private func updateWindowMinimumSize() {
+        guard let window = view.window else { return }
+
+        let settingsMinimumWidth = AppTheme.settingsRailWidth
+            + SettingsLayout.dividerThickness
+            + SettingsLayout.contentMinimumWidth
+        let sidebarWidth = sidebarPresentation == .docked ? leftPanelWidth : 0
+        let minimumWidth = max(
+            AppTheme.minimumWindowWidth,
+            sidebarWidth + AppTheme.workspaceInset * 2 + settingsMinimumWidth
+        )
+
+        window.minSize = NSSize(width: minimumWidth, height: 600)
+        guard window.contentView?.bounds.width ?? 0 < minimumWidth else { return }
+        window.setContentSize(
+            NSSize(width: minimumWidth, height: window.contentView?.bounds.height ?? 600)
+        )
+    }
+
     private func resizeLeftPanel(by delta: CGFloat) {
         guard sidebarPresentation == .docked else { return }
-        let minimumCenterWidth = settingsController == nil
-            ? AppTheme.minimumCenterWidth
-            : AppTheme.settingsRailWidth + SettingsLayout.contentMinimumWidth
+        let minimumCenterWidth = AppTheme.settingsRailWidth
+            + SettingsLayout.dividerThickness
+            + SettingsLayout.contentMinimumWidth
         let maximumFromWindow = (leftResizeWindowWidth ?? view.bounds.width)
             - minimumCenterWidth
             - AppTheme.workspaceInset * 2
@@ -1032,6 +1052,7 @@ final class WorkspaceViewController: NSViewController {
         leftWidthConstraint.constant = leftPanelWidth
         UserDefaults.standard.set(Double(leftPanelWidth), forKey: Self.leftPanelWidthDefaultsKey)
         view.layoutSubtreeIfNeeded()
+        updateWindowMinimumSize()
     }
 
     private func resizeLeftPanel(with command: PanelResizeHandle.KeyboardCommand) {
