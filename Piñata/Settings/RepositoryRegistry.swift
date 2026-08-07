@@ -120,7 +120,54 @@ struct RepositoryInspector: Sendable {
         )
     }
 
-    private func gitOutput(_ arguments: [String]) throws -> String {
+    func currentBranch(at path: String) throws -> String {
+        try gitOutput(["-C", path, "branch", "--show-current"])
+    }
+
+    func removeWorktree(
+        at path: String,
+        branchHint: String?,
+        from repository: RegisteredRepository
+    ) throws {
+        let targetURL = URL(fileURLWithPath: path).standardizedFileURL
+        let worktrees = parseWorktrees(
+            try gitOutput(["-C", repository.path, "worktree", "list", "--porcelain"])
+        )
+        let worktree = worktrees.first {
+            URL(fileURLWithPath: $0.path).standardizedFileURL == targetURL
+        }
+        let branch = worktree?.branch ?? branchHint
+        let pathExists = FileManager.default.fileExists(atPath: path)
+        guard let branch, branch.hasPrefix("pinata/") else {
+            if worktree != nil || pathExists {
+                throw RepositoryInspectionError.gitFailed(
+                    "Could not verify that the worktree belongs to Piñata."
+                )
+            }
+            return
+        }
+        guard worktree != nil || !pathExists else {
+            throw RepositoryInspectionError.gitFailed(
+                "Could not verify that the path is a Git worktree."
+            )
+        }
+
+        if worktree != nil {
+            _ = try gitOutput(
+                ["-C", repository.path, "worktree", "remove", "--force", path],
+                timeout: 15 * 60
+            )
+        }
+
+        if !(try gitOutput(["-C", repository.path, "branch", "--list", branch])).isEmpty {
+            _ = try gitOutput(["-C", repository.path, "branch", "-D", branch])
+        }
+    }
+
+    private func gitOutput(
+        _ arguments: [String],
+        timeout: TimeInterval = 30
+    ) throws -> String {
         try Task.checkCancellation()
 
         let fileManager = FileManager.default
@@ -150,7 +197,7 @@ struct RepositoryInspector: Sendable {
         process.standardError = errorHandle
         try process.run()
 
-        let deadline = Date().addingTimeInterval(30)
+        let deadline = Date().addingTimeInterval(timeout)
         while process.isRunning {
             if Task.isCancelled {
                 process.terminate()

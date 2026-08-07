@@ -177,6 +177,25 @@ final class CoreLogicTests: XCTestCase {
                 .resolvingSymlinksInPath(),
             URL(fileURLWithPath: path).resolvingSymlinksInPath()
         )
+
+        let unrelatedURL = directoryURL.appendingPathComponent("unrelated", isDirectory: true)
+        try FileManager.default.createDirectory(at: unrelatedURL, withIntermediateDirectories: true)
+        XCTAssertThrowsError(
+            try RepositoryInspector().removeWorktree(
+                at: unrelatedURL.path,
+                branchHint: report.branch,
+                from: repository
+            )
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: unrelatedURL.path))
+
+        try RepositoryInspector().removeWorktree(
+            at: path,
+            branchHint: report.branch,
+            from: repository
+        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: path))
+        XCTAssertEqual(try runGit(["-C", repository.path, "branch", "--list", report.branch]), "")
     }
 
     @MainActor

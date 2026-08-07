@@ -61,7 +61,7 @@ enum AppTheme {
     static let sidebarTaskListTopSpacing: CGFloat = 8
     static let sidebarSectionTitleInset: CGFloat = 28
     static let sidebarItemInset: CGFloat = 10
-    static let sidebarTaskRowHeight: CGFloat = 28
+    static let sidebarTaskRowHeight: CGFloat = 29
     static func sidebarTrailingInset(for visualInset: CGFloat) -> CGFloat {
         visualInset - resizeHandleWidth / 2
     }
@@ -77,6 +77,7 @@ enum AppTheme {
     static let taskModalButtonHeight: CGFloat = 32
     static let taskModalCancelButtonMinimumWidth: CGFloat = 64
     static let taskModalCreateButtonMinimumWidth: CGFloat = 96
+    static let taskModalButtonHorizontalPadding: CGFloat = 24
     static let taskModalButtonSpacing: CGFloat = 12
     static let taskModalButtonCornerRadius: CGFloat = 7
     static let taskModalRowHeight: CGFloat = 35
