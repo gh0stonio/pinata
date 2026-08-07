@@ -8,6 +8,7 @@ final class SettingsViewController: NSViewController {
     private let rail = NSView()
     private let railSeparator = NSView()
     private let content = NSView()
+    private var inputFocusMonitor: Any?
     private var navigationGroupViews: [SettingsNavigationGroupView] = []
     private var selectedPageIndex = 0
     private let themeControl = FlatChoiceControl(labels: ["dark", "light"])
@@ -74,6 +75,24 @@ final class SettingsViewController: NSViewController {
         installContent()
         selectCurrentValues()
         applyTheme()
+    }
+
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        guard inputFocusMonitor == nil else { return }
+        inputFocusMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) {
+            [weak self] event in
+            self?.dismissInputFocusIfNeeded(for: event)
+            return event
+        }
+    }
+
+    override func viewWillDisappear() {
+        super.viewWillDisappear()
+        if let inputFocusMonitor {
+            NSEvent.removeMonitor(inputFocusMonitor)
+            self.inputFocusMonitor = nil
+        }
     }
 
     func applyTheme() {
@@ -183,6 +202,19 @@ final class SettingsViewController: NSViewController {
         intensityControl.selectedIndex = AccentIntensity.allCases.firstIndex(of: settings.accentIntensity) ?? 0
         appFontControl.selectedIndex = AppFontSize.allCases.firstIndex(of: settings.appFontSize) ?? 0
         terminalFontControl.selectedIndex = TerminalFontSize.allCases.firstIndex(of: settings.terminalFontSize) ?? 0
+    }
+
+    private func dismissInputFocusIfNeeded(for event: NSEvent) {
+        guard let window = view.window, event.window === window else { return }
+        let location = view.convert(event.locationInWindow, from: nil)
+        guard view.bounds.contains(location) else { return }
+
+        var hitView = view.hitTest(location)
+        while let currentView = hitView {
+            if currentView is SettingsTextField { return }
+            hitView = currentView.superview
+        }
+        window.makeFirstResponder(nil)
     }
 
     func focusInitialSection() {
