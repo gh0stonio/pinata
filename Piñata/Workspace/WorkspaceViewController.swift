@@ -22,21 +22,31 @@ final class WorkspaceViewController: NSViewController {
         var activeTabID: UUID?
         var nextTabNumber = 2
 
-        init(runtime: GhosttyRuntime, title: String, workingDirectory: String) {
+        init(
+            runtime: GhosttyRuntime,
+            title: String,
+            workingDirectory: String,
+            startsWithTab: Bool = true
+        ) {
             self.title = title
             self.workingDirectory = workingDirectory
-            let tabID = UUID()
-            tabs = [
-                TerminalTab(
-                    id: tabID,
-                    title: title,
-                    controller: TerminalViewController(
-                        runtime: runtime,
-                        workingDirectory: workingDirectory
+            if startsWithTab {
+                let tabID = UUID()
+                tabs = [
+                    TerminalTab(
+                        id: tabID,
+                        title: title,
+                        controller: TerminalViewController(
+                            runtime: runtime,
+                            workingDirectory: workingDirectory
+                        )
                     )
-                )
-            ]
-            activeTabID = tabID
+                ]
+                activeTabID = tabID
+            } else {
+                tabs = []
+                activeTabID = nil
+            }
         }
     }
 
@@ -57,7 +67,6 @@ final class WorkspaceViewController: NSViewController {
     private let edgeRevealZone = EdgeRevealView()
     private let taskStore: TaskRegistryStore
     private let repositoryStore = RepositoryRegistryStore()
-    private let globalWorkspace: TerminalWorkspace
     private var taskWorkspaces: [UUID: TerminalWorkspace] = [:]
     private var repositoryWorkspaces: [TaskRepositoryScope: TerminalWorkspace] = [:]
     private var tasks: [WorkspaceTask]
@@ -80,6 +89,7 @@ final class WorkspaceViewController: NSViewController {
     private var workspaceTopConstraint: NSLayoutConstraint!
     private var workspaceBottomConstraint: NSLayoutConstraint!
     private var workspaceTrailingConstraint: NSLayoutConstraint!
+    private var workspaceHeaderHeightConstraint: NSLayoutConstraint!
 
     private var sidebarPresentation: SidebarPresentation
     private var leftPanelWidth = AppTheme.leftPanelWidth
@@ -92,11 +102,6 @@ final class WorkspaceViewController: NSViewController {
     init(runtime: GhosttyRuntime) {
         self.runtime = runtime
         taskStore = TaskRegistryStore()
-        globalWorkspace = TerminalWorkspace(
-            runtime: runtime,
-            title: "Terminal",
-            workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path
-        )
         do {
             tasks = try taskStore.load().sorted { $0.createdAt > $1.createdAt }
             taskRegistryLoaded = true
@@ -132,6 +137,7 @@ final class WorkspaceViewController: NSViewController {
         configureControllers(in: rootView)
         configureConstraints(in: rootView)
         configureInteractions()
+        installActiveWorkspace()
         applySidebarPresentation()
     }
 
@@ -184,27 +190,32 @@ final class WorkspaceViewController: NSViewController {
 
     @objc func createTerminalTab(_ sender: Any?) {
         guard settingsController == nil, newTaskModal == nil else { return }
-        if case .task(let taskID) = activeScope, taskWorkspaces[taskID] == nil {
+        if case .task(let taskID) = activeScope {
             guard taskErrors[taskID] == nil else { return }
-            taskWorkspaces[taskID] = TerminalWorkspace(
-                runtime: runtime,
-                title: "Terminal",
-                workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path
-            )
-            installActiveWorkspace()
-            return
+            if taskWorkspaces[taskID] == nil {
+                taskWorkspaces[taskID] = TerminalWorkspace(
+                    runtime: runtime,
+                    title: "Terminal",
+                    workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path
+                )
+                installActiveWorkspace()
+                return
+            }
         }
         guard let workspace = activeTerminalWorkspace else { return }
         let id = UUID()
+        let isFirstTab = workspace.tabs.isEmpty
         let tab = TerminalTab(
             id: id,
-            title: "\(workspace.title) \(workspace.nextTabNumber)",
+            title: isFirstTab ? workspace.title : "\(workspace.title) \(workspace.nextTabNumber)",
             controller: TerminalViewController(
                 runtime: runtime,
                 workingDirectory: workspace.workingDirectory
             )
         )
-        workspace.nextTabNumber += 1
+        if !isFirstTab {
+            workspace.nextTabNumber += 1
+        }
         workspace.tabs.append(tab)
         workspace.activeTabID = id
         if isViewLoaded {
@@ -329,7 +340,6 @@ final class WorkspaceViewController: NSViewController {
         rootView.addSubview(leftResizeHandle)
         rootView.addSubview(edgeRevealZone)
         updateTaskSidebar()
-        installActiveWorkspace()
     }
 
     private func configureConstraints(in rootView: NSView) {
@@ -359,6 +369,9 @@ final class WorkspaceViewController: NSViewController {
             equalTo: rootView.trailingAnchor,
             constant: -AppTheme.workspaceInset
         )
+        workspaceHeaderHeightConstraint = workspaceHeader.heightAnchor.constraint(
+            equalToConstant: AppTheme.mainHeaderHeight
+        )
         NSLayoutConstraint.activate([
             leftPanelLeadingConstraint,
             leftPanelTopConstraint,
@@ -377,7 +390,7 @@ final class WorkspaceViewController: NSViewController {
             workspaceHeader.leadingAnchor.constraint(equalTo: mainColumn.leadingAnchor),
             workspaceHeader.trailingAnchor.constraint(equalTo: mainColumn.trailingAnchor),
             workspaceHeader.topAnchor.constraint(equalTo: mainColumn.topAnchor),
-            workspaceHeader.heightAnchor.constraint(equalToConstant: AppTheme.mainHeaderHeight),
+            workspaceHeaderHeightConstraint,
 
             terminalHost.leadingAnchor.constraint(equalTo: mainColumn.leadingAnchor),
             terminalHost.trailingAnchor.constraint(equalTo: mainColumn.trailingAnchor),
@@ -454,7 +467,7 @@ final class WorkspaceViewController: NSViewController {
     private var activeTerminalWorkspace: TerminalWorkspace? {
         switch activeScope {
         case nil:
-            globalWorkspace
+            nil
         case .task(let taskID):
             taskErrors[taskID] == nil ? taskWorkspaces[taskID] : nil
         case .repository(let scope):
@@ -463,7 +476,7 @@ final class WorkspaceViewController: NSViewController {
     }
 
     private var allTerminalWorkspaces: [TerminalWorkspace] {
-        [globalWorkspace] + Array(taskWorkspaces.values) + Array(repositoryWorkspaces.values)
+        Array(taskWorkspaces.values) + Array(repositoryWorkspaces.values)
     }
 
     private var activeTerminalController: TerminalViewController? {
@@ -487,19 +500,16 @@ final class WorkspaceViewController: NSViewController {
     private func installActiveWorkspace() {
         terminalHost.subviews.forEach { $0.removeFromSuperview() }
         guard let workspace = activeTerminalWorkspace else {
-            let allowsCreateTab: Bool
-            if case .task(let taskID) = activeScope {
-                allowsCreateTab = taskErrors[taskID] == nil
-            } else {
-                allowsCreateTab = false
-            }
-            workspaceHeader.setEmptyScope(
-                "no tabs in this scope",
-                allowsCreateTab: allowsCreateTab
-            )
+            setWorkspaceHeaderVisible(false)
             installScopeMessage()
             return
         }
+        if workspace.tabs.isEmpty {
+            setWorkspaceHeaderVisible(false)
+            installScopeMessage()
+            return
+        }
+        setWorkspaceHeaderVisible(true)
         workspaceHeader.setTabs(
             workspace.tabs.map { (id: $0.id, title: $0.title) },
             activeID: workspace.activeTabID
@@ -546,24 +556,30 @@ final class WorkspaceViewController: NSViewController {
     }
 
     private func installScopeMessage() {
-        let title: String
-        let detail: String?
+        let state: WorkspaceEmptyStateView.State
         switch activeScope {
         case .task(let taskID):
             if let error = taskErrors[taskID] {
-                title = "Task failed"
-                detail = error
+                state = .error(title: "Task failed", detail: error)
             } else {
-                title = "No tabs in this scope"
-                detail = nil
+                state = .readyToStart
             }
         case .repository(let scope):
-            title = "Repository workspace failed"
-            detail = repositoryErrors[scope]
+            if let error = repositoryErrors[scope] {
+                state = .error(title: "Repository workspace failed", detail: error)
+            } else {
+                state = .readyToStart
+            }
         case nil:
-            return
+            state = .chooseTask
         }
-        let message = WorkspaceScopeMessageView(title: title, detail: detail)
+        let message = WorkspaceEmptyStateView(state: state)
+        message.onCreateTask = { [weak self] in
+            self?.presentNewTask(nil)
+        }
+        message.onCreateTerminal = { [weak self] in
+            self?.createTerminalTab(nil)
+        }
         message.translatesAutoresizingMaskIntoConstraints = false
         terminalHost.addSubview(message)
         NSLayoutConstraint.activate([
@@ -578,6 +594,11 @@ final class WorkspaceViewController: NSViewController {
                 constant: -24
             ),
         ])
+    }
+
+    private func setWorkspaceHeaderVisible(_ visible: Bool) {
+        workspaceHeader.isHidden = !visible
+        workspaceHeaderHeightConstraint.constant = visible ? AppTheme.mainHeaderHeight : 0
     }
 
     private func createTask(title: String, repositories: [RegisteredRepository]) {
@@ -648,7 +669,8 @@ final class WorkspaceViewController: NSViewController {
                 repositoryWorkspaces[scope] = TerminalWorkspace(
                     runtime: runtime,
                     title: "~/\(attachment.name)",
-                    workingDirectory: repository.path
+                    workingDirectory: repository.path,
+                    startsWithTab: false
                 )
                 repositoryErrors.removeValue(forKey: scope)
             } catch {
@@ -1039,26 +1061,85 @@ private enum WorkspaceTaskError: LocalizedError {
 }
 
 @MainActor
-private final class WorkspaceScopeMessageView: NSStackView {
-    init(title: String, detail: String?) {
+private final class WorkspaceEmptyStateView: NSStackView {
+    enum State {
+        case chooseTask
+        case readyToStart
+        case error(title: String, detail: String)
+    }
+
+    private enum Action {
+        case createTask
+        case createTerminal
+    }
+
+    var onCreateTask: (() -> Void)?
+    var onCreateTerminal: (() -> Void)?
+
+    init(state: State) {
         super.init(frame: .zero)
         orientation = .vertical
         alignment = .centerX
-        spacing = 8
+        spacing = 14
+
+        let artwork: WorkspaceEmptyArtworkView
+        let title: String
+        let detail: String
+        let action: Action?
+        switch state {
+        case .chooseTask:
+            artwork = WorkspaceEmptyArtworkView(kind: .chooseTask)
+            title = "Pick a task, make a little magic."
+            detail = "Your workspace is waiting. Choose a task from the sidebar to wake it up."
+            action = .createTask
+        case .readyToStart:
+            artwork = WorkspaceEmptyArtworkView(kind: .terminal)
+            title = "This task is ready for takeoff."
+            detail = "Open its first terminal and make a little productive noise."
+            action = .createTerminal
+        case let .error(title: errorTitle, detail: errorDetail):
+            artwork = WorkspaceEmptyArtworkView(kind: .error)
+            title = errorTitle
+            detail = errorDetail
+            action = nil
+        }
+
+        artwork.translatesAutoresizingMaskIntoConstraints = false
+        addArrangedSubview(artwork)
+        artwork.widthAnchor.constraint(equalToConstant: 184).isActive = true
+        artwork.heightAnchor.constraint(equalToConstant: 122).isActive = true
+        setCustomSpacing(18, after: artwork)
 
         let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsHeading, weight: 650)
-        titleLabel.textColor = detail == nil ? AppTheme.secondaryText : .systemRed
+        titleLabel.font = AppTheme.font(ofSize: AppTheme.typography.title, weight: 650)
+        titleLabel.textColor = state.isError ? .systemRed : AppTheme.primaryText
         addArrangedSubview(titleLabel)
+        setCustomSpacing(12, after: titleLabel)
 
-        if let detail {
-            let detailLabel = NSTextField(wrappingLabelWithString: detail)
-            detailLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsBody)
-            detailLabel.textColor = AppTheme.tertiaryText
-            detailLabel.alignment = .center
-            detailLabel.maximumNumberOfLines = 0
-            addArrangedSubview(detailLabel)
-            detailLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 520).isActive = true
+        let detailLabel = NSTextField(wrappingLabelWithString: detail)
+        detailLabel.font = AppTheme.font(ofSize: AppTheme.typography.body)
+        detailLabel.textColor = AppTheme.tertiaryText
+        detailLabel.alignment = .center
+        detailLabel.maximumNumberOfLines = 0
+        addArrangedSubview(detailLabel)
+        detailLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 420).isActive = true
+
+        if let action {
+            let button: WorkspaceEmptyActionButton
+            switch action {
+            case .createTask:
+                button = WorkspaceEmptyActionButton(title: "Create a task", symbolName: "plus")
+                button.action = #selector(createTask)
+            case .createTerminal:
+                button = WorkspaceEmptyActionButton(
+                    title: "Open first terminal",
+                    symbolName: "terminal"
+                )
+                button.action = #selector(createTerminal)
+            }
+            button.target = self
+            addArrangedSubview(button)
+            setCustomSpacing(28, after: detailLabel)
         }
     }
 
@@ -1066,6 +1147,223 @@ private final class WorkspaceScopeMessageView: NSStackView {
     required init(coder: NSCoder) {
         fatalError("init(coder:) is unavailable")
     }
+
+    @objc private func createTerminal() {
+        onCreateTerminal?()
+    }
+
+    @objc private func createTask() {
+        onCreateTask?()
+    }
+}
+
+private extension WorkspaceEmptyStateView.State {
+    var isError: Bool {
+        if case .error = self { return true }
+        return false
+    }
+}
+
+@MainActor
+private final class WorkspaceEmptyActionButton: AppButton {
+    private let terminalIcon = NSImageView()
+    private let titleLabel: NSTextField
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(
+            width: AppTheme.workspaceTabHorizontalInset
+                + AppTheme.workspaceTabIconWidth
+                + AppTheme.workspaceTabContentGap
+                + titleLabel.intrinsicContentSize.width
+                + AppTheme.workspaceTabHorizontalInset,
+            height: 34
+        )
+    }
+
+    init(title: String, symbolName: String) {
+        titleLabel = NSTextField(labelWithString: title)
+        super.init(role: .accent)
+        translatesAutoresizingMaskIntoConstraints = false
+        self.title = ""
+        setAccessibilityLabel(title)
+        toolTip = title
+        layer?.cornerRadius = AppTheme.workspaceControlCornerRadius
+        layer?.cornerCurve = .continuous
+        terminalIcon.image = NSImage(
+            systemSymbolName: symbolName,
+            accessibilityDescription: nil
+        )?.withSymbolConfiguration(
+            NSImage.SymbolConfiguration(
+                pointSize: AppTheme.workspaceTabIconSymbolSize,
+                weight: .medium
+            )
+        )
+        terminalIcon.imageScaling = .scaleProportionallyDown
+        titleLabel.usesSingleLineMode = true
+        [terminalIcon, titleLabel].forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+            addSubview($0)
+        }
+        NSLayoutConstraint.activate([
+            terminalIcon.leadingAnchor.constraint(
+                equalTo: leadingAnchor,
+                constant: AppTheme.workspaceTabHorizontalInset
+            ),
+            terminalIcon.centerYAnchor.constraint(equalTo: centerYAnchor),
+            terminalIcon.widthAnchor.constraint(equalToConstant: AppTheme.workspaceTabIconWidth),
+            terminalIcon.heightAnchor.constraint(equalToConstant: AppTheme.workspaceTabIconHeight),
+            titleLabel.leadingAnchor.constraint(
+                equalTo: terminalIcon.trailingAnchor,
+                constant: AppTheme.workspaceTabContentGap
+            ),
+            titleLabel.trailingAnchor.constraint(
+                equalTo: trailingAnchor,
+                constant: -AppTheme.workspaceTabHorizontalInset
+            ),
+            titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+        applyTheme()
+        heightAnchor.constraint(equalToConstant: 34).isActive = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is unavailable")
+    }
+
+    override func applyTheme() {
+        super.applyTheme()
+        let foreground = contentTintColor ?? AppTheme.panelAccentIcon
+        terminalIcon.contentTintColor = foreground
+        titleLabel.font = AppTheme.font(ofSize: AppTheme.typography.body, weight: 650)
+        titleLabel.textColor = foreground
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard super.hitTest(point) != nil else { return nil }
+        return self
+    }
+}
+
+@MainActor
+private final class WorkspaceEmptyArtworkView: NSView {
+    enum Kind {
+        case chooseTask
+        case terminal
+        case error
+    }
+
+    private let kind: Kind
+
+    init(kind: Kind) {
+        self.kind = kind
+        super.init(frame: .zero)
+        wantsLayer = true
+        setAccessibilityElement(false)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is unavailable")
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        let color = kind == .error ? NSColor.systemRed : AppTheme.panelAccentIcon
+        let card = NSRect(x: 28, y: 12, width: 128, height: 92)
+        let shadow = card.offsetBy(dx: -13, dy: 11)
+        drawCard(shadow, fill: AppTheme.controlSelection, border: AppTheme.border)
+        drawCard(card, fill: AppTheme.surface, border: color.withAlphaComponent(0.5))
+
+        switch kind {
+        case .chooseTask:
+            drawSidebar(in: card, color: color)
+        case .terminal:
+            drawTerminal(in: card, color: color)
+        case .error:
+            drawError(in: card, color: color)
+        }
+    }
+
+    private func drawCard(_ rect: NSRect, fill: NSColor, border: NSColor) {
+        let path = NSBezierPath(roundedRect: rect, xRadius: 10, yRadius: 10)
+        fill.setFill()
+        path.fill()
+        border.setStroke()
+        path.lineWidth = 1
+        path.stroke()
+    }
+
+    private func drawSidebar(in rect: NSRect, color: NSColor) {
+        let sidebar = NSRect(x: rect.minX + 13, y: rect.minY + 13, width: 32, height: 66)
+        let path = NSBezierPath(roundedRect: sidebar, xRadius: 5, yRadius: 5)
+        AppTheme.chromeBackground.setFill()
+        path.fill()
+        color.withAlphaComponent(0.76).setFill()
+        NSBezierPath(roundedRect: NSRect(x: sidebar.minX + 5, y: sidebar.maxY - 17, width: 22, height: 6), xRadius: 3, yRadius: 3).fill()
+        for offset in [31, 44, 57] {
+            AppTheme.tertiaryText.withAlphaComponent(0.36).setFill()
+            NSBezierPath(roundedRect: NSRect(x: sidebar.minX + 5, y: sidebar.maxY - CGFloat(offset), width: 17, height: 3), xRadius: 1.5, yRadius: 1.5).fill()
+        }
+        let workspace = NSRect(x: rect.minX + 58, y: rect.minY + 23, width: 51, height: 47)
+        let workspacePath = NSBezierPath(roundedRect: workspace, xRadius: 5, yRadius: 5)
+        AppTheme.chromeBackground.setFill()
+        workspacePath.fill()
+        color.withAlphaComponent(0.68).setFill()
+        NSBezierPath(
+            roundedRect: NSRect(x: workspace.minX + 8, y: workspace.maxY - 16, width: 35, height: 6),
+            xRadius: 3,
+            yRadius: 3
+        ).fill()
+        AppTheme.tertiaryText.withAlphaComponent(0.3).setFill()
+        NSBezierPath(
+            roundedRect: NSRect(x: workspace.minX + 8, y: workspace.maxY - 30, width: 25, height: 4),
+            xRadius: 2,
+            yRadius: 2
+        ).fill()
+    }
+
+    private func drawTerminal(in rect: NSRect, color: NSColor) {
+        let headerY = rect.maxY - 21
+        color.withAlphaComponent(0.7).setFill()
+        NSBezierPath(roundedRect: NSRect(x: rect.minX + 13, y: headerY, width: 8, height: 8), xRadius: 4, yRadius: 4).fill()
+        AppTheme.tertiaryText.withAlphaComponent(0.36).setFill()
+        NSBezierPath(roundedRect: NSRect(x: rect.minX + 25, y: headerY + 2, width: 35, height: 4), xRadius: 2, yRadius: 2).fill()
+        let prompt = NSAttributedString(
+            string: ">_",
+            attributes: [
+                .font: NSFont.monospacedSystemFont(ofSize: 23, weight: .bold),
+                .foregroundColor: color,
+            ]
+        )
+        prompt.draw(at: NSPoint(x: rect.minX + 20, y: rect.minY + 27))
+        AppTheme.primaryText.withAlphaComponent(0.58).setFill()
+        NSBezierPath(roundedRect: NSRect(x: rect.minX + 57, y: rect.minY + 40, width: 40, height: 5), xRadius: 2.5, yRadius: 2.5).fill()
+        AppTheme.tertiaryText.withAlphaComponent(0.3).setFill()
+        NSBezierPath(roundedRect: NSRect(x: rect.minX + 57, y: rect.minY + 27, width: 25, height: 4), xRadius: 2, yRadius: 2).fill()
+    }
+
+    private func drawError(in rect: NSRect, color: NSColor) {
+        let triangle = NSBezierPath()
+        triangle.move(to: NSPoint(x: rect.midX, y: rect.maxY - 18))
+        triangle.line(to: NSPoint(x: rect.minX + 35, y: rect.minY + 24))
+        triangle.line(to: NSPoint(x: rect.maxX - 35, y: rect.minY + 24))
+        triangle.close()
+        color.withAlphaComponent(0.18).setFill()
+        triangle.fill()
+        color.withAlphaComponent(0.82).setStroke()
+        triangle.lineWidth = 2
+        triangle.stroke()
+        let mark = NSAttributedString(
+            string: "!",
+            attributes: [
+                .font: AppTheme.font(ofSize: 28, weight: 700),
+                .foregroundColor: color,
+            ]
+        )
+        mark.draw(at: NSPoint(x: rect.midX - 4, y: rect.minY + 33))
+    }
+
 }
 
 @MainActor
