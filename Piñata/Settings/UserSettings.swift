@@ -8,6 +8,7 @@ enum ThemePreference: String, Codable, CaseIterable {
 struct ThemePalette {
     let background: UInt32
     let chromeBackground: UInt32
+    let chromeHoverBackground: UInt32
     let surface: UInt32
     let controlBackground: UInt32
     let controlSelection: UInt32
@@ -26,11 +27,12 @@ extension ThemePreference {
             ThemePalette(
                 background: 0x282C34,
                 chromeBackground: 0x21252B,
+                chromeHoverBackground: 0x2C3036,
                 surface: 0x2C323C,
                 controlBackground: 0x343B47,
                 controlSelection: 0x252A33,
                 border: 0x353A3C,
-                primaryText: 0xFFFFFF,
+                primaryText: 0xD9D9D9,
                 secondaryText: 0xB6BDC0,
                 tertiaryText: 0xA6AEB2,
                 terminalBackground: 0x282C34,
@@ -40,6 +42,7 @@ extension ThemePreference {
             ThemePalette(
                 background: 0xEEF1F3,
                 chromeBackground: 0xE7EBEE,
+                chromeHoverBackground: 0xDDE2E6,
                 surface: 0xFFFFFF,
                 controlBackground: 0xE5E9EC,
                 controlSelection: 0xFFFFFF,

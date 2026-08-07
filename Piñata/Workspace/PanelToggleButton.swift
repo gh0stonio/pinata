@@ -9,6 +9,8 @@ final class WorkspaceHeaderView: NSView {
     private let tabsStack = NSStackView()
     private let tabsScrollView = NSScrollView()
     private let separator = NSView()
+    private let emptyLabel = NSTextField(labelWithString: "")
+    private var tabTrackingArea: NSTrackingArea?
     private let newTabButton = PanelToggleButton(
         symbolName: "plus",
         accessibilityLabel: "New terminal tab",
@@ -25,6 +27,8 @@ final class WorkspaceHeaderView: NSView {
         wantsLayer = true
         separator.translatesAutoresizingMaskIntoConstraints = false
         separator.wantsLayer = true
+        emptyLabel.translatesAutoresizingMaskIntoConstraints = false
+        emptyLabel.usesSingleLineMode = true
         tabsScrollView.translatesAutoresizingMaskIntoConstraints = false
         tabsScrollView.drawsBackground = false
         tabsScrollView.borderType = .noBorder
@@ -37,10 +41,11 @@ final class WorkspaceHeaderView: NSView {
         tabsStack.alignment = .centerY
         tabsStack.spacing = AppTheme.workspaceTabSpacing
         tabsStack.setContentHuggingPriority(.required, for: .horizontal)
+        tabsStack.addArrangedSubview(emptyLabel)
+        tabsStack.addArrangedSubview(newTabButton)
         tabsScrollView.documentView = tabsStack
 
         addSubview(tabsScrollView)
-        addSubview(newTabButton)
         addSubview(separator)
 
         NSLayoutConstraint.activate([
@@ -51,8 +56,8 @@ final class WorkspaceHeaderView: NSView {
             tabsScrollView.centerYAnchor.constraint(equalTo: centerYAnchor),
             tabsScrollView.heightAnchor.constraint(equalToConstant: AppTheme.workspaceTabHeight),
             tabsScrollView.trailingAnchor.constraint(
-                equalTo: newTabButton.leadingAnchor,
-                constant: -AppTheme.workspaceControlGap
+                equalTo: trailingAnchor,
+                constant: -AppTheme.workspaceContentInset
             ),
             tabsStack.leadingAnchor.constraint(
                 equalTo: tabsScrollView.contentView.leadingAnchor
@@ -65,12 +70,6 @@ final class WorkspaceHeaderView: NSView {
             ),
             tabsStack.widthAnchor.constraint(
                 greaterThanOrEqualTo: tabsScrollView.contentView.widthAnchor
-            ),
-
-            newTabButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            newTabButton.trailingAnchor.constraint(
-                equalTo: trailingAnchor,
-                constant: -AppTheme.workspaceContentInset
             ),
 
             separator.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -91,12 +90,12 @@ final class WorkspaceHeaderView: NSView {
     }
 
     func setTabs(_ tabs: [(id: UUID, title: String)], activeID: UUID?) {
-        tabsStack.arrangedSubviews.forEach {
-            tabsStack.removeArrangedSubview($0)
-            $0.removeFromSuperview()
-        }
+        tabsScrollView.isHidden = false
+        newTabButton.isHidden = false
+        emptyLabel.isHidden = true
+        removeTabs()
         for tab in tabs {
-            let item = WorkspaceTabItemView(
+            let item = TabButton(
                 id: tab.id,
                 title: tab.title,
                 selected: tab.id == activeID
@@ -107,7 +106,7 @@ final class WorkspaceHeaderView: NSView {
             item.onClose = { [weak self] id in
                 self?.onCloseTab?(id)
             }
-            tabsStack.addArrangedSubview(item)
+            tabsStack.insertArrangedSubview(item, at: tabsStack.arrangedSubviews.count - 1)
             if tab.id == activeID {
                 DispatchQueue.main.async {
                     item.scrollToVisible(item.bounds)
@@ -116,126 +115,190 @@ final class WorkspaceHeaderView: NSView {
         }
     }
 
+    func setEmptyScope(_ title: String, allowsCreateTab: Bool = true) {
+        removeTabs()
+        tabsScrollView.isHidden = false
+        newTabButton.isHidden = !allowsCreateTab
+        emptyLabel.stringValue = title
+        emptyLabel.isHidden = false
+    }
+
     func applyTheme() {
         layer?.backgroundColor = AppTheme.background.cgColor
         separator.layer?.backgroundColor = AppTheme.border.cgColor
+        emptyLabel.font = .monospacedSystemFont(
+            ofSize: AppTheme.typography.settingsValue,
+            weight: .regular
+        )
+        emptyLabel.textColor = AppTheme.tertiaryText
         tabsStack.arrangedSubviews
-            .compactMap { $0 as? WorkspaceTabItemView }
+            .compactMap { $0 as? TabButton }
             .forEach { $0.applyTheme() }
         newTabButton.applyTheme()
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tabTrackingArea { removeTrackingArea(tabTrackingArea) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.activeAlways, .mouseEnteredAndExited, .mouseMoved, .inVisibleRect],
+            owner: self
+        )
+        addTrackingArea(area)
+        tabTrackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        updateHoveredTab(with: event)
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        updateHoveredTab(with: event)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        tabsStack.arrangedSubviews
+            .compactMap { $0 as? TabButton }
+            .forEach { $0.setPointerState(hovered: false, closeHovered: false) }
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let localPoint = convert(point, from: superview)
+        guard tabsScrollView.frame.contains(localPoint) else {
+            return super.hitTest(point)
+        }
+        for tab in tabsStack.arrangedSubviews.reversed() {
+            if tab.bounds.contains(tab.convert(localPoint, from: self)) {
+                return tab
+            }
+        }
+        return super.hitTest(point)
     }
 
     @objc private func createTab() {
         onCreateTab?()
     }
 
+    private func removeTabs() {
+        tabsStack.arrangedSubviews
+            .compactMap { $0 as? TabButton }
+            .forEach {
+                tabsStack.removeArrangedSubview($0)
+                $0.removeFromSuperview()
+            }
+    }
+
+    private func updateHoveredTab(with event: NSEvent) {
+        let location = convert(event.locationInWindow, from: nil)
+        let tabs = tabsStack.arrangedSubviews.compactMap { $0 as? TabButton }
+        let hoveredTab = tabs
+            .first { tab in
+                tabsScrollView.frame.contains(location)
+                    && tab.convert(tab.bounds, to: self).contains(location)
+            }
+        tabs.forEach { tab in
+            let hovered = tab === hoveredTab
+            tab.setPointerState(
+                hovered: hovered,
+                closeHovered: hovered && tab.closeHitRect.contains(
+                    tab.convert(location, from: self)
+                )
+            )
+        }
+    }
+
 }
 
 @MainActor
-private final class WorkspaceTabItemView: NSView {
+final class TabButton: AppButton {
     var onSelect: ((UUID) -> Void)?
     var onClose: ((UUID) -> Void)?
 
     private let tabID: UUID
     private let selected: Bool
-    private let backgroundLayer = CALayer()
-    private let selectButton: WorkspaceTabButton
-    private let closeButton: PanelToggleButton
+    private let terminalIcon = NSImageView()
+    private let titleLabel: NSTextField
+    private let closeIcon = NSImageView()
+    private let closeHoverLayer = CALayer()
+    private var closeHovered = false
+    private var activationPoint: NSPoint?
+
+    override var usesAutomaticHoverTracking: Bool { false }
 
     init(id: UUID, title: String, selected: Bool) {
         tabID = id
         self.selected = selected
-        selectButton = WorkspaceTabButton(title: title, selected: selected)
-        closeButton = PanelToggleButton(
-            symbolName: "xmark",
-            accessibilityLabel: "Close \(title)",
-            controlSide: AppTheme.workspaceTabCloseControlSize,
-            symbolPointSize: AppTheme.workspaceTabCloseSymbolSize,
-            hoverStyle: .none
+        titleLabel = NSTextField(labelWithString: title)
+        super.init(role: selected ? .accent : .naked)
+        translatesAutoresizingMaskIntoConstraints = false
+        layer?.cornerRadius = AppTheme.workspaceControlCornerRadius
+        target = self
+        action = #selector(activate)
+        closeHoverLayer.cornerRadius = AppTheme.workspaceTabCloseHoverCornerRadius
+        layer?.addSublayer(closeHoverLayer)
+        terminalIcon.image = NSImage(
+            systemSymbolName: "terminal",
+            accessibilityDescription: nil
+        )?.withSymbolConfiguration(
+            NSImage.SymbolConfiguration(
+                pointSize: AppTheme.workspaceTabIconSymbolSize,
+                weight: .medium
+            )
         )
-        super.init(frame: .zero)
-        translatesAutoresizingMaskIntoConstraints = false
-        wantsLayer = true
-        layer?.insertSublayer(backgroundLayer, at: 0)
-        backgroundLayer.cornerRadius = AppTheme.workspaceControlCornerRadius
-
-        addSubview(selectButton)
-        addSubview(closeButton)
-        NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: AppTheme.workspaceTabHeight),
-            selectButton.leadingAnchor.constraint(equalTo: leadingAnchor),
-            selectButton.topAnchor.constraint(equalTo: topAnchor),
-            selectButton.bottomAnchor.constraint(equalTo: bottomAnchor),
-            closeButton.leadingAnchor.constraint(equalTo: selectButton.trailingAnchor),
-            closeButton.trailingAnchor.constraint(
-                equalTo: trailingAnchor,
-                constant: -AppTheme.workspaceTabCloseInset
-            ),
-            closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-        ])
-
-        selectButton.target = self
-        selectButton.action = #selector(selectTab)
-        closeButton.target = self
-        closeButton.action = #selector(closeTab)
-        closeButton.toolTip = "Close \(title)"
-        applyTheme()
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) is unavailable")
-    }
-
-    override func layout() {
-        super.layout()
-        backgroundLayer.frame = bounds
-    }
-
-    func applyTheme() {
-        backgroundLayer.backgroundColor =
-            (selected ? AppTheme.panelAccentBackground : NSColor.clear).cgColor
-        backgroundLayer.borderColor = (
-            selected ? AppTheme.panelAccentIcon.withAlphaComponent(0.35) : AppTheme.border
-        ).cgColor
-        backgroundLayer.borderWidth = selected ? 1 : 0
-        selectButton.applyTheme()
-        closeButton.normalForegroundColor =
-            selected ? AppTheme.panelAccentIcon : AppTheme.tertiaryText
-        closeButton.applyTheme()
-    }
-
-    @objc private func selectTab() {
-        onSelect?(tabID)
-    }
-
-    @objc private func closeTab() {
-        onClose?(tabID)
-    }
-}
-
-@MainActor
-private final class WorkspaceTabButton: NSButton {
-    private let selected: Bool
-
-    init(title: String, selected: Bool) {
-        self.selected = selected
-        super.init(frame: .zero)
-        translatesAutoresizingMaskIntoConstraints = false
-        isBordered = false
-        bezelStyle = .regularSquare
-        image = NSImage(systemSymbolName: "terminal", accessibilityDescription: nil)
-        imagePosition = .imageLeading
-        imageScaling = .scaleProportionallyDown
-        imageHugsTitle = true
-        self.title = title
-        focusRingType = .none
+        terminalIcon.imageScaling = .scaleProportionallyDown
+        titleLabel.usesSingleLineMode = true
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        closeIcon.image = NSImage(
+            systemSymbolName: "xmark",
+            accessibilityDescription: "Close \(title)"
+        )?.withSymbolConfiguration(
+            NSImage.SymbolConfiguration(
+                pointSize: AppTheme.workspaceTabCloseSymbolSize,
+                weight: .medium
+            )
+        )
+        closeIcon.imageScaling = .scaleProportionallyDown
+        [terminalIcon, titleLabel, closeIcon].forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+            addSubview($0)
+        }
         setAccessibilityLabel(title)
-
+        setAccessibilityCustomActions([
+            NSAccessibilityCustomAction(name: "Close \(title)") { [weak self] in
+                guard let self else { return false }
+                onClose?(tabID)
+                return true
+            },
+        ])
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: AppTheme.workspaceTabHeight),
             widthAnchor.constraint(greaterThanOrEqualToConstant: AppTheme.workspaceTabMinimumWidth),
             widthAnchor.constraint(lessThanOrEqualToConstant: AppTheme.workspaceTabMaximumWidth),
+            terminalIcon.leadingAnchor.constraint(
+                equalTo: leadingAnchor,
+                constant: AppTheme.workspaceTabHorizontalInset
+            ),
+            terminalIcon.centerYAnchor.constraint(equalTo: centerYAnchor),
+            terminalIcon.widthAnchor.constraint(equalToConstant: AppTheme.workspaceTabIconWidth),
+            terminalIcon.heightAnchor.constraint(equalToConstant: AppTheme.workspaceTabIconHeight),
+            titleLabel.leadingAnchor.constraint(
+                equalTo: terminalIcon.trailingAnchor,
+                constant: AppTheme.workspaceTabContentGap
+            ),
+            titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            closeIcon.leadingAnchor.constraint(
+                equalTo: titleLabel.trailingAnchor,
+                constant: AppTheme.workspaceTabAccessoryGap
+            ),
+            closeIcon.trailingAnchor.constraint(
+                equalTo: trailingAnchor,
+                constant: -AppTheme.workspaceTabCloseInset
+            ),
+            closeIcon.centerYAnchor.constraint(equalTo: centerYAnchor),
+            closeIcon.widthAnchor.constraint(equalToConstant: AppTheme.workspaceTabCloseSymbolSize),
+            closeIcon.heightAnchor.constraint(equalToConstant: AppTheme.workspaceTabCloseSymbolSize),
         ])
         applyTheme()
     }
@@ -245,26 +308,107 @@ private final class WorkspaceTabButton: NSButton {
         fatalError("init(coder:) is unavailable")
     }
 
-    func applyTheme() {
-        let foreground = selected ? AppTheme.panelAccentIcon : AppTheme.tertiaryText
-        contentTintColor = foreground
-        font = AppTheme.font(ofSize: AppTheme.typography.label, weight: 600)
-        attributedTitle = NSAttributedString(
-            string: title,
-            attributes: [
-                .font: font as Any,
-                .foregroundColor: foreground,
-            ]
+    override func applyTheme() {
+        super.applyTheme()
+        let foreground = contentTintColor ?? AppTheme.tertiaryText
+        let closeAppearance = AppTheme.buttonAppearance(
+            role: selected ? .accentIcon : .icon,
+            hovered: closeHovered
         )
+        terminalIcon.contentTintColor = foreground
+        titleLabel.font = AppTheme.font(ofSize: AppTheme.typography.body, weight: 600)
+        titleLabel.textColor = foreground
+        closeIcon.contentTintColor = closeHovered ? closeAppearance.foreground : foreground
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        let closeBackground = selected
+            ? closeAppearance.background
+            : AppTheme.workspaceTabNeutralCloseHoverBackground
+        closeHoverLayer.backgroundColor = (closeHovered ? closeBackground : NSColor.clear).cgColor
+        CATransaction.commit()
+    }
+
+    override func layout() {
+        super.layout()
+        closeHoverLayer.frame = NSRect(
+            x: closeIcon.frame.midX - AppTheme.workspaceTabCloseHoverSize / 2,
+            y: closeIcon.frame.midY - AppTheme.workspaceTabCloseHoverSize / 2,
+            width: AppTheme.workspaceTabCloseHoverSize,
+            height: AppTheme.workspaceTabCloseHoverSize
+        )
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(
+            width: AppTheme.workspaceTabHorizontalInset
+                + AppTheme.workspaceTabIconWidth
+                + AppTheme.workspaceTabContentGap
+                + titleLabel.intrinsicContentSize.width
+                + AppTheme.workspaceTabAccessoryGap
+                + AppTheme.workspaceTabCloseSymbolSize
+                + AppTheme.workspaceTabCloseInset,
+            height: AppTheme.workspaceTabHeight
+        )
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard super.hitTest(point) != nil else { return nil }
+        return self
+    }
+
+    var closeHitRect: NSRect {
+        NSRect(
+            x: closeIcon.frame.midX - AppTheme.workspaceTabCloseHoverSize / 2,
+            y: closeIcon.frame.midY - AppTheme.workspaceTabCloseHoverSize / 2,
+            width: AppTheme.workspaceTabCloseHoverSize,
+            height: AppTheme.workspaceTabCloseHoverSize
+        )
+    }
+
+    func setPointerState(hovered: Bool, closeHovered: Bool) {
+        let closeChanged = self.closeHovered != closeHovered
+        self.closeHovered = closeHovered
+        let tabHovered = hovered && !selected
+        let tabChanged = isHovering != tabHovered
+        setHovering(tabHovered)
+        if closeChanged, !tabChanged {
+            applyTheme()
+        }
+    }
+
+    override func accessibilityPerformPress() -> Bool {
+        onSelect?(tabID)
+        return true
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        activationPoint = convert(event.locationInWindow, from: nil)
+        defer { activationPoint = nil }
+        super.mouseDown(with: event)
+    }
+
+    func performPointerAction(at point: NSPoint) {
+        if closeHitRect.contains(point) {
+            onClose?(tabID)
+        } else {
+            onSelect?(tabID)
+        }
+    }
+
+    @objc private func activate() {
+        guard let activationPoint else {
+            onSelect?(tabID)
+            return
+        }
+        performPointerAction(at: activationPoint)
     }
 }
 
 @MainActor
-final class PanelToggleButton: NSButton {
+final class PanelToggleButton: AppButton {
     enum HoverStyle {
         case background
         case foregroundOnly
-        case none
     }
     var panelVisible = false {
         didSet { updateAppearance() }
@@ -273,11 +417,8 @@ final class PanelToggleButton: NSButton {
         didSet { updateAppearance() }
     }
 
-    private var trackingArea: NSTrackingArea?
-    private let backgroundLayer = CALayer()
     private let controlSide: CGFloat
     private let hoverStyle: HoverStyle
-    private var isHovering = false
 
     init(
         symbolName: String,
@@ -291,10 +432,7 @@ final class PanelToggleButton: NSButton {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
-        backgroundLayer.cornerRadius = AppTheme.workspaceControlCornerRadius
-        layer?.insertSublayer(backgroundLayer, at: 0)
-        isBordered = false
-        bezelStyle = .regularSquare
+        layer?.cornerRadius = AppTheme.workspaceControlCornerRadius
         image = Self.balancedSymbol(
             named: symbolName,
             accessibilityLabel: accessibilityLabel,
@@ -302,7 +440,6 @@ final class PanelToggleButton: NSButton {
         )
         imagePosition = .imageOnly
         imageScaling = .scaleProportionallyDown
-        focusRingType = .none
         setAccessibilityLabel(accessibilityLabel)
 
         NSLayoutConstraint.activate([
@@ -312,47 +449,12 @@ final class PanelToggleButton: NSButton {
         updateAppearance()
     }
 
-    override func layout() {
-        super.layout()
-        let side = min(controlSide, bounds.width, bounds.height)
-        backgroundLayer.frame = CGRect(
-            x: (bounds.width - side) / 2,
-            y: (bounds.height - side) / 2,
-            width: side,
-            height: side
-        )
-    }
-
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is unavailable")
     }
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let trackingArea {
-            removeTrackingArea(trackingArea)
-        }
-        let trackingArea = NSTrackingArea(
-            rect: bounds,
-            options: [.activeInKeyWindow, .mouseEnteredAndExited, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(trackingArea)
-        self.trackingArea = trackingArea
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        isHovering = true
-        updateAppearance()
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        isHovering = false
-        updateAppearance()
-    }
-
-    func applyTheme() {
+    override func applyTheme() {
         updateAppearance()
     }
 
@@ -387,21 +489,23 @@ final class PanelToggleButton: NSButton {
     }
 
     private func updateAppearance() {
-        contentTintColor = if panelVisible {
-            AppTheme.panelAccentIcon
-        } else if isHovering && hoverStyle != .none {
-            hoverStyle == .foregroundOnly
-                ? AppTheme.primaryText
-                : AppTheme.panelToggleHoverText
+        let role: AppButtonRole = if panelVisible {
+            .accent
+        } else if hoverStyle == .background {
+            .icon
         } else {
-            normalForegroundColor ?? AppTheme.tertiaryText
+            .hitTarget
         }
-        backgroundLayer.backgroundColor = if panelVisible {
-            AppTheme.panelAccentBackground.cgColor
-        } else if isHovering && hoverStyle == .background {
-            AppTheme.panelToggleHoverBackground.cgColor
+        let appearance = AppTheme.buttonAppearance(
+            role: role,
+            hovered: isHovering,
+            enabled: isEnabled
+        )
+        applyAppearance(role: role)
+        contentTintColor = if panelVisible || isHovering {
+            appearance.foreground
         } else {
-            NSColor.clear.cgColor
+            normalForegroundColor ?? appearance.foreground
         }
     }
 }

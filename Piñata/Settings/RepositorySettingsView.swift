@@ -340,12 +340,12 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
 }
 
 @MainActor
-private final class RepositoryRowView: SettingsHoverView, SettingsThemeApplying {
+private final class RepositoryRowView: AppHoverView, SettingsThemeApplying {
     var onSelect: (() -> Void)?
 
     private let nameLabel: NSTextField
     private let metadataLabel: NSTextField
-    private let button = NSButton(title: "", target: nil, action: nil)
+    private let button = AppButton(role: .hitTarget)
     private let repositoryIcon = NSImageView()
     private let chevron = NSImageView()
 
@@ -372,7 +372,6 @@ private final class RepositoryRowView: SettingsHoverView, SettingsThemeApplying 
             $0.translatesAutoresizingMaskIntoConstraints = false
             addSubview($0)
         }
-        button.isBordered = false
         button.target = self
         button.action = #selector(selectRepository)
         button.setAccessibilityLabel("Configure \(repository.name)")
@@ -420,7 +419,8 @@ private final class RepositoryRowView: SettingsHoverView, SettingsThemeApplying 
     }
 
     func applyTheme() {
-        layer?.backgroundColor = isHovering ? AppTheme.surface.cgColor : .clear
+        let appearance = AppTheme.buttonAppearance(role: .naked, hovered: isHovering)
+        layer?.backgroundColor = appearance.background.cgColor
         nameLabel.textColor = AppTheme.primaryText
         nameLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsHeading, weight: 600)
         metadataLabel.textColor = AppTheme.tertiaryText
@@ -439,12 +439,12 @@ private final class RepositoryRowView: SettingsHoverView, SettingsThemeApplying 
 }
 
 @MainActor
-private final class RepositoryRegisterActionView: SettingsHoverView, SettingsThemeApplying {
+private final class RepositoryRegisterActionView: AppHoverView, SettingsThemeApplying {
     var onAction: (() -> Void)?
 
     private let icon = NSImageView()
     private let label = NSTextField(labelWithString: "Register a repository")
-    private let button = NSButton(title: "", target: nil, action: nil)
+    private let button = AppButton(role: .hitTarget)
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -455,7 +455,6 @@ private final class RepositoryRegisterActionView: SettingsHoverView, SettingsThe
             $0.translatesAutoresizingMaskIntoConstraints = false
             addSubview($0)
         }
-        button.isBordered = false
         button.target = self
         button.action = #selector(registerRepository)
         button.setAccessibilityLabel("Register a repository")
@@ -486,9 +485,9 @@ private final class RepositoryRegisterActionView: SettingsHoverView, SettingsThe
     }
 
     func applyTheme() {
-        let color = isHovering ? AppTheme.accent : AppTheme.secondaryText
-        icon.contentTintColor = color
-        label.textColor = color
+        let appearance = AppTheme.buttonAppearance(role: .link, hovered: isHovering)
+        icon.contentTintColor = appearance.foreground
+        label.textColor = appearance.foreground
         label.font = AppTheme.font(ofSize: AppTheme.typography.settingsHeading, weight: 600)
     }
 

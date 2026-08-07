@@ -273,7 +273,7 @@ private final class SettingsNavigationGroupView: NSView, SettingsThemeApplying {
 }
 
 @MainActor
-private final class SettingsNavigationRow: SettingsHoverView {
+private final class SettingsNavigationRow: AppHoverView {
     var onSelect: (() -> Void)?
     var onMove: ((Int) -> Void)?
     var isSelected = true {
@@ -282,7 +282,7 @@ private final class SettingsNavigationRow: SettingsHoverView {
 
     private let icon = NSImageView()
     private let label: NSTextField
-    private let button = SettingsNavigationButton()
+    private let button = SettingsNavigationButton(frame: .zero)
 
     init(title: String, image: NSImage) {
         label = NSTextField(labelWithString: title)
@@ -296,9 +296,6 @@ private final class SettingsNavigationRow: SettingsHoverView {
         label.translatesAutoresizingMaskIntoConstraints = false
         button.translatesAutoresizingMaskIntoConstraints = false
         button.title = ""
-        button.isBordered = false
-        button.bezelStyle = .shadowlessSquare
-        button.focusRingType = .none
         button.target = self
         button.action = #selector(selectRow)
         button.onMove = { [weak self] direction in self?.onMove?(direction) }
@@ -332,13 +329,13 @@ private final class SettingsNavigationRow: SettingsHoverView {
     }
 
     func applyTheme() {
-        let foreground = isSelected ? AppTheme.panelAccentIcon : AppTheme.secondaryText
-        let background = isSelected
-            ? AppTheme.panelAccentBackground
-            : isHovering ? AppTheme.controlBackground : .clear
-        layer?.backgroundColor = background.cgColor
-        icon.contentTintColor = foreground
-        label.textColor = foreground
+        let appearance = AppTheme.buttonAppearance(
+            role: isSelected ? .accent : .naked,
+            hovered: isHovering
+        )
+        layer?.backgroundColor = appearance.background.cgColor
+        icon.contentTintColor = appearance.foreground
+        label.textColor = appearance.foreground
         label.font = AppTheme.font(ofSize: AppTheme.typography.settingsHeading, weight: 550)
     }
 
@@ -356,8 +353,18 @@ private final class SettingsNavigationRow: SettingsHoverView {
 }
 
 @MainActor
-private final class SettingsNavigationButton: NSButton {
+private final class SettingsNavigationButton: AppButton {
     var onMove: ((Int) -> Void)?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        role = .hitTarget
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is unavailable")
+    }
 
     override func keyDown(with event: NSEvent) {
         switch event.keyCode {
@@ -426,7 +433,7 @@ private final class FlatChoiceControl: NSView, SettingsThemeApplying {
     func applyTheme() {
         SettingsLayout.applyControlSurface(self, clipsContents: true)
         for button in buttons {
-            button.applyTheme(selected: button.tag == selectedIndex)
+            button.isVisuallySelected = button.tag == selectedIndex
         }
     }
 
@@ -437,13 +444,12 @@ private final class FlatChoiceControl: NSView, SettingsThemeApplying {
 }
 
 @MainActor
-private final class FlatChoiceButton: NSButton {
+private final class FlatChoiceButton: AppButton {
     init(title: String, index: Int) {
         super.init(frame: .zero)
+        role = .segmented
         self.title = title
         tag = index
-        isBordered = false
-        wantsLayer = true
         layer?.cornerRadius = SettingsLayout.choiceCornerRadius
         setAccessibilityLabel(title)
     }
@@ -461,16 +467,16 @@ private final class FlatChoiceButton: NSButton {
         )
     }
 
-    func applyTheme(selected: Bool) {
-        layer?.backgroundColor = selected ? AppTheme.controlSelection.cgColor : NSColor.clear.cgColor
+    override func applyTheme() {
+        super.applyTheme()
         attributedTitle = NSAttributedString(
             string: title,
             attributes: [
                 .font: AppTheme.font(ofSize: AppTheme.typography.settingsBody, weight: 600),
-                .foregroundColor: selected ? AppTheme.primaryText : AppTheme.secondaryText,
+                .foregroundColor: contentTintColor ?? AppTheme.secondaryText,
             ]
         )
-        setAccessibilityValue(selected)
+        setAccessibilityValue(isVisuallySelected)
     }
 }
 
@@ -517,7 +523,7 @@ private final class AccentChoiceControl: NSView, SettingsThemeApplying {
 
     func applyTheme() {
         for button in buttons {
-            button.applyTheme(selected: button.tag == selectedIndex)
+            button.isVisuallySelected = button.tag == selectedIndex
         }
     }
 
@@ -528,15 +534,14 @@ private final class AccentChoiceControl: NSView, SettingsThemeApplying {
 }
 
 @MainActor
-private final class AccentChoiceButton: NSButton {
+private final class AccentChoiceButton: AppButton {
     private let accent: AccentPreference
 
     init(accent: AccentPreference, index: Int) {
         self.accent = accent
         super.init(frame: .zero)
+        role = .swatch(AppTheme.accentColor(for: accent))
         tag = index
-        isBordered = false
-        wantsLayer = true
         layer?.cornerRadius = SettingsLayout.colorChoiceDiameter / 2
         setAccessibilityLabel(accent.rawValue.capitalized)
         NSLayoutConstraint.activate([
@@ -550,20 +555,19 @@ private final class AccentChoiceButton: NSButton {
         fatalError("init(coder:) is unavailable")
     }
 
-    func applyTheme(selected: Bool) {
-        layer?.backgroundColor = AppTheme.accentColor(for: accent).cgColor
-        layer?.borderWidth = 0
+    override func applyTheme() {
+        applyAppearance(role: .swatch(AppTheme.accentColor(for: accent)))
         attributedTitle = NSAttributedString(
-            string: selected ? "✓" : "",
+            string: isVisuallySelected ? "✓" : "",
             attributes: [
                 .font: NSFont.systemFont(
                     ofSize: SettingsLayout.accentCheckmarkSize,
                     weight: .bold
                 ),
-                .foregroundColor: AppTheme.accentForegroundColor(for: accent),
+                .foregroundColor: contentTintColor ?? AppTheme.accentForegroundColor(for: accent),
             ]
         )
-        setAccessibilityValue(selected)
+        setAccessibilityValue(isVisuallySelected)
     }
 }
 
@@ -574,19 +578,19 @@ private final class FontStepperControl: NSView, SettingsThemeApplying {
         didSet { applyTheme() }
     }
 
-    private let decreaseButton = NSButton(title: "−", target: nil, action: nil)
+    private let decreaseButton = AppButton(role: .naked)
     private let valueLabel = NSTextField(labelWithString: "")
-    private let increaseButton = NSButton(title: "+", target: nil, action: nil)
+    private let increaseButton = AppButton(role: .naked)
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         SettingsLayout.applyControlSurface(self, clipsContents: true)
+        decreaseButton.title = "−"
+        increaseButton.title = "+"
         [decreaseButton, valueLabel, increaseButton].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             addSubview($0)
         }
-        decreaseButton.isBordered = false
-        increaseButton.isBordered = false
         decreaseButton.target = self
         decreaseButton.action = #selector(decrease)
         increaseButton.target = self
@@ -628,7 +632,6 @@ private final class FontStepperControl: NSView, SettingsThemeApplying {
         valueLabel.alignment = .center
         valueLabel.setAccessibilityValue(valueLabel.stringValue)
         for button in [decreaseButton, increaseButton] {
-            button.contentTintColor = AppTheme.secondaryText
             button.font = font
         }
         decreaseButton.isEnabled = selectedIndex > 0

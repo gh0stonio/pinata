@@ -339,36 +339,6 @@ extension SettingsPageContent where Self: NSView {
 }
 
 @MainActor
-class SettingsHoverView: NSView {
-    private var trackingArea: NSTrackingArea?
-    private(set) var isHovering = false {
-        didSet { hoverStateDidChange() }
-    }
-
-    func hoverStateDidChange() {}
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let trackingArea { removeTrackingArea(trackingArea) }
-        let trackingArea = NSTrackingArea(
-            rect: bounds,
-            options: [.activeInKeyWindow, .mouseEnteredAndExited, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(trackingArea)
-        self.trackingArea = trackingArea
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        isHovering = true
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        isHovering = false
-    }
-}
-
-@MainActor
 func settingsRowStack(_ rows: [SettingsRowView]) -> NSStackView {
     SettingsRowStack(rows: rows)
 }
@@ -396,18 +366,18 @@ private final class SettingsRowStack: NSStackView, SettingsThemeApplying {
 }
 
 @MainActor
-final class SettingsActionButton: NSButton, SettingsThemeApplying {
-    private var trackingArea: NSTrackingArea?
-    private var isHovering = false {
-        didSet { applyTheme() }
-    }
-
+final class SettingsActionButton: AppButton, SettingsThemeApplying {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        isBordered = false
-        bezelStyle = .shadowlessSquare
-        focusRingType = .none
+        role = .link
         applyTheme()
+    }
+
+    convenience init(title: String, target: AnyObject?, action: Selector?) {
+        self.init(frame: .zero)
+        self.title = title
+        self.target = target
+        self.action = action
     }
 
     @available(*, unavailable)
@@ -415,29 +385,9 @@ final class SettingsActionButton: NSButton, SettingsThemeApplying {
         fatalError("init(coder:) is unavailable")
     }
 
-    func applyTheme() {
-        contentTintColor = isHovering ? AppTheme.accent : AppTheme.secondaryText
+    override func applyTheme() {
+        super.applyTheme()
         font = AppTheme.font(ofSize: AppTheme.typography.settingsHeading, weight: 600)
-    }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let trackingArea { removeTrackingArea(trackingArea) }
-        let trackingArea = NSTrackingArea(
-            rect: bounds,
-            options: [.activeInKeyWindow, .mouseEnteredAndExited, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(trackingArea)
-        self.trackingArea = trackingArea
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        isHovering = true
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        isHovering = false
     }
 }
 
@@ -675,6 +625,21 @@ final class SettingsTextField: NSTextField, SettingsThemeApplying {
         super.textDidEndEditing(notification)
         isEditing = false
         updateBorder()
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        if accepted {
+            isEditing = true
+            updateBorder()
+        }
+        return accepted
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        isEditing = true
+        updateBorder()
+        super.mouseDown(with: event)
     }
 
     private func updateBorder() {
