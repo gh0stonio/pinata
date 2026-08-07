@@ -6,6 +6,8 @@ final class NewTaskModalView: NSView, NSTextFieldDelegate {
     var onCreate: ((String, [RegisteredRepository]) -> Void)?
 
     private let repositories: [RegisteredRepository]
+    private let editingTask: WorkspaceTask?
+    private let existingRepositoryIDs: Set<UUID>
     private var selectedRepositoryIDs = Set<UUID>()
     private let card = NSView()
     private let titleLabel = NSTextField(labelWithString: "New task")
@@ -30,8 +32,15 @@ final class NewTaskModalView: NSView, NSTextFieldDelegate {
             * AppTheme.taskModalRowHeight
     }
 
-    init(repositories: [RegisteredRepository], repositoryError: String? = nil) {
+    init(
+        repositories: [RegisteredRepository],
+        repositoryError: String? = nil,
+        editingTask: WorkspaceTask? = nil
+    ) {
         self.repositories = repositories
+        self.editingTask = editingTask
+        existingRepositoryIDs = Set(editingTask?.repositories.map(\.repositoryID) ?? [])
+        selectedRepositoryIDs = existingRepositoryIDs
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
@@ -117,6 +126,14 @@ final class NewTaskModalView: NSView, NSTextFieldDelegate {
             card.addSubview($0)
         }
 
+        if let editingTask {
+            titleLabel.stringValue = "Edit task"
+            titleField.stringValue = editingTask.title
+            helperLabel.stringValue = "Choose more repositories for this task. Existing repositories stay attached."
+            repositoryLabel.stringValue = "REPOSITORIES"
+            noteLabel.stringValue = "New repositories get their own worktree and terminal."
+            createButton.title = "Update"
+        }
         titleField.placeholderString = "What are you working on?"
         titleField.delegate = self
         titleField.target = self
@@ -155,13 +172,16 @@ final class NewTaskModalView: NSView, NSTextFieldDelegate {
                     equalToConstant: AppTheme.taskModalEmptyRepositoryHeight
                 ),
             ])
-            noteLabel.stringValue =
-                "Tasks can start as conversations. Attach a repository later when the work needs code."
+            noteLabel.stringValue = editingTask == nil
+                ? "Tasks can start as conversations. Attach a repository later when the work needs code."
+                : "No repositories are available to attach."
         } else {
             repositories.enumerated().forEach { index, repository in
                 let row = NewTaskRepositoryRow(
                     repository: repository,
-                    showsSeparator: index < repositories.count - 1
+                    showsSeparator: index < repositories.count - 1,
+                    selected: existingRepositoryIDs.contains(repository.id),
+                    enabled: !existingRepositoryIDs.contains(repository.id)
                 )
                 row.onToggle = { [weak self] repositoryID, selected in
                     if selected {
@@ -169,6 +189,7 @@ final class NewTaskModalView: NSView, NSTextFieldDelegate {
                     } else {
                         self?.selectedRepositoryIDs.remove(repositoryID)
                     }
+                    self?.updateValidation()
                 }
                 repositoryStack.addArrangedSubview(row)
                 row.widthAnchor.constraint(equalTo: repositoryStack.widthAnchor).isActive = true
@@ -276,7 +297,11 @@ final class NewTaskModalView: NSView, NSTextFieldDelegate {
 
     private func updateValidation() {
         let title = titleField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let titleChanged = editingTask.map { $0.title != title } ?? false
         createButton.isEnabled = !title.isEmpty
+            && (editingTask == nil
+                || titleChanged
+                || !selectedRepositoryIDs.isSubset(of: existingRepositoryIDs))
     }
 
     @objc private func cancel() {
@@ -374,9 +399,18 @@ private final class NewTaskRepositoryRow: AppHoverView {
     private let separator = NSView()
     private let button = AppButton(role: .hitTarget)
 
-    init(repository: RegisteredRepository, showsSeparator: Bool) {
+    private let enabled: Bool
+
+    init(
+        repository: RegisteredRepository,
+        showsSeparator: Bool,
+        selected: Bool = false,
+        enabled: Bool = true
+    ) {
         self.repository = repository
         self.showsSeparator = showsSeparator
+        self.selected = selected
+        self.enabled = enabled
         nameLabel = NSTextField(labelWithString: repository.name)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
@@ -390,6 +424,7 @@ private final class NewTaskRepositoryRow: AppHoverView {
         button.action = #selector(toggle)
         button.setAccessibilityLabel(repository.name)
         button.setAccessibilityRole(.checkBox)
+        button.isEnabled = enabled
         [checkbox, nameLabel, repositoryIcon, separator, button].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             addSubview($0)
@@ -446,7 +481,7 @@ private final class NewTaskRepositoryRow: AppHoverView {
     func applyTheme() {
         let appearance = AppTheme.buttonAppearance(
             role: .naked,
-            hovered: isHovering
+            hovered: enabled && isHovering
         )
         checkbox.image = NSImage(
             systemSymbolName: selected ? "checkmark.square.fill" : "square",
@@ -457,7 +492,9 @@ private final class NewTaskRepositoryRow: AppHoverView {
             ofSize: AppTheme.typography.settingsValue,
             weight: .regular
         )
-        nameLabel.textColor = selected ? AppTheme.primaryText : AppTheme.secondaryText
+        nameLabel.textColor = enabled
+            ? selected ? AppTheme.primaryText : AppTheme.secondaryText
+            : AppTheme.tertiaryText
         repositoryIcon.contentTintColor = AppTheme.tertiaryText
         separator.layer?.backgroundColor = AppTheme.border.cgColor
         separator.isHidden = !showsSeparator
@@ -470,6 +507,7 @@ private final class NewTaskRepositoryRow: AppHoverView {
     }
 
     @objc private func toggle() {
+        guard enabled else { return }
         selected.toggle()
         applyTheme()
         onToggle?(repository.id, selected)
@@ -478,7 +516,10 @@ private final class NewTaskRepositoryRow: AppHoverView {
 
 @MainActor
 private final class NewTaskActionButton: AppButton {
-    init(title: String, primary: Bool) {
+    private let destructive: Bool
+
+    init(title: String, primary: Bool, destructive: Bool = false) {
+        self.destructive = destructive
         super.init(frame: .zero)
         role = primary ? .accent : .naked
         self.title = title
@@ -493,8 +534,136 @@ private final class NewTaskActionButton: AppButton {
         fatalError("init(coder:) is unavailable")
     }
 
+    override var intrinsicContentSize: NSSize {
+        NSSize(
+            width: ceil(attributedTitle.size().width) + AppTheme.taskModalButtonHorizontalPadding,
+            height: super.intrinsicContentSize.height
+        )
+    }
+
     override func applyTheme() {
-        super.applyTheme()
+        if destructive {
+            let color = isEnabled ? NSColor.systemRed : AppTheme.tertiaryText
+            layer?.backgroundColor = (isHovering
+                ? color.withAlphaComponent(0.28)
+                : color.withAlphaComponent(0.18)).cgColor
+            layer?.borderColor = color.withAlphaComponent(0.55).cgColor
+            layer?.borderWidth = 1
+            contentTintColor = color
+        } else {
+            super.applyTheme()
+        }
         font = AppTheme.font(ofSize: AppTheme.typography.settingsBody, weight: 650)
+        invalidateIntrinsicContentSize()
+    }
+}
+
+@MainActor
+final class DeleteTaskModalView: NSView {
+    var onCancel: (() -> Void)?
+    var onDelete: (() -> Void)?
+
+    private let card = NSView()
+    private let titleLabel: NSTextField
+    private let detailLabel: NSTextField
+    private let divider = NSView()
+    private let cancelButton = NewTaskActionButton(title: "Cancel", primary: false)
+    private let deleteButton: NewTaskActionButton
+
+    convenience init(taskTitle: String) {
+        self.init(
+            title: "Delete \"\(taskTitle)\"?",
+            detail: "This removes the task, its worktrees, and its Piñata branches. This cannot be undone.",
+            actionTitle: "Delete"
+        )
+    }
+
+    init(title: String, detail: String, actionTitle: String) {
+        titleLabel = NSTextField(labelWithString: title)
+        detailLabel = NSTextField(wrappingLabelWithString: detail)
+        deleteButton = NewTaskActionButton(
+            title: actionTitle,
+            primary: false,
+            destructive: true
+        )
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        card.translatesAutoresizingMaskIntoConstraints = false
+        card.wantsLayer = true
+        card.layer?.cornerRadius = AppTheme.workspaceCornerRadius
+        card.layer?.cornerCurve = .continuous
+        card.layer?.borderWidth = 1
+        card.layer?.masksToBounds = true
+        addSubview(card)
+
+        [titleLabel, detailLabel, divider, cancelButton, deleteButton].forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+            card.addSubview($0)
+        }
+        detailLabel.maximumNumberOfLines = 3
+        divider.wantsLayer = true
+        cancelButton.target = self
+        cancelButton.action = #selector(cancel)
+        deleteButton.target = self
+        deleteButton.action = #selector(deleteTask)
+
+        NSLayoutConstraint.activate([
+            card.centerXAnchor.constraint(equalTo: centerXAnchor),
+            card.centerYAnchor.constraint(equalTo: centerYAnchor),
+            card.widthAnchor.constraint(equalToConstant: 430),
+            titleLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 20),
+            titleLabel.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -20),
+            titleLabel.topAnchor.constraint(equalTo: card.topAnchor, constant: 20),
+            detailLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            detailLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
+            detailLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 12),
+            divider.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+            divider.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+            divider.topAnchor.constraint(equalTo: detailLabel.bottomAnchor, constant: 20),
+            divider.heightAnchor.constraint(equalToConstant: 1),
+            deleteButton.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
+            deleteButton.topAnchor.constraint(equalTo: divider.bottomAnchor, constant: 12),
+            deleteButton.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -12),
+            deleteButton.heightAnchor.constraint(equalToConstant: AppTheme.taskModalButtonHeight),
+            cancelButton.trailingAnchor.constraint(
+                equalTo: deleteButton.leadingAnchor,
+                constant: -AppTheme.taskModalButtonSpacing
+            ),
+            cancelButton.centerYAnchor.constraint(equalTo: deleteButton.centerYAnchor),
+            cancelButton.heightAnchor.constraint(equalTo: deleteButton.heightAnchor),
+        ])
+        applyTheme()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is unavailable")
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(bounds, cursor: .arrow)
+    }
+
+    func applyTheme() {
+        layer?.backgroundColor = AppTheme.taskModalOverlayBackground.cgColor
+        card.layer?.backgroundColor = AppTheme.chromeBackground.cgColor
+        card.layer?.borderColor = AppTheme.border.cgColor
+        divider.layer?.backgroundColor = AppTheme.border.cgColor
+        titleLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsHeading, weight: 650)
+        titleLabel.textColor = AppTheme.primaryText
+        detailLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsBody)
+        detailLabel.textColor = AppTheme.secondaryText
+        cancelButton.applyTheme()
+        deleteButton.applyTheme()
+    }
+
+    @objc private func cancel() {
+        onCancel?()
+    }
+
+    @objc private func deleteTask() {
+        onDelete?()
     }
 }

@@ -5,17 +5,20 @@ struct TaskRepositoryAttachment: Codable, Equatable, Identifiable, Sendable {
     let name: String
     let worktreePath: String?
     let worktreeProvisioning: WorktreeProvisioningReport?
+    let branch: String?
 
     init(
         repositoryID: UUID,
         name: String,
         worktreePath: String? = nil,
-        worktreeProvisioning: WorktreeProvisioningReport? = nil
+        worktreeProvisioning: WorktreeProvisioningReport? = nil,
+        branch: String? = nil
     ) {
         self.repositoryID = repositoryID
         self.name = name
         self.worktreePath = worktreePath
         self.worktreeProvisioning = worktreeProvisioning
+        self.branch = branch
     }
 
     var id: UUID { repositoryID }

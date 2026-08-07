@@ -8,6 +8,16 @@ final class WorkspaceViewController: NSViewController {
         case docked
     }
 
+    private enum TaskDeletionState {
+        case deleting(String)
+        case failed(String)
+    }
+
+    private enum RepositoryRemovalState {
+        case removing(String)
+        case failed(String)
+    }
+
     private struct TerminalTab {
         let id: UUID
         let title: String
@@ -74,10 +84,17 @@ final class WorkspaceViewController: NSViewController {
     private var expandedTaskIDs = Set<UUID>()
     private var taskErrors: [UUID: String] = [:]
     private var repositoryErrors: [TaskRepositoryScope: String] = [:]
+    private var taskDeletionStates: [UUID: TaskDeletionState] = [:]
+    private var repositoryRemovalStates: [TaskRepositoryScope: RepositoryRemovalState] = [:]
     private var taskLoadError: String?
     private var taskRegistryLoaded: Bool
     private var settingsController: SettingsViewController?
     private var newTaskModal: NewTaskModalView?
+    private var deleteTaskModal: DeleteTaskModalView?
+    private var taskActionMenu: SidebarActionMenuView?
+    private var taskActionMenuMouseMonitor: Any?
+    private var repositoryActionMenu: SidebarActionMenuView?
+    private var repositoryActionMenuMouseMonitor: Any?
     private var leftResizeWindowWidth: CGFloat?
 
     private var leftWidthConstraint: NSLayoutConstraint!
@@ -153,6 +170,8 @@ final class WorkspaceViewController: NSViewController {
     override func viewWillDisappear() {
         super.viewWillDisappear()
         cancelScheduledTransitions()
+        dismissTaskActionMenu()
+        dismissRepositoryActionMenu()
         NotificationCenter.default.removeObserver(self)
         if let keyEventMonitor {
             NSEvent.removeMonitor(keyEventMonitor)
@@ -190,6 +209,7 @@ final class WorkspaceViewController: NSViewController {
 
     @objc func createTerminalTab(_ sender: Any?) {
         guard settingsController == nil, newTaskModal == nil else { return }
+        guard activeTaskDeletionState == nil, activeRepositoryRemovalState == nil else { return }
         if case .task(let taskID) = activeScope {
             guard taskErrors[taskID] == nil else { return }
             if taskWorkspaces[taskID] == nil {
@@ -224,6 +244,10 @@ final class WorkspaceViewController: NSViewController {
     }
 
     @objc func presentNewTask(_ sender: Any?) {
+        presentTaskModal(editingTask: nil, focusTitle: true)
+    }
+
+    private func presentTaskModal(editingTask: WorkspaceTask?, focusTitle: Bool) {
         guard newTaskModal == nil else { return }
         if settingsController != nil {
             dismissSettings()
@@ -241,11 +265,20 @@ final class WorkspaceViewController: NSViewController {
 
         let modal = NewTaskModalView(
             repositories: repositories,
-            repositoryError: repositoryError
+            repositoryError: repositoryError,
+            editingTask: editingTask
         )
         modal.onCancel = { [weak self] in self?.dismissNewTaskModal() }
         modal.onCreate = { [weak self] title, repositories in
-            self?.createTask(title: title, repositories: repositories)
+            if let editingTask {
+                self?.updateTask(
+                    title: title,
+                    repositories: repositories,
+                    taskID: editingTask.id
+                )
+            } else {
+                self?.createTask(title: title, repositories: repositories)
+            }
         }
         view.addSubview(modal)
         NSLayoutConstraint.activate([
@@ -255,7 +288,13 @@ final class WorkspaceViewController: NSViewController {
             modal.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
         newTaskModal = modal
-        DispatchQueue.main.async { modal.focusTitle() }
+        DispatchQueue.main.async {
+            if focusTitle {
+                modal.focusTitle()
+            } else {
+                modal.window?.makeFirstResponder(nil)
+            }
+        }
     }
 
     func toggleSettings(
@@ -307,6 +346,9 @@ final class WorkspaceViewController: NSViewController {
         leftResizeHandle.applyTheme()
         settingsController?.applyTheme()
         newTaskModal?.applyTheme()
+        deleteTaskModal?.applyTheme()
+        taskActionMenu?.applyTheme()
+        repositoryActionMenu?.applyTheme()
         applySidebarPresentation()
     }
 
@@ -434,6 +476,12 @@ final class WorkspaceViewController: NSViewController {
         leftPanelController.onToggleTaskExpansion = { [weak self] taskID in
             self?.toggleTaskExpansion(taskID)
         }
+        leftPanelController.onShowTaskMenu = { [weak self] taskID, anchorRect in
+            self?.presentTaskActionMenu(taskID: taskID, anchorRect: anchorRect)
+        }
+        leftPanelController.onShowRepositoryMenu = { [weak self] scope, anchorRect in
+            self?.presentRepositoryActionMenu(scope: scope, anchorRect: anchorRect)
+        }
         leftPanelController.onHoverChanged = { [weak self] hovering in
             guard let self else { return }
             if hovering {
@@ -465,7 +513,10 @@ final class WorkspaceViewController: NSViewController {
     }
 
     private var activeTerminalWorkspace: TerminalWorkspace? {
-        switch activeScope {
+        guard activeTaskDeletionState == nil, activeRepositoryRemovalState == nil else {
+            return nil
+        }
+        return switch activeScope {
         case nil:
             nil
         case .task(let taskID):
@@ -487,6 +538,23 @@ final class WorkspaceViewController: NSViewController {
         return workspace.tabs.first(where: { $0.id == activeTabID })?.controller
     }
 
+    private var activeTaskID: UUID? {
+        switch activeScope {
+        case .task(let taskID): taskID
+        case .repository(let scope): scope.taskID
+        case nil: nil
+        }
+    }
+
+    private var activeTaskDeletionState: TaskDeletionState? {
+        activeTaskID.flatMap { taskDeletionStates[$0] }
+    }
+
+    private var activeRepositoryRemovalState: RepositoryRemovalState? {
+        guard case .repository(let scope) = activeScope else { return nil }
+        return repositoryRemovalStates[scope]
+    }
+
     private func selectTerminalTab(_ id: UUID) {
         guard
             let workspace = activeTerminalWorkspace,
@@ -499,6 +567,11 @@ final class WorkspaceViewController: NSViewController {
 
     private func installActiveWorkspace() {
         terminalHost.subviews.forEach { $0.removeFromSuperview() }
+        if activeTaskDeletionState != nil || activeRepositoryRemovalState != nil {
+            setWorkspaceHeaderVisible(false)
+            installScopeMessage()
+            return
+        }
         if case .repository(let scope) = activeScope,
            let task = tasks.first(where: { $0.id == scope.taskID }),
            let attachment = task.repositories.first(where: { $0.repositoryID == scope.repositoryID }),
@@ -584,21 +657,50 @@ final class WorkspaceViewController: NSViewController {
 
     private func installScopeMessage() {
         let state: WorkspaceEmptyStateView.State
-        switch activeScope {
+        let deletionTaskID = activeTaskID.flatMap { taskDeletionStates[$0] == nil ? nil : $0 }
+        let removalScope: TaskRepositoryScope?
+        if case .repository(let scope) = activeScope,
+           repositoryRemovalStates[scope] != nil {
+            removalScope = scope
+        } else {
+            removalScope = nil
+        }
+        if let deletionTaskID,
+           let deletionState = taskDeletionStates[deletionTaskID],
+           let task = tasks.first(where: { $0.id == deletionTaskID }) {
+            switch deletionState {
+            case .deleting(let step):
+                state = .deletingTask(title: task.title, step: step)
+            case .failed(let detail):
+                state = .deletionFailed(title: task.title, detail: detail)
+            }
+        } else if let removalScope,
+                  let removalState = repositoryRemovalStates[removalScope],
+                  let attachment = tasks.first(where: { $0.id == removalScope.taskID })?
+                    .repositories.first(where: { $0.repositoryID == removalScope.repositoryID }) {
+            switch removalState {
+            case .removing(let step):
+                state = .removingRepository(title: attachment.name, step: step)
+            case .failed(let detail):
+                state = .repositoryRemovalFailed(title: attachment.name, detail: detail)
+            }
+        } else {
+            state = switch activeScope {
         case .task(let taskID):
             if let error = taskErrors[taskID] {
-                state = .error(title: "Task failed", detail: error)
+                .error(title: "Task failed", detail: error)
             } else {
-                state = .readyToStart
+                .readyToStart
             }
         case .repository(let scope):
             if let error = repositoryErrors[scope] {
-                state = .error(title: "Repository workspace failed", detail: error)
+                .error(title: "Repository workspace failed", detail: error)
             } else {
-                state = .readyToStart
+                .readyToStart
             }
         case nil:
-            state = .chooseTask
+            .chooseTask
+            }
         }
         let message = WorkspaceEmptyStateView(state: state)
         message.onCreateTask = { [weak self] in
@@ -606,6 +708,15 @@ final class WorkspaceViewController: NSViewController {
         }
         message.onCreateTerminal = { [weak self] in
             self?.createTerminalTab(nil)
+        }
+        message.onRetryDeletion = { [weak self] in
+            guard let self else { return }
+            if let deletionTaskID,
+               let task = tasks.first(where: { $0.id == deletionTaskID }) {
+                deleteTask(task)
+            } else if let removalScope {
+                removeRepository(removalScope)
+            }
         }
         message.translatesAutoresizingMaskIntoConstraints = false
         terminalHost.addSubview(message)
@@ -644,87 +755,564 @@ final class WorkspaceViewController: NSViewController {
         updateTaskSidebar()
         installActiveWorkspace()
         DispatchQueue.main.async { [weak self] in
+            self?.saveAndProvision(repositories, for: task)
+        }
+    }
+
+    private func updateTask(
+        title: String,
+        repositories: [RegisteredRepository],
+        taskID: UUID
+    ) {
+        guard let taskIndex = tasks.firstIndex(where: { $0.id == taskID }) else { return }
+        let task = tasks[taskIndex]
+        let existingIDs = Set(task.repositories.map(\.repositoryID))
+        let additions = repositories.filter { !existingIDs.contains($0.id) }
+        guard task.title != title || !additions.isEmpty else { return }
+
+        let updatedTask = WorkspaceTask(
+            id: task.id,
+            title: title,
+            repositories: task.repositories + additions.map {
+                TaskRepositoryAttachment(repositoryID: $0.id, name: $0.name)
+            },
+            createdAt: task.createdAt
+        )
+        dismissNewTaskModal()
+        tasks[taskIndex] = updatedTask
+        expandedTaskIDs.insert(task.id)
+        updateTaskSidebar()
+        DispatchQueue.main.async { [weak self] in
+            self?.saveAndProvision(additions, for: updatedTask)
+        }
+    }
+
+    private func saveAndProvision(
+        _ repositories: [RegisteredRepository],
+        for task: WorkspaceTask
+    ) {
+        guard taskRegistryLoaded else {
+            taskErrors[task.id] = taskLoadError ?? "Task storage is unavailable."
+            updateTaskSidebar()
+            return
+        }
+        do {
+            try taskStore.save(tasks)
+            taskErrors.removeValue(forKey: task.id)
+        } catch {
+            taskErrors[task.id] = error.localizedDescription
+            updateTaskSidebar()
+            return
+        }
+        guard !repositories.isEmpty else {
+            updateTaskSidebar()
+            installActiveWorkspace()
+            return
+        }
+
+        let worktreeBasePath = RepositoryDefaultsStore().loadWorktreeBasePath()
+        let provisioner = WorktreeProvisioner(globalBasePath: worktreeBasePath)
+        var provisionableRepositories: [RegisteredRepository] = []
+        for repository in repositories {
+            let scope = TaskRepositoryScope(taskID: task.id, repositoryID: repository.id)
+            let report = provisioner.preparing(
+                repository: repository,
+                taskID: task.id,
+                taskTitle: task.title
+            )
+            do {
+                try storeWorktreeProvisioning(report, for: scope)
+                provisionableRepositories.append(repository)
+            } catch {
+                repositoryErrors[scope] = error.localizedDescription
+            }
+        }
+        if let firstRepository = provisionableRepositories.first {
+            activeScope = .repository(TaskRepositoryScope(
+                taskID: task.id,
+                repositoryID: firstRepository.id
+            ))
+        }
+        updateTaskSidebar()
+        installActiveWorkspace()
+
+        let updates = AsyncStream<(TaskRepositoryScope, WorktreeProvisioningReport)> { continuation in
+            Task.detached { [provisionableRepositories, task, worktreeBasePath] in
+                await withTaskGroup(of: Void.self) { group in
+                    for repository in provisionableRepositories {
+                        group.addTask {
+                            let scope = TaskRepositoryScope(
+                                taskID: task.id,
+                                repositoryID: repository.id
+                            )
+                            let provisioner = WorktreeProvisioner(
+                                globalBasePath: worktreeBasePath
+                            )
+                            _ = provisioner.provision(
+                                repository: repository,
+                                taskID: task.id,
+                                taskTitle: task.title
+                            ) { report in
+                                continuation.yield((scope, report))
+                            }
+                        }
+                    }
+                    await group.waitForAll()
+                }
+                continuation.finish()
+            }
+        }
+        Task { @MainActor [weak self] in
+            for await (scope, report) in updates {
+                self?.updateWorktreeProvisioning(report, for: scope)
+            }
+        }
+    }
+
+    private func presentTaskActionMenu(taskID: UUID, anchorRect: NSRect) {
+        guard let task = tasks.first(where: { $0.id == taskID }) else { return }
+        if taskDeletionStates[taskID] != nil {
+            selectTask(taskID)
+            return
+        }
+        if let scope = repositoryRemovalStates.keys.first(where: { $0.taskID == taskID }) {
+            selectRepository(scope)
+            return
+        }
+        dismissRepositoryActionMenu()
+        dismissTaskActionMenu()
+        leftPanelController.setTaskMenuTask(taskID)
+
+        let menu = SidebarActionMenuView(items: [
+            .init(title: "Rename", symbol: "square.and.pencil"),
+            .init(title: "Attach repositories…", symbol: "book.closed"),
+            .init(title: "Delete task…", symbol: "trash", destructive: true),
+        ])
+        menu.onSelect = { [weak self] index in
+            self?.dismissTaskActionMenu()
+            switch index {
+            case 0: self?.presentTaskModal(editingTask: task, focusTitle: true)
+            case 1: self?.presentTaskModal(editingTask: task, focusTitle: false)
+            case 2: self?.confirmTaskDeletion(task.id)
+            default: break
+            }
+        }
+        let anchor = view.convert(anchorRect, from: nil)
+        let size = NSSize(width: 174, height: 110)
+        menu.frame = NSRect(
+            x: min(anchor.maxX + 6, view.bounds.maxX - size.width - 8),
+            y: min(max(8, anchor.maxY - size.height), view.bounds.maxY - size.height - 8),
+            width: size.width,
+            height: size.height
+        )
+        view.addSubview(menu, positioned: .above, relativeTo: nil)
+        taskActionMenu = menu
+        taskActionMenuMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) {
+            [weak self, weak menu] event in
+            guard let self, let menu, event.window === view.window else { return event }
+            let point = menu.convert(event.locationInWindow, from: nil)
+            if !menu.bounds.contains(point) {
+                dismissTaskActionMenu()
+            }
+            return event
+        }
+    }
+
+    private func dismissTaskActionMenu() {
+        if let taskActionMenuMouseMonitor {
+            NSEvent.removeMonitor(taskActionMenuMouseMonitor)
+            self.taskActionMenuMouseMonitor = nil
+        }
+        taskActionMenu?.removeFromSuperview()
+        taskActionMenu = nil
+        leftPanelController.setTaskMenuTask(nil)
+    }
+
+    private func presentRepositoryActionMenu(
+        scope: TaskRepositoryScope,
+        anchorRect: NSRect
+    ) {
+        guard let task = tasks.first(where: { $0.id == scope.taskID }),
+              let attachment = task.repositories.first(where: {
+                  $0.repositoryID == scope.repositoryID
+              }) else { return }
+        if taskDeletionStates[scope.taskID] != nil || repositoryRemovalStates[scope] != nil {
+            selectRepository(scope)
+            return
+        }
+        dismissTaskActionMenu()
+        dismissRepositoryActionMenu()
+        leftPanelController.setRepositoryMenuScope(scope)
+
+        let menu = SidebarActionMenuView(items: [
+            .init(title: "Copy branch name", symbol: "doc.on.doc"),
+            .init(title: "Reveal worktree", symbol: "folder"),
+            .init(title: "Detach from task…", symbol: "xmark.circle", destructive: true),
+        ])
+        menu.onSelect = { [weak self] index in
+            self?.dismissRepositoryActionMenu()
+            switch index {
+            case 0: self?.copyBranchName(attachment)
+            case 1: self?.revealWorktree(attachment)
+            case 2: self?.confirmRepositoryRemoval(scope)
+            default: break
+            }
+        }
+        let anchor = view.convert(anchorRect, from: nil)
+        let size = NSSize(width: 220, height: 110)
+        menu.frame = NSRect(
+            x: min(anchor.maxX + 6, view.bounds.maxX - size.width - 8),
+            y: min(max(8, anchor.maxY - size.height), view.bounds.maxY - size.height - 8),
+            width: size.width,
+            height: size.height
+        )
+        view.addSubview(menu, positioned: .above, relativeTo: nil)
+        repositoryActionMenu = menu
+        repositoryActionMenuMouseMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: .leftMouseDown
+        ) { [weak self, weak menu] event in
+            guard let self, let menu, event.window === view.window else { return event }
+            let point = menu.convert(event.locationInWindow, from: nil)
+            if !menu.bounds.contains(point) {
+                dismissRepositoryActionMenu()
+            }
+            return event
+        }
+    }
+
+    private func dismissRepositoryActionMenu() {
+        if let repositoryActionMenuMouseMonitor {
+            NSEvent.removeMonitor(repositoryActionMenuMouseMonitor)
+            self.repositoryActionMenuMouseMonitor = nil
+        }
+        repositoryActionMenu?.removeFromSuperview()
+        repositoryActionMenu = nil
+        leftPanelController.setRepositoryMenuScope(nil)
+    }
+
+    private func copyBranchName(_ attachment: TaskRepositoryAttachment) {
+        if let branch = attachment.branch ?? attachment.worktreeProvisioning?.branch,
+           !branch.isEmpty {
+            copyToPasteboard(branch)
+            return
+        }
+        guard let path = attachment.worktreePath ?? attachment.worktreeProvisioning?.path else {
+            NSSound.beep()
+            return
+        }
+        Task { @MainActor in
+            let branch = await Task.detached {
+                try? RepositoryInspector().currentBranch(at: path)
+            }.value
+            guard let branch, !branch.isEmpty else {
+                NSSound.beep()
+                return
+            }
+            copyToPasteboard(branch)
+        }
+    }
+
+    private func copyToPasteboard(_ value: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
+    }
+
+    private func revealWorktree(_ attachment: TaskRepositoryAttachment) {
+        guard let path = attachment.worktreePath ?? attachment.worktreeProvisioning?.path,
+              FileManager.default.fileExists(atPath: path) else {
+            NSSound.beep()
+            return
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+    }
+
+    private func confirmRepositoryRemoval(_ scope: TaskRepositoryScope) {
+        guard deleteTaskModal == nil,
+              let task = tasks.first(where: { $0.id == scope.taskID }),
+              let attachment = task.repositories.first(where: {
+                  $0.repositoryID == scope.repositoryID
+              }) else { return }
+        let isProvisioning = attachment.worktreeProvisioning.map {
+            !$0.succeeded && $0.failureMessage == nil
+        } == true
+        guard !isProvisioning else {
+            NSSound.beep()
+            return
+        }
+        let modal = DeleteTaskModalView(
+            title: "Detach \"\(attachment.name)\" repository from task?",
+            detail: "This removes its worktree and task branch. The original repository is not deleted.",
+            actionTitle: "Detach"
+        )
+        modal.onCancel = { [weak self] in self?.dismissDeleteTaskModal() }
+        modal.onDelete = { [weak self] in
+            self?.dismissDeleteTaskModal()
+            self?.removeRepository(scope)
+        }
+        view.addSubview(modal)
+        NSLayoutConstraint.activate([
+            modal.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            modal.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            modal.topAnchor.constraint(equalTo: view.topAnchor),
+            modal.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        deleteTaskModal = modal
+    }
+
+    private func confirmTaskDeletion(_ taskID: UUID) {
+        guard deleteTaskModal == nil,
+              let task = tasks.first(where: { $0.id == taskID }) else { return }
+        if taskDeletionStates[taskID] != nil {
+            selectTask(taskID)
+            return
+        }
+        let isProvisioning = task.repositories.contains { attachment in
+            guard let report = attachment.worktreeProvisioning else { return false }
+            return report.failureMessage == nil && !report.succeeded
+        }
+        guard !isProvisioning else { return }
+
+        let modal = DeleteTaskModalView(taskTitle: task.title)
+        modal.onCancel = { [weak self] in self?.dismissDeleteTaskModal() }
+        modal.onDelete = { [weak self] in
+            self?.dismissDeleteTaskModal()
+            self?.deleteTask(task)
+        }
+        view.addSubview(modal)
+        NSLayoutConstraint.activate([
+            modal.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            modal.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            modal.topAnchor.constraint(equalTo: view.topAnchor),
+            modal.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        deleteTaskModal = modal
+    }
+
+    private func dismissDeleteTaskModal() {
+        deleteTaskModal?.removeFromSuperview()
+        deleteTaskModal = nil
+        activeTerminalController?.focusActiveTerminal()
+    }
+
+    private func deleteTask(_ task: WorkspaceTask) {
+        guard tasks.contains(where: { $0.id == task.id }) else { return }
+        activeScope = .task(task.id)
+        expandedTaskIDs.insert(task.id)
+        taskErrors.removeValue(forKey: task.id)
+        taskDeletionStates[task.id] = .deleting("Closing terminals")
+        updateTaskSidebar()
+        installActiveWorkspace()
+
+        Task { @MainActor [weak self] in
+            await Task.yield()
             guard let self else { return }
-            if self.taskRegistryLoaded {
+            closeTerminalWorkspaces(for: task.id)
+            taskDeletionStates[task.id] = .deleting("Removing worktrees and branches")
+            installActiveWorkspace()
+
+            let attachments = task.repositories.filter {
+                $0.worktreePath != nil || $0.worktreeProvisioning?.path != nil
+            }
+            let registeredRepositories: [RegisteredRepository]
+            if attachments.isEmpty {
+                registeredRepositories = []
+            } else {
                 do {
-                    try self.taskStore.save(self.tasks)
-                    self.taskErrors.removeAll()
+                    registeredRepositories = try repositoryStore.load()
                 } catch {
-                    self.taskErrors[task.id] = error.localizedDescription
-                    self.updateTaskSidebar()
+                    failTaskDeletion(task.id, message: error.localizedDescription)
                     return
                 }
-            } else {
-                self.taskErrors[task.id] = self.taskLoadError ?? "Task storage is unavailable."
-                self.updateTaskSidebar()
+            }
+
+            let errorMessage = await Task.detached { [attachments, registeredRepositories] in
+                let repositoriesByID = Dictionary(
+                    uniqueKeysWithValues: registeredRepositories.map { ($0.id, $0) }
+                )
+                do {
+                    for attachment in attachments {
+                        guard let path = attachment.worktreePath
+                                ?? attachment.worktreeProvisioning?.path else { continue }
+                        guard let repository = repositoriesByID[attachment.repositoryID] else {
+                            throw WorkspaceTaskError.repositoryUnavailable(attachment.name)
+                        }
+                        try RepositoryInspector().removeWorktree(
+                            at: path,
+                            branchHint: attachment.branch
+                                ?? attachment.worktreeProvisioning?.branch,
+                            from: repository
+                        )
+                    }
+                    return nil as String?
+                } catch {
+                    return error.localizedDescription
+                }
+            }.value
+            if let errorMessage {
+                failTaskDeletion(task.id, message: errorMessage)
                 return
             }
 
-            let worktreeBasePath = RepositoryDefaultsStore().loadWorktreeBasePath()
-            let provisioner = WorktreeProvisioner(globalBasePath: worktreeBasePath)
-            for repository in repositories {
-                let scope = TaskRepositoryScope(taskID: task.id, repositoryID: repository.id)
-                let report = provisioner.preparing(
-                    repository: repository,
-                    taskID: task.id,
-                    taskTitle: task.title
-                )
-                do {
-                    try self.storeWorktreeProvisioning(report, for: scope, in: task)
-                } catch {
-                    self.repositoryErrors[scope] = error.localizedDescription
-                }
+            taskDeletionStates[task.id] = .deleting("Removing task")
+            installActiveWorkspace()
+            let remainingTasks = tasks.filter { $0.id != task.id }
+            do {
+                try taskStore.save(remainingTasks)
+            } catch {
+                failTaskDeletion(task.id, message: error.localizedDescription)
+                return
             }
-            if let firstRepository = task.repositories.first {
-                self.activeScope = .repository(TaskRepositoryScope(
-                    taskID: task.id,
-                    repositoryID: firstRepository.repositoryID
-                ))
+            tasks = remainingTasks
+            taskDeletionStates.removeValue(forKey: task.id)
+            taskWorkspaces.removeValue(forKey: task.id)
+            repositoryWorkspaces = repositoryWorkspaces.filter { $0.key.taskID != task.id }
+            expandedTaskIDs.remove(task.id)
+            taskErrors.removeValue(forKey: task.id)
+            repositoryErrors = repositoryErrors.filter { $0.key.taskID != task.id }
+            let deletedActiveScope: Bool
+            switch activeScope {
+            case .task(let taskID) where taskID == task.id:
+                deletedActiveScope = true
+            case .repository(let scope) where scope.taskID == task.id:
+                deletedActiveScope = true
+            default:
+                deletedActiveScope = false
             }
-            self.updateTaskSidebar()
-            self.installActiveWorkspace()
+            if deletedActiveScope {
+                activeScope = tasks.first.map { .task($0.id) }
+            }
+            updateTaskSidebar()
+            installActiveWorkspace()
+        }
+    }
 
-            let updates = AsyncStream<(TaskRepositoryScope, WorktreeProvisioningReport)> { continuation in
-                Task.detached { [repositories, task, worktreeBasePath] in
-                    await withTaskGroup(of: Void.self) { group in
-                        for repository in repositories {
-                            group.addTask {
-                                let scope = TaskRepositoryScope(
-                                    taskID: task.id,
-                                    repositoryID: repository.id
-                                )
-                                let provisioner = WorktreeProvisioner(
-                                    globalBasePath: worktreeBasePath
-                                )
-                                _ = provisioner.provision(
-                                    repository: repository,
-                                    taskID: task.id,
-                                    taskTitle: task.title
-                                ) { report in
-                                    continuation.yield((scope, report))
-                                }
-                            }
-                        }
-                        await group.waitForAll()
+    private func removeRepository(_ scope: TaskRepositoryScope) {
+        guard let task = tasks.first(where: { $0.id == scope.taskID }),
+              let attachment = task.repositories.first(where: {
+                  $0.repositoryID == scope.repositoryID
+              }) else { return }
+        activeScope = .repository(scope)
+        repositoryErrors.removeValue(forKey: scope)
+        repositoryRemovalStates[scope] = .removing("Closing terminals")
+        updateTaskSidebar()
+        installActiveWorkspace()
+
+        Task { @MainActor [weak self] in
+            await Task.yield()
+            guard let self else { return }
+            view.window?.makeFirstResponder(nil)
+            if let workspace = repositoryWorkspaces.removeValue(forKey: scope) {
+                closeTerminals(in: workspace)
+            }
+            repositoryRemovalStates[scope] = .removing("Removing worktree and branch")
+            updateTaskSidebar()
+            installActiveWorkspace()
+
+            if let path = attachment.worktreePath ?? attachment.worktreeProvisioning?.path {
+                let repository: RegisteredRepository
+                do {
+                    guard let match = try repositoryStore.load().first(where: {
+                        $0.id == attachment.repositoryID
+                    }) else {
+                        throw WorkspaceTaskError.repositoryUnavailable(attachment.name)
                     }
-                    continuation.finish()
+                    repository = match
+                } catch {
+                    failRepositoryRemoval(scope, message: error.localizedDescription)
+                    return
+                }
+                let errorMessage = await Task.detached { [attachment, path, repository] in
+                    do {
+                        try RepositoryInspector().removeWorktree(
+                            at: path,
+                            branchHint: attachment.branch
+                                ?? attachment.worktreeProvisioning?.branch,
+                            from: repository
+                        )
+                        return nil as String?
+                    } catch {
+                        return error.localizedDescription
+                    }
+                }.value
+                if let errorMessage {
+                    failRepositoryRemoval(scope, message: errorMessage)
+                    return
                 }
             }
-            Task { @MainActor [weak self] in
-                for await (scope, report) in updates {
-                    self?.updateWorktreeProvisioning(report, for: scope, in: task)
-                }
+
+            guard let taskIndex = tasks.firstIndex(where: { $0.id == task.id }) else { return }
+            let updatedTask = WorkspaceTask(
+                id: task.id,
+                title: task.title,
+                repositories: tasks[taskIndex].repositories.filter {
+                    $0.repositoryID != scope.repositoryID
+                },
+                createdAt: task.createdAt
+            )
+            var updatedTasks = tasks
+            updatedTasks[taskIndex] = updatedTask
+            do {
+                try taskStore.save(updatedTasks)
+            } catch {
+                failRepositoryRemoval(scope, message: error.localizedDescription)
+                return
             }
+            tasks = updatedTasks
+            repositoryRemovalStates.removeValue(forKey: scope)
+            repositoryErrors.removeValue(forKey: scope)
+            activeScope = .task(task.id)
+            updateTaskSidebar()
+            installActiveWorkspace()
+        }
+    }
+
+    private func closeTerminalWorkspaces(for taskID: UUID) {
+        view.window?.makeFirstResponder(nil)
+        if let workspace = taskWorkspaces.removeValue(forKey: taskID) {
+            closeTerminals(in: workspace)
+        }
+        let repositoryScopes = repositoryWorkspaces.keys.filter { $0.taskID == taskID }
+        for scope in repositoryScopes {
+            guard let workspace = repositoryWorkspaces.removeValue(forKey: scope) else { continue }
+            closeTerminals(in: workspace)
+        }
+    }
+
+    private func closeTerminals(in workspace: TerminalWorkspace) {
+        for tab in workspace.tabs {
+            if tab.controller.isViewLoaded {
+                tab.controller.view.removeFromSuperview()
+            }
+            tab.controller.removeFromParent()
+        }
+        workspace.tabs.removeAll()
+        workspace.activeTabID = nil
+    }
+
+    private func failTaskDeletion(_ taskID: UUID, message: String) {
+        taskDeletionStates[taskID] = .failed(message)
+        taskErrors[taskID] = "Deletion failed"
+        updateTaskSidebar()
+        if activeTaskID == taskID {
+            installActiveWorkspace()
+        }
+    }
+
+    private func failRepositoryRemoval(_ scope: TaskRepositoryScope, message: String) {
+        repositoryRemovalStates[scope] = .failed(message)
+        repositoryErrors[scope] = "Detach failed"
+        updateTaskSidebar()
+        if activeScope == .repository(scope) {
+            installActiveWorkspace()
         }
     }
 
     private func updateWorktreeProvisioning(
         _ report: WorktreeProvisioningReport,
-        for scope: TaskRepositoryScope,
-        in task: WorkspaceTask
+        for scope: TaskRepositoryScope
     ) {
         do {
-            try storeWorktreeProvisioning(report, for: scope, in: task)
+            try storeWorktreeProvisioning(report, for: scope)
             repositoryWorkspaces.removeValue(forKey: scope)
             if let failureMessage = report.failureMessage {
                 repositoryErrors[scope] = failureMessage
@@ -752,10 +1340,10 @@ final class WorkspaceViewController: NSViewController {
 
     private func storeWorktreeProvisioning(
         _ report: WorktreeProvisioningReport,
-        for scope: TaskRepositoryScope,
-        in task: WorkspaceTask
+        for scope: TaskRepositoryScope
     ) throws {
         guard let taskIndex = tasks.firstIndex(where: { $0.id == scope.taskID }) else { return }
+        let task = tasks[taskIndex]
         var attachments = tasks[taskIndex].repositories
         guard let attachmentIndex = attachments.firstIndex(where: { $0.repositoryID == scope.repositoryID }) else {
             return
@@ -765,15 +1353,18 @@ final class WorkspaceViewController: NSViewController {
             repositoryID: attachment.repositoryID,
             name: attachment.name,
             worktreePath: report.succeeded ? report.path : nil,
-            worktreeProvisioning: report.succeeded ? nil : report
+            worktreeProvisioning: report.succeeded ? nil : report,
+            branch: report.succeeded ? report.branch : attachment.branch
         )
-        tasks[taskIndex] = WorkspaceTask(
+        var updatedTasks = tasks
+        updatedTasks[taskIndex] = WorkspaceTask(
             id: task.id,
             title: task.title,
             repositories: attachments,
             createdAt: task.createdAt
         )
-        try taskStore.save(tasks)
+        try taskStore.save(updatedTasks)
+        tasks = updatedTasks
     }
 
     private func selectTask(_ taskID: UUID) {
@@ -795,6 +1386,12 @@ final class WorkspaceViewController: NSViewController {
         if settingsController != nil { dismissSettings() }
         activeScope = .repository(scope)
         expandedTaskIDs.insert(scope.taskID)
+
+        if taskDeletionStates[scope.taskID] != nil || repositoryRemovalStates[scope] != nil {
+            updateTaskSidebar()
+            installActiveWorkspace()
+            return
+        }
 
         if let report = attachment.worktreeProvisioning, let failureMessage = report.failureMessage {
             repositoryErrors[scope] = failureMessage
@@ -858,10 +1455,28 @@ final class WorkspaceViewController: NSViewController {
     }
 
     private func updateTaskSidebar() {
+        let repositoryActivities = repositoryRemovalStates.compactMapValues { state in
+            if case .removing = state { "detaching" } else { nil }
+        }
+        var taskActivities = taskDeletionStates.compactMapValues { state in
+            if case .deleting = state { "deleting" } else { nil }
+        }
+        for task in tasks where taskActivities[task.id] == nil {
+            if repositoryActivities.keys.contains(where: { $0.taskID == task.id }) {
+                taskActivities[task.id] = "detaching"
+            } else if task.repositories.contains(where: {
+                guard let report = $0.worktreeProvisioning else { return false }
+                return !report.succeeded && report.failureMessage == nil
+            }) {
+                taskActivities[task.id] = "attaching"
+            }
+        }
         leftPanelController.updateTasks(
             tasks,
             selection: activeScope,
             expandedTaskIDs: expandedTaskIDs,
+            taskActivities: taskActivities,
+            repositoryActivities: repositoryActivities,
             taskErrors: taskErrors,
             repositoryErrors: repositoryErrors,
             loadError: taskLoadError
@@ -1099,6 +1714,24 @@ final class WorkspaceViewController: NSViewController {
         guard keyEventMonitor == nil else { return }
         keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
+            if self.taskActionMenu != nil,
+               event.window === self.view.window,
+               event.keyCode == 53 {
+                self.dismissTaskActionMenu()
+                return nil
+            }
+            if self.repositoryActionMenu != nil,
+               event.window === self.view.window,
+               event.keyCode == 53 {
+                self.dismissRepositoryActionMenu()
+                return nil
+            }
+            if self.deleteTaskModal != nil,
+               event.window === self.view.window,
+               event.keyCode == 53 {
+                self.dismissDeleteTaskModal()
+                return nil
+            }
             if self.newTaskModal != nil,
                event.window === self.view.window,
                event.keyCode == 53 {
@@ -1153,6 +1786,8 @@ final class WorkspaceViewController: NSViewController {
     }
 
     @objc private func windowDidResignKey(_ notification: Notification) {
+        dismissTaskActionMenu()
+        dismissRepositoryActionMenu()
         dismissTransientSidebar(animated: false)
     }
 
@@ -1412,16 +2047,23 @@ private final class WorkspaceEmptyStateView: NSStackView {
     enum State {
         case chooseTask
         case readyToStart
+        case deletingTask(title: String, step: String)
+        case deletionFailed(title: String, detail: String)
+        case removingRepository(title: String, step: String)
+        case repositoryRemovalFailed(title: String, detail: String)
         case error(title: String, detail: String)
     }
 
     private enum Action {
         case createTask
         case createTerminal
+        case retryDeletion
+        case retryDetach
     }
 
     var onCreateTask: (() -> Void)?
     var onCreateTerminal: (() -> Void)?
+    var onRetryDeletion: (() -> Void)?
 
     init(state: State) {
         super.init(frame: .zero)
@@ -1433,22 +2075,50 @@ private final class WorkspaceEmptyStateView: NSStackView {
         let title: String
         let detail: String
         let action: Action?
+        let showsProgress: Bool
         switch state {
         case .chooseTask:
             artwork = WorkspaceEmptyArtworkView(kind: .chooseTask)
             title = "Pick a task, make a little magic."
             detail = "Your workspace is waiting. Choose a task from the sidebar to wake it up."
             action = .createTask
+            showsProgress = false
         case .readyToStart:
             artwork = WorkspaceEmptyArtworkView(kind: .terminal)
             title = "This task is ready for takeoff."
             detail = "Open its first terminal and make a little productive noise."
             action = .createTerminal
+            showsProgress = false
+        case let .deletingTask(taskTitle, step):
+            artwork = WorkspaceEmptyArtworkView(kind: .worktree)
+            title = "Deleting \(taskTitle) task"
+            detail = step
+            action = nil
+            showsProgress = true
+        case let .deletionFailed(taskTitle, failureDetail):
+            artwork = WorkspaceEmptyArtworkView(kind: .error)
+            title = "Could not delete \(taskTitle) task"
+            detail = failureDetail
+            action = .retryDeletion
+            showsProgress = false
+        case let .removingRepository(repositoryTitle, step):
+            artwork = WorkspaceEmptyArtworkView(kind: .worktree)
+            title = "Detaching \(repositoryTitle) from task"
+            detail = step
+            action = nil
+            showsProgress = true
+        case let .repositoryRemovalFailed(repositoryTitle, failureDetail):
+            artwork = WorkspaceEmptyArtworkView(kind: .error)
+            title = "Could not detach \(repositoryTitle) from task"
+            detail = failureDetail
+            action = .retryDetach
+            showsProgress = false
         case let .error(title: errorTitle, detail: errorDetail):
             artwork = WorkspaceEmptyArtworkView(kind: .error)
             title = errorTitle
             detail = errorDetail
             action = nil
+            showsProgress = false
         }
 
         artwork.translatesAutoresizingMaskIntoConstraints = false
@@ -1471,6 +2141,15 @@ private final class WorkspaceEmptyStateView: NSStackView {
         addArrangedSubview(detailLabel)
         detailLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 420).isActive = true
 
+        if showsProgress {
+            let progress = NSProgressIndicator()
+            progress.style = .spinning
+            progress.controlSize = .small
+            progress.startAnimation(nil)
+            addArrangedSubview(progress)
+            setCustomSpacing(20, after: detailLabel)
+        }
+
         if let action {
             let button: WorkspaceEmptyActionButton
             switch action {
@@ -1483,6 +2162,18 @@ private final class WorkspaceEmptyStateView: NSStackView {
                     symbolName: "terminal"
                 )
                 button.action = #selector(createTerminal)
+            case .retryDeletion:
+                button = WorkspaceEmptyActionButton(
+                    title: "Retry deletion",
+                    symbolName: "arrow.clockwise"
+                )
+                button.action = #selector(retryDeletion)
+            case .retryDetach:
+                button = WorkspaceEmptyActionButton(
+                    title: "Retry detach",
+                    symbolName: "arrow.clockwise"
+                )
+                button.action = #selector(retryDeletion)
             }
             button.target = self
             addArrangedSubview(button)
@@ -1502,12 +2193,18 @@ private final class WorkspaceEmptyStateView: NSStackView {
     @objc private func createTask() {
         onCreateTask?()
     }
+
+    @objc private func retryDeletion() {
+        onRetryDeletion?()
+    }
 }
 
 private extension WorkspaceEmptyStateView.State {
     var isError: Bool {
-        if case .error = self { return true }
-        return false
+        switch self {
+        case .error, .deletionFailed, .repositoryRemovalFailed: true
+        default: false
+        }
     }
 }
 
@@ -1753,14 +2450,15 @@ private final class WorkspaceEmptyArtworkView: NSView {
         color.withAlphaComponent(0.82).setStroke()
         triangle.lineWidth = 2
         triangle.stroke()
-        let mark = NSAttributedString(
-            string: "!",
-            attributes: [
-                .font: AppTheme.font(ofSize: 28, weight: 700),
-                .foregroundColor: color,
-            ]
-        )
-        mark.draw(at: NSPoint(x: rect.midX - 4, y: rect.minY + 33))
+        color.setFill()
+        NSBezierPath(
+            roundedRect: NSRect(x: rect.midX - 2, y: rect.minY + 47, width: 4, height: 18),
+            xRadius: 2,
+            yRadius: 2
+        ).fill()
+        NSBezierPath(
+            ovalIn: NSRect(x: rect.midX - 3, y: rect.minY + 38, width: 6, height: 6)
+        ).fill()
     }
 
 }
