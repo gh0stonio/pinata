@@ -78,6 +78,107 @@ final class CoreLogicTests: XCTestCase {
         )
     }
 
+    func testWorktreePathsUseTaskSlugAndConfiguredRoot() {
+        let repository = RegisteredRepository(
+            name: "Piñata App",
+            path: "/code/pinata",
+            branches: ["main"],
+            defaultBranch: "main",
+            currentBranch: "main",
+            remoteURL: nil,
+            organization: nil
+        )
+
+        XCTAssertEqual(WorktreePathResolver.serializedTaskName("Fix API & UI!"), "fix-api-ui")
+        XCTAssertEqual(
+            WorktreePathResolver.root(
+                for: repository,
+                globalBasePath: "/worktrees"
+            ).path,
+            "/worktrees/pinata-app"
+        )
+
+        var overridden = repository
+        overridden.worktreeBasePath = "./worktrees"
+        XCTAssertEqual(
+            WorktreePathResolver.root(
+                for: overridden,
+                globalBasePath: "/worktrees"
+            ).path,
+            "/code/pinata/worktrees"
+        )
+    }
+
+    func testWorktreeFailureSummaryDropsProgressOutput() {
+        let progress = (1...80)
+            .map { "Updating files: \($0)% (\($0)/100)" }
+            .joined(separator: "\n")
+
+        XCTAssertEqual(
+            WorktreeProvisioningFailureSummary.summarize(
+                progress + "\nfatal: Could not write new index file."
+            ),
+            "fatal: Could not write new index file."
+        )
+        XCTAssertEqual(
+            WorktreeProvisioningFailureSummary.summarize(progress),
+            "Worktree creation stopped before completion."
+        )
+    }
+
+    func testWorktreeProvisionerCreatesNamedCheckout() throws {
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let repositoryURL = directoryURL.appendingPathComponent("source", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+        try FileManager.default.createDirectory(at: repositoryURL, withIntermediateDirectories: true)
+        _ = try runGit(["init", "-b", "main", repositoryURL.path])
+        try Data("initial".utf8).write(to: repositoryURL.appendingPathComponent("README.md"))
+        _ = try runGit(["-C", repositoryURL.path, "add", "."])
+        _ = try runGit([
+            "-C", repositoryURL.path,
+            "-c", "user.name=Test", "-c", "user.email=test@example.com",
+            "-c", "commit.gpgsign=false",
+            "commit", "-m", "Initial",
+        ])
+        _ = try runGit(["-C", repositoryURL.path, "remote", "add", "origin", repositoryURL.path])
+        let repository = RegisteredRepository(
+            name: "source",
+            path: repositoryURL.path,
+            branches: ["main"],
+            defaultBranch: "main",
+            currentBranch: "main",
+            remoteURL: nil,
+            organization: nil
+        )
+
+        let updates = WorktreeUpdates()
+        let report = WorktreeProvisioner(
+            globalBasePath: directoryURL.appendingPathComponent("worktrees").path
+        ).provision(
+            repository: repository,
+            taskID: UUID(),
+            taskTitle: "Fix API & UI!",
+            onUpdate: { updates.values.append($0) }
+        )
+        let path = report.path
+
+        XCTAssertTrue(report.succeeded)
+        XCTAssertEqual(
+            Array(report.steps.map(\.title).prefix(3)),
+            ["Fetch origin", "Create branch", "Create worktree"]
+        )
+        XCTAssertTrue(report.steps.contains { $0.title == "Preparing worktree" })
+        XCTAssertEqual(updates.values.first?.steps.map(\.status), [.pending, .pending, .pending])
+        XCTAssertTrue(updates.values.contains { $0.steps.contains { $0.status == .running } })
+        XCTAssertEqual(URL(fileURLWithPath: path).lastPathComponent, "fix-api-ui")
+        XCTAssertEqual(
+            URL(fileURLWithPath: try runGit(["-C", path, "rev-parse", "--show-toplevel"]))
+                .resolvingSymlinksInPath(),
+            URL(fileURLWithPath: path).resolvingSymlinksInPath()
+        )
+    }
+
     @MainActor
     func testWorkspaceTabHitTargetsSelectAndClose() throws {
         let size = NSSize(width: 600, height: AppTheme.mainHeaderHeight)
@@ -209,4 +310,37 @@ final class CoreLogicTests: XCTestCase {
             TaskRepositoryScope(taskID: task.id, repositoryID: repositoryID)
         )
     }
+}
+
+private final class WorktreeUpdates: @unchecked Sendable {
+    var values: [WorktreeProvisioningReport] = []
+}
+
+private func runGit(_ arguments: [String]) throws -> String {
+    let output = Pipe()
+    let error = Pipe()
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    process.arguments = arguments
+    process.standardOutput = output
+    process.standardError = error
+    try process.run()
+    process.waitUntilExit()
+    let result = String(
+        decoding: output.fileHandleForReading.readDataToEndOfFile(),
+        as: UTF8.self
+    ).trimmingCharacters(in: .whitespacesAndNewlines)
+    guard process.terminationStatus == 0 else {
+        throw NSError(
+            domain: "CoreLogicTests",
+            code: Int(process.terminationStatus),
+            userInfo: [
+                NSLocalizedDescriptionKey: String(
+                    decoding: error.fileHandleForReading.readDataToEndOfFile(),
+                    as: UTF8.self
+                ),
+            ]
+        )
+    }
+    return result
 }
