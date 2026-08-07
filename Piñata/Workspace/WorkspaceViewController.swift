@@ -14,6 +14,32 @@ final class WorkspaceViewController: NSViewController {
         let controller: TerminalViewController
     }
 
+    @MainActor
+    private final class TerminalWorkspace {
+        let title: String
+        let workingDirectory: String
+        var tabs: [TerminalTab]
+        var activeTabID: UUID?
+        var nextTabNumber = 2
+
+        init(runtime: GhosttyRuntime, title: String, workingDirectory: String) {
+            self.title = title
+            self.workingDirectory = workingDirectory
+            let tabID = UUID()
+            tabs = [
+                TerminalTab(
+                    id: tabID,
+                    title: title,
+                    controller: TerminalViewController(
+                        runtime: runtime,
+                        workingDirectory: workingDirectory
+                    )
+                )
+            ]
+            activeTabID = tabID
+        }
+    }
+
     private static let sidebarDefaultsKey = "pinata.sidebar.presentation.v1"
     private static let leftPanelWidthDefaultsKey = "pinata.panel.left.width.v1"
     private static let revealDelay: TimeInterval = 0.15
@@ -29,10 +55,20 @@ final class WorkspaceViewController: NSViewController {
     private let leftPanelController = PanelViewController()
     private let leftResizeHandle = PanelResizeHandle()
     private let edgeRevealZone = EdgeRevealView()
-    private var terminalTabs: [TerminalTab]
-    private var activeTerminalTabID: UUID?
-    private var nextTerminalTabNumber = 2
+    private let taskStore: TaskRegistryStore
+    private let repositoryStore = RepositoryRegistryStore()
+    private let globalWorkspace: TerminalWorkspace
+    private var taskWorkspaces: [UUID: TerminalWorkspace] = [:]
+    private var repositoryWorkspaces: [TaskRepositoryScope: TerminalWorkspace] = [:]
+    private var tasks: [WorkspaceTask]
+    private var activeScope: WorkspaceScope?
+    private var expandedTaskIDs = Set<UUID>()
+    private var taskErrors: [UUID: String] = [:]
+    private var repositoryErrors: [TaskRepositoryScope: String] = [:]
+    private var taskLoadError: String?
+    private var taskRegistryLoaded: Bool
     private var settingsController: SettingsViewController?
+    private var newTaskModal: NewTaskModalView?
     private var leftResizeWindowWidth: CGFloat?
 
     private var leftWidthConstraint: NSLayoutConstraint!
@@ -54,16 +90,21 @@ final class WorkspaceViewController: NSViewController {
     private var trafficLightBaselineY: CGFloat?
 
     init(runtime: GhosttyRuntime) {
-        let initialTabID = UUID()
         self.runtime = runtime
-        terminalTabs = [
-            TerminalTab(
-                id: initialTabID,
-                title: "Terminal",
-                controller: TerminalViewController(runtime: runtime)
-            )
-        ]
-        activeTerminalTabID = initialTabID
+        taskStore = TaskRegistryStore()
+        globalWorkspace = TerminalWorkspace(
+            runtime: runtime,
+            title: "Terminal",
+            workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path
+        )
+        do {
+            tasks = try taskStore.load().sorted { $0.createdAt > $1.createdAt }
+            taskRegistryLoaded = true
+        } catch {
+            tasks = []
+            taskRegistryLoaded = false
+            taskLoadError = "Could not load tasks: \(error.localizedDescription)"
+        }
         let stored = UserDefaults.standard.string(forKey: Self.sidebarDefaultsKey)
         sidebarPresentation = stored == SidebarPresentation.hidden.rawValue ? .hidden : .docked
         let defaults = UserDefaults.standard
@@ -127,40 +168,90 @@ final class WorkspaceViewController: NSViewController {
     }
 
     @objc func splitTerminalVertically(_ sender: Any?) {
-        guard settingsController == nil else { return }
+        guard settingsController == nil, newTaskModal == nil else { return }
         activeTerminalController?.splitActiveVertically()
     }
 
     @objc func splitTerminalHorizontally(_ sender: Any?) {
-        guard settingsController == nil else { return }
+        guard settingsController == nil, newTaskModal == nil else { return }
         activeTerminalController?.splitActiveHorizontally()
     }
 
     @objc func closeTerminalPane(_ sender: Any?) {
-        guard settingsController == nil else { return }
+        guard settingsController == nil, newTaskModal == nil else { return }
         activeTerminalController?.closeActivePane()
     }
 
     @objc func createTerminalTab(_ sender: Any?) {
-        guard settingsController == nil else { return }
+        guard settingsController == nil, newTaskModal == nil else { return }
+        if case .task(let taskID) = activeScope, taskWorkspaces[taskID] == nil {
+            guard taskErrors[taskID] == nil else { return }
+            taskWorkspaces[taskID] = TerminalWorkspace(
+                runtime: runtime,
+                title: "Terminal",
+                workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path
+            )
+            installActiveWorkspace()
+            return
+        }
+        guard let workspace = activeTerminalWorkspace else { return }
         let id = UUID()
         let tab = TerminalTab(
             id: id,
-            title: "Terminal \(nextTerminalTabNumber)",
-            controller: TerminalViewController(runtime: runtime)
+            title: "\(workspace.title) \(workspace.nextTabNumber)",
+            controller: TerminalViewController(
+                runtime: runtime,
+                workingDirectory: workspace.workingDirectory
+            )
         )
-        nextTerminalTabNumber += 1
-        terminalTabs.append(tab)
-        activeTerminalTabID = id
+        workspace.nextTabNumber += 1
+        workspace.tabs.append(tab)
+        workspace.activeTabID = id
         if isViewLoaded {
-            installActiveTerminal()
+            installActiveWorkspace()
         }
+    }
+
+    @objc func presentNewTask(_ sender: Any?) {
+        guard newTaskModal == nil else { return }
+        if settingsController != nil {
+            dismissSettings()
+        }
+
+        let repositories: [RegisteredRepository]
+        let repositoryError: String?
+        do {
+            repositories = try repositoryStore.load()
+            repositoryError = nil
+        } catch {
+            repositories = []
+            repositoryError = "Could not load repositories: \(error.localizedDescription)"
+        }
+
+        let modal = NewTaskModalView(
+            repositories: repositories,
+            repositoryError: repositoryError
+        )
+        modal.onCancel = { [weak self] in self?.dismissNewTaskModal() }
+        modal.onCreate = { [weak self] title, repositories in
+            self?.createTask(title: title, repositories: repositories)
+        }
+        view.addSubview(modal)
+        NSLayoutConstraint.activate([
+            modal.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            modal.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            modal.topAnchor.constraint(equalTo: view.topAnchor),
+            modal.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        newTaskModal = modal
+        DispatchQueue.main.async { modal.focusTitle() }
     }
 
     func toggleSettings(
         _ settings: UserSettings,
         onChange: @escaping (UserSettings) -> Bool
     ) {
+        guard newTaskModal == nil else { return }
         if settingsController != nil {
             dismissSettings()
             return
@@ -178,10 +269,14 @@ final class WorkspaceViewController: NSViewController {
             controller.view.bottomAnchor.constraint(equalTo: mainColumn.bottomAnchor),
         ])
         settingsController = controller
-        workspaceHeader.setTabs(
-            terminalTabs.map { (id: $0.id, title: $0.title) },
-            activeID: nil
-        )
+        if let workspace = activeTerminalWorkspace {
+            workspaceHeader.setTabs(
+                workspace.tabs.map { (id: $0.id, title: $0.title) },
+                activeID: nil
+            )
+        } else {
+            workspaceHeader.setEmptyScope("no tabs in this scope", allowsCreateTab: false)
+        }
         applySidebarPresentation()
         DispatchQueue.main.async {
             controller.focusInitialSection()
@@ -195,9 +290,12 @@ final class WorkspaceViewController: NSViewController {
         mainColumn.layer?.backgroundColor = AppTheme.background.cgColor
         workspaceHeader.applyTheme()
         leftPanelController.applyTheme()
-        terminalTabs.forEach { $0.controller.applyTheme() }
+        allTerminalWorkspaces.forEach { workspace in
+            workspace.tabs.forEach { $0.controller.applyTheme() }
+        }
         leftResizeHandle.applyTheme()
         settingsController?.applyTheme()
+        newTaskModal?.applyTheme()
         applySidebarPresentation()
     }
 
@@ -230,7 +328,8 @@ final class WorkspaceViewController: NSViewController {
         rootView.addSubview(leftPanel)
         rootView.addSubview(leftResizeHandle)
         rootView.addSubview(edgeRevealZone)
-        installActiveTerminal()
+        updateTaskSidebar()
+        installActiveWorkspace()
     }
 
     private func configureConstraints(in rootView: NSView) {
@@ -310,6 +409,18 @@ final class WorkspaceViewController: NSViewController {
         leftPanelController.onTogglePanel = { [weak self] in
             self?.toggleLeftPanel(nil)
         }
+        leftPanelController.onCreateTask = { [weak self] in
+            self?.presentNewTask(nil)
+        }
+        leftPanelController.onSelectTask = { [weak self] taskID in
+            self?.selectTask(taskID)
+        }
+        leftPanelController.onSelectRepository = { [weak self] scope in
+            self?.selectRepository(scope)
+        }
+        leftPanelController.onToggleTaskExpansion = { [weak self] taskID in
+            self?.toggleTaskExpansion(taskID)
+        }
         leftPanelController.onHoverChanged = { [weak self] hovering in
             guard let self else { return }
             if hovering {
@@ -340,33 +451,67 @@ final class WorkspaceViewController: NSViewController {
         }
     }
 
+    private var activeTerminalWorkspace: TerminalWorkspace? {
+        switch activeScope {
+        case nil:
+            globalWorkspace
+        case .task(let taskID):
+            taskErrors[taskID] == nil ? taskWorkspaces[taskID] : nil
+        case .repository(let scope):
+            repositoryWorkspaces[scope]
+        }
+    }
+
+    private var allTerminalWorkspaces: [TerminalWorkspace] {
+        [globalWorkspace] + Array(taskWorkspaces.values) + Array(repositoryWorkspaces.values)
+    }
+
     private var activeTerminalController: TerminalViewController? {
-        guard let activeTerminalTabID else { return nil }
-        return terminalTabs.first(where: { $0.id == activeTerminalTabID })?.controller
+        guard
+            let workspace = activeTerminalWorkspace,
+            let activeTabID = workspace.activeTabID
+        else { return nil }
+        return workspace.tabs.first(where: { $0.id == activeTabID })?.controller
     }
 
     private func selectTerminalTab(_ id: UUID) {
-        guard id != activeTerminalTabID, terminalTabs.contains(where: { $0.id == id }) else {
-            return
-        }
-        activeTerminalTabID = id
-        installActiveTerminal()
+        guard
+            let workspace = activeTerminalWorkspace,
+            id != workspace.activeTabID,
+            workspace.tabs.contains(where: { $0.id == id })
+        else { return }
+        workspace.activeTabID = id
+        installActiveWorkspace()
     }
 
-    private func installActiveTerminal() {
+    private func installActiveWorkspace() {
         terminalHost.subviews.forEach { $0.removeFromSuperview() }
+        guard let workspace = activeTerminalWorkspace else {
+            let allowsCreateTab: Bool
+            if case .task(let taskID) = activeScope {
+                allowsCreateTab = taskErrors[taskID] == nil
+            } else {
+                allowsCreateTab = false
+            }
+            workspaceHeader.setEmptyScope(
+                "no tabs in this scope",
+                allowsCreateTab: allowsCreateTab
+            )
+            installScopeMessage()
+            return
+        }
         workspaceHeader.setTabs(
-            terminalTabs.map { (id: $0.id, title: $0.title) },
-            activeID: activeTerminalTabID
+            workspace.tabs.map { (id: $0.id, title: $0.title) },
+            activeID: workspace.activeTabID
         )
         guard
-            let activeTerminalTabID,
+            let activeTabID = workspace.activeTabID,
             let controller = activeTerminalController
         else {
             return
         }
         controller.onCloseLastPane = { [weak self] in
-            self?.closeTerminalTab(activeTerminalTabID)
+            self?.closeTerminalTab(activeTabID)
         }
         if controller.parent !== self {
             addChild(controller)
@@ -385,16 +530,163 @@ final class WorkspaceViewController: NSViewController {
     }
 
     private func closeTerminalTab(_ id: UUID) {
-        guard let index = terminalTabs.firstIndex(where: { $0.id == id }) else { return }
-        let tab = terminalTabs.remove(at: index)
+        guard
+            let workspace = activeTerminalWorkspace,
+            let index = workspace.tabs.firstIndex(where: { $0.id == id })
+        else { return }
+        let tab = workspace.tabs.remove(at: index)
         tab.controller.view.removeFromSuperview()
         tab.controller.removeFromParent()
-        if activeTerminalTabID == id {
-            activeTerminalTabID = terminalTabs.isEmpty
+        if workspace.activeTabID == id {
+            workspace.activeTabID = workspace.tabs.isEmpty
                 ? nil
-                : terminalTabs[min(index, terminalTabs.count - 1)].id
+                : workspace.tabs[min(index, workspace.tabs.count - 1)].id
         }
-        installActiveTerminal()
+        installActiveWorkspace()
+    }
+
+    private func installScopeMessage() {
+        let title: String
+        let detail: String?
+        switch activeScope {
+        case .task(let taskID):
+            if let error = taskErrors[taskID] {
+                title = "Task failed"
+                detail = error
+            } else {
+                title = "No tabs in this scope"
+                detail = nil
+            }
+        case .repository(let scope):
+            title = "Repository workspace failed"
+            detail = repositoryErrors[scope]
+        case nil:
+            return
+        }
+        let message = WorkspaceScopeMessageView(title: title, detail: detail)
+        message.translatesAutoresizingMaskIntoConstraints = false
+        terminalHost.addSubview(message)
+        NSLayoutConstraint.activate([
+            message.centerXAnchor.constraint(equalTo: terminalHost.centerXAnchor),
+            message.centerYAnchor.constraint(equalTo: terminalHost.centerYAnchor),
+            message.leadingAnchor.constraint(
+                greaterThanOrEqualTo: terminalHost.leadingAnchor,
+                constant: 24
+            ),
+            message.trailingAnchor.constraint(
+                lessThanOrEqualTo: terminalHost.trailingAnchor,
+                constant: -24
+            ),
+        ])
+    }
+
+    private func createTask(title: String, repositories: [RegisteredRepository]) {
+        let task = WorkspaceTask(
+            title: title,
+            repositories: repositories.map {
+                TaskRepositoryAttachment(repositoryID: $0.id, name: $0.name)
+            }
+        )
+        dismissNewTaskModal()
+        tasks.insert(task, at: 0)
+        activeScope = .task(task.id)
+        if !task.repositories.isEmpty {
+            expandedTaskIDs.insert(task.id)
+        }
+        updateTaskSidebar()
+        installActiveWorkspace()
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if self.taskRegistryLoaded {
+                do {
+                    try self.taskStore.save(self.tasks)
+                    self.taskErrors.removeAll()
+                } catch {
+                    self.taskErrors[task.id] = error.localizedDescription
+                }
+            } else {
+                self.taskErrors[task.id] = self.taskLoadError ?? "Task storage is unavailable."
+            }
+            self.updateTaskSidebar()
+            if self.activeScope == .task(task.id) {
+                self.installActiveWorkspace()
+            }
+        }
+    }
+
+    private func selectTask(_ taskID: UUID) {
+        guard tasks.contains(where: { $0.id == taskID }) else { return }
+        if settingsController != nil { dismissSettings() }
+        activeScope = .task(taskID)
+        if let task = tasks.first(where: { $0.id == taskID }), !task.repositories.isEmpty {
+            expandedTaskIDs.insert(taskID)
+        }
+        updateTaskSidebar()
+        installActiveWorkspace()
+    }
+
+    private func selectRepository(_ scope: TaskRepositoryScope) {
+        guard
+            let task = tasks.first(where: { $0.id == scope.taskID }),
+            let attachment = task.repositories.first(where: { $0.repositoryID == scope.repositoryID })
+        else { return }
+        if settingsController != nil { dismissSettings() }
+        activeScope = .repository(scope)
+        expandedTaskIDs.insert(scope.taskID)
+
+        if repositoryWorkspaces[scope] == nil {
+            do {
+                let repositories = try repositoryStore.load()
+                guard let repository = repositories.first(where: { $0.id == scope.repositoryID }) else {
+                    throw WorkspaceTaskError.repositoryUnavailable(attachment.name)
+                }
+                var isDirectory: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: repository.path, isDirectory: &isDirectory),
+                      isDirectory.boolValue else {
+                    throw WorkspaceTaskError.repositoryUnavailable(attachment.name)
+                }
+                repositoryWorkspaces[scope] = TerminalWorkspace(
+                    runtime: runtime,
+                    title: "~/\(attachment.name)",
+                    workingDirectory: repository.path
+                )
+                repositoryErrors.removeValue(forKey: scope)
+            } catch {
+                repositoryErrors[scope] = error.localizedDescription
+            }
+        }
+        updateTaskSidebar()
+        installActiveWorkspace()
+    }
+
+    private func toggleTaskExpansion(_ taskID: UUID) {
+        if expandedTaskIDs.contains(taskID) {
+            if case .repository(let scope) = activeScope, scope.taskID == taskID {
+                NSSound.beep()
+                return
+            }
+            expandedTaskIDs.remove(taskID)
+        } else {
+            expandedTaskIDs.insert(taskID)
+        }
+        updateTaskSidebar()
+    }
+
+    private func updateTaskSidebar() {
+        leftPanelController.updateTasks(
+            tasks,
+            selection: activeScope,
+            expandedTaskIDs: expandedTaskIDs,
+            taskErrors: taskErrors,
+            repositoryErrors: repositoryErrors,
+            loadError: taskLoadError
+        )
+    }
+
+    private func dismissNewTaskModal() {
+        newTaskModal?.removeFromSuperview()
+        newTaskModal = nil
+        activeTerminalController?.focusActiveTerminal()
     }
 
     private func applySidebarPresentation() {
@@ -621,6 +913,12 @@ final class WorkspaceViewController: NSViewController {
         guard keyEventMonitor == nil else { return }
         keyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
+            if self.newTaskModal != nil,
+               event.window === self.view.window,
+               event.keyCode == 53 {
+                self.dismissNewTaskModal()
+                return nil
+            }
             if self.settingsController != nil,
                event.window === self.view.window,
                event.keyCode == 53 {
@@ -688,10 +986,7 @@ final class WorkspaceViewController: NSViewController {
         settingsController?.view.removeFromSuperview()
         settingsController?.removeFromParent()
         settingsController = nil
-        workspaceHeader.setTabs(
-            terminalTabs.map { (id: $0.id, title: $0.title) },
-            activeID: activeTerminalTabID
-        )
+        installActiveWorkspace()
         applySidebarPresentation()
         activeTerminalController?.focusActiveTerminal()
     }
@@ -730,6 +1025,47 @@ final class WorkspaceViewController: NSViewController {
         }
     }
 
+}
+
+private enum WorkspaceTaskError: LocalizedError {
+    case repositoryUnavailable(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .repositoryUnavailable(let name):
+            "The registered path for \(name) is unavailable."
+        }
+    }
+}
+
+@MainActor
+private final class WorkspaceScopeMessageView: NSStackView {
+    init(title: String, detail: String?) {
+        super.init(frame: .zero)
+        orientation = .vertical
+        alignment = .centerX
+        spacing = 8
+
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsHeading, weight: 650)
+        titleLabel.textColor = detail == nil ? AppTheme.secondaryText : .systemRed
+        addArrangedSubview(titleLabel)
+
+        if let detail {
+            let detailLabel = NSTextField(wrappingLabelWithString: detail)
+            detailLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsBody)
+            detailLabel.textColor = AppTheme.tertiaryText
+            detailLabel.alignment = .center
+            detailLabel.maximumNumberOfLines = 0
+            addArrangedSubview(detailLabel)
+            detailLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 520).isActive = true
+        }
+    }
+
+    @available(*, unavailable)
+    required init(coder: NSCoder) {
+        fatalError("init(coder:) is unavailable")
+    }
 }
 
 @MainActor

@@ -99,7 +99,10 @@ final class TerminalViewController: NSViewController {
     private var rootController: NSViewController?
     var onCloseLastPane: (() -> Void)?
 
-    init(runtime: GhosttyRuntime) {
+    init(
+        runtime: GhosttyRuntime,
+        workingDirectory: String = FileManager.default.homeDirectoryForCurrentUser.path
+    ) {
         let paneID = UUID()
         self.runtime = runtime
         root = .pane(paneID)
@@ -107,7 +110,7 @@ final class TerminalViewController: NSViewController {
         super.init(nibName: nil, bundle: nil)
         paneControllers[paneID] = makePaneController(
             paneID: paneID,
-            workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path
+            workingDirectory: workingDirectory
         )
     }
 
@@ -544,16 +547,14 @@ private final class PaneHeaderView: NSView {
 }
 
 @MainActor
-private final class PaneActionButton: NSButton {
+private final class PaneActionButton: AppButton {
     init(symbolName: String, accessibilityLabel: String, toolTip: String) {
         super.init(frame: .zero)
+        role = .icon
         translatesAutoresizingMaskIntoConstraints = false
-        isBordered = false
-        bezelStyle = .regularSquare
         image = NSImage(systemSymbolName: symbolName, accessibilityDescription: accessibilityLabel)
         imageScaling = .scaleProportionallyDown
-        contentTintColor = AppTheme.tertiaryText
-        focusRingType = .none
+        layer?.cornerRadius = AppTheme.workspaceControlCornerRadius
         self.toolTip = toolTip
         setAccessibilityLabel(accessibilityLabel)
         NSLayoutConstraint.activate([
@@ -561,11 +562,6 @@ private final class PaneActionButton: NSButton {
             heightAnchor.constraint(equalToConstant: AppTheme.paneHeaderActionSize),
         ])
     }
-
-    func applyTheme() {
-        contentTintColor = AppTheme.tertiaryText
-    }
-
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is unavailable")
