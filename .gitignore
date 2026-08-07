@@ -3,6 +3,7 @@ build/
 DerivedData/
 xcuserdata/
 *.xcuserstate
+*.profraw
 .DS_Store
 /.tools/
 /GhosttyKit.xcframework/
