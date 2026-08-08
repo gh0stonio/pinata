@@ -18,7 +18,6 @@ final class PanelViewController: NSViewController {
     private weak var trackingRoot: PanelTrackingView?
     private weak var leftHeader: LeftSidebarHeaderView?
     private weak var brandView: SidebarBrandView?
-    private weak var sectionHeader: SidebarSectionHeaderView?
     private let newTaskButton = SidebarNewTaskButton(frame: .zero)
     private let taskScrollView = NSScrollView()
     private let taskDocument = SidebarTaskDocumentView()
@@ -78,8 +77,10 @@ final class PanelViewController: NSViewController {
         view.layer?.backgroundColor = AppTheme.chromeBackground.cgColor
         leftHeader?.applyTheme()
         brandView?.applyTheme()
-        sectionHeader?.applyTheme()
         newTaskButton.applyTheme()
+        taskStack.arrangedSubviews
+            .compactMap { $0 as? SidebarSectionHeaderView }
+            .forEach { $0.applyTheme() }
         taskStack.arrangedSubviews
             .compactMap { $0 as? SidebarTaskGroupView }
             .forEach { $0.applyTheme() }
@@ -104,45 +105,64 @@ final class PanelViewController: NSViewController {
             $0.removeFromSuperview()
         }
 
+        func addHeader(_ title: String) {
+            let header = SidebarSectionHeaderView(title: title)
+            taskStack.addArrangedSubview(header)
+            header.widthAnchor.constraint(equalTo: taskStack.widthAnchor).isActive = true
+            taskStack.setCustomSpacing(AppTheme.sidebarTaskListTopSpacing, after: header)
+        }
+
+        func addTask(_ task: WorkspaceTask) {
+            let group = SidebarTaskGroupView(
+                task: task,
+                selection: selection,
+                expanded: expandedTaskIDs.contains(task.id),
+                menuActive: taskMenuTaskID == task.id,
+                activity: taskActivities[task.id],
+                taskError: taskErrors[task.id],
+                repositoryMenuScope: repositoryMenuScope,
+                repositoryActivities: repositoryActivities,
+                repositoryErrors: repositoryErrors
+            )
+            group.onSelectTask = { [weak self] in self?.onSelectTask?(task.id) }
+            group.onToggleExpansion = { [weak self] in
+                self?.onToggleTaskExpansion?(task.id)
+            }
+            group.onSelectRepository = { [weak self] repositoryID in
+                self?.onSelectRepository?(
+                    TaskRepositoryScope(taskID: task.id, repositoryID: repositoryID)
+                )
+            }
+            group.onShowMenu = { [weak self] anchorRect in
+                self?.onShowTaskMenu?(task.id, anchorRect)
+            }
+            group.onShowRepositoryMenu = { [weak self] repositoryID, anchorRect in
+                self?.onShowRepositoryMenu?(
+                    TaskRepositoryScope(taskID: task.id, repositoryID: repositoryID),
+                    anchorRect
+                )
+            }
+            taskStack.addArrangedSubview(group)
+            group.widthAnchor.constraint(equalTo: taskStack.widthAnchor).isActive = true
+        }
+
+        let pinnedTasks = tasks.filter(\.isPinned)
+        if !pinnedTasks.isEmpty {
+            addHeader("PINNED")
+            pinnedTasks.forEach(addTask)
+            if let lastPinned = taskStack.arrangedSubviews.last {
+                taskStack.setCustomSpacing(AppTheme.sidebarSectionSpacing, after: lastPinned)
+            }
+        }
+
+        addHeader("TASKS")
         if let loadError {
             taskStack.addArrangedSubview(SidebarMessageView(loadError, error: true))
         }
         if tasks.isEmpty, loadError == nil {
             taskStack.addArrangedSubview(SidebarMessageView("No tasks yet.", error: false))
-        } else if !tasks.isEmpty {
-            for task in tasks {
-                let group = SidebarTaskGroupView(
-                    task: task,
-                    selection: selection,
-                    expanded: expandedTaskIDs.contains(task.id),
-                    menuActive: taskMenuTaskID == task.id,
-                    activity: taskActivities[task.id],
-                    taskError: taskErrors[task.id],
-                    repositoryMenuScope: repositoryMenuScope,
-                    repositoryActivities: repositoryActivities,
-                    repositoryErrors: repositoryErrors
-                )
-                group.onSelectTask = { [weak self] in self?.onSelectTask?(task.id) }
-                group.onToggleExpansion = { [weak self] in
-                    self?.onToggleTaskExpansion?(task.id)
-                }
-                group.onSelectRepository = { [weak self] repositoryID in
-                    self?.onSelectRepository?(
-                        TaskRepositoryScope(taskID: task.id, repositoryID: repositoryID)
-                    )
-                }
-                group.onShowMenu = { [weak self] anchorRect in
-                    self?.onShowTaskMenu?(task.id, anchorRect)
-                }
-                group.onShowRepositoryMenu = { [weak self] repositoryID, anchorRect in
-                    self?.onShowRepositoryMenu?(
-                        TaskRepositoryScope(taskID: task.id, repositoryID: repositoryID),
-                        anchorRect
-                    )
-                }
-                taskStack.addArrangedSubview(group)
-                group.widthAnchor.constraint(equalTo: taskStack.widthAnchor).isActive = true
-            }
+        } else {
+            tasks.filter { !$0.isPinned }.forEach(addTask)
         }
         applyTheme()
         sizeTaskDocumentToViewport()
@@ -165,14 +185,12 @@ final class PanelViewController: NSViewController {
     private func installLeftPanel() {
         let topHeader = LeftSidebarHeaderView()
         let brand = SidebarBrandView()
-        let sectionHeader = SidebarSectionHeaderView(title: "TASKS")
         let scrollView = taskScrollView
         topHeader.onToggle = { [weak self] in self?.onTogglePanel?() }
         newTaskButton.onCreate = { [weak self] in self?.onCreateTask?() }
 
         topHeader.translatesAutoresizingMaskIntoConstraints = false
         brand.translatesAutoresizingMaskIntoConstraints = false
-        sectionHeader.translatesAutoresizingMaskIntoConstraints = false
         newTaskButton.translatesAutoresizingMaskIntoConstraints = false
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.drawsBackground = false
@@ -191,12 +209,10 @@ final class PanelViewController: NSViewController {
         view.addSubview(topHeader)
         view.addSubview(brand)
         view.addSubview(newTaskButton)
-        view.addSubview(sectionHeader)
         view.addSubview(scrollView)
 
         leftHeader = topHeader
         brandView = brand
-        self.sectionHeader = sectionHeader
         newTaskTrailingConstraint = newTaskButton.trailingAnchor.constraint(
             equalTo: view.trailingAnchor,
             constant: -AppTheme.sidebarItemInset
@@ -230,18 +246,11 @@ final class PanelViewController: NSViewController {
             ),
             newTaskButton.heightAnchor.constraint(equalToConstant: AppTheme.sidebarNewTaskHeight),
 
-            sectionHeader.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            sectionHeader.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            sectionHeader.topAnchor.constraint(
-                equalTo: newTaskButton.bottomAnchor,
-                constant: AppTheme.sidebarNewTaskBottomSpacing
-            ),
-
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scrollView.topAnchor.constraint(
-                equalTo: sectionHeader.bottomAnchor,
-                constant: AppTheme.sidebarTaskListTopSpacing
+                equalTo: newTaskButton.bottomAnchor,
+                constant: AppTheme.sidebarNewTaskBottomSpacing
             ),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             taskStack.leadingAnchor.constraint(
@@ -741,7 +750,7 @@ final class SidebarActionMenuView: NSView {
     private let separator = NSView()
 
     init(items: [Item]) {
-        precondition(items.count == 3)
+        precondition(items.count >= 2)
         rows = items.map {
             SidebarActionMenuRow(
                 title: $0.title,
@@ -767,28 +776,33 @@ final class SidebarActionMenuView: NSView {
         }
         separator.wantsLayer = true
 
-        let first = rows[0]
-        let second = rows[1]
-        let last = rows[2]
-        NSLayoutConstraint.activate([
+        let regularRows = rows.dropLast()
+        let first = regularRows[regularRows.startIndex]
+        let last = rows[rows.index(before: rows.endIndex)]
+        var constraints = [
             first.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
             first.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
             first.topAnchor.constraint(equalTo: topAnchor, constant: 6),
             first.heightAnchor.constraint(equalToConstant: AppTheme.sidebarTaskRowHeight),
-            second.leadingAnchor.constraint(equalTo: first.leadingAnchor),
-            second.trailingAnchor.constraint(equalTo: first.trailingAnchor),
-            second.topAnchor.constraint(equalTo: first.bottomAnchor),
-            second.heightAnchor.constraint(equalTo: first.heightAnchor),
             separator.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             separator.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            separator.topAnchor.constraint(equalTo: second.bottomAnchor, constant: 5),
+            separator.topAnchor.constraint(equalTo: regularRows.last!.bottomAnchor, constant: 5),
             separator.heightAnchor.constraint(equalToConstant: 1),
             last.leadingAnchor.constraint(equalTo: first.leadingAnchor),
             last.trailingAnchor.constraint(equalTo: first.trailingAnchor),
             last.topAnchor.constraint(equalTo: separator.bottomAnchor, constant: 5),
             last.heightAnchor.constraint(equalTo: first.heightAnchor),
             last.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
-        ])
+        ]
+        for (previous, row) in zip(regularRows, regularRows.dropFirst()) {
+            constraints += [
+                row.leadingAnchor.constraint(equalTo: first.leadingAnchor),
+                row.trailingAnchor.constraint(equalTo: first.trailingAnchor),
+                row.topAnchor.constraint(equalTo: previous.bottomAnchor),
+                row.heightAnchor.constraint(equalTo: first.heightAnchor),
+            ]
+        }
+        NSLayoutConstraint.activate(constraints)
         applyTheme()
     }
 
@@ -1219,7 +1233,7 @@ private final class SidebarSectionHeaderView: NSView {
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(
                 equalTo: leadingAnchor,
-                constant: AppTheme.sidebarSectionTitleInset
+                constant: AppTheme.sidebarSectionTitleInset - AppTheme.sidebarItemInset
             ),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
             titleLabel.topAnchor.constraint(equalTo: topAnchor),
@@ -1235,7 +1249,13 @@ private final class SidebarSectionHeaderView: NSView {
 
     func applyTheme() {
         layer?.backgroundColor = AppTheme.chromeBackground.cgColor
-        titleLabel.font = AppTheme.font(ofSize: AppTheme.typography.label, weight: 600)
-        titleLabel.textColor = AppTheme.tertiaryText
+        titleLabel.attributedStringValue = NSAttributedString(
+            string: titleLabel.stringValue,
+            attributes: [
+                .font: AppTheme.font(ofSize: AppTheme.typography.label + 0.5, weight: 600),
+                .foregroundColor: AppTheme.tertiaryText.withAlphaComponent(0.6),
+                .kern: 0.6,
+            ]
+        )
     }
 }
