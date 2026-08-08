@@ -59,6 +59,39 @@ struct WorkspaceTask: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+func reorderTasks(
+    _ tasks: [WorkspaceTask],
+    moving sourceID: UUID,
+    relativeTo targetID: UUID?,
+    after: Bool,
+    inPinnedSection isPinned: Bool
+) -> [WorkspaceTask] {
+    guard let sourceIndex = tasks.firstIndex(where: { $0.id == sourceID }) else { return tasks }
+    if targetID == sourceID, tasks[sourceIndex].isPinned == isPinned { return tasks }
+
+    var reordered = tasks
+    let current = reordered.remove(at: sourceIndex)
+    let source = WorkspaceTask(
+        id: current.id,
+        title: current.title,
+        repositories: current.repositories,
+        createdAt: current.createdAt,
+        isPinned: isPinned
+    )
+    if let targetID {
+        guard
+            let targetIndex = reordered.firstIndex(where: { $0.id == targetID }),
+            reordered[targetIndex].isPinned == isPinned
+        else { return tasks }
+        reordered.insert(source, at: targetIndex + (after ? 1 : 0))
+    } else {
+        let sectionStart = reordered.firstIndex(where: { $0.isPinned == isPinned })
+            ?? reordered.endIndex
+        reordered.insert(source, at: sectionStart)
+    }
+    return reordered
+}
+
 struct TaskRepositoryScope: Hashable, Sendable {
     let taskID: UUID
     let repositoryID: UUID

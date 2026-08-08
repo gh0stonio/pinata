@@ -122,7 +122,7 @@ final class WorkspaceViewController: NSViewController {
         self.runtime = runtime
         taskStore = TaskRegistryStore()
         do {
-            tasks = try taskStore.load().sorted { $0.createdAt > $1.createdAt }
+            tasks = try taskStore.load()
             taskRegistryLoaded = true
         } catch {
             tasks = []
@@ -476,6 +476,14 @@ final class WorkspaceViewController: NSViewController {
         }
         leftPanelController.onToggleTaskExpansion = { [weak self] taskID in
             self?.toggleTaskExpansion(taskID)
+        }
+        leftPanelController.onMoveTask = { [weak self] sourceID, targetID, after, pinned in
+            self?.moveTask(
+                sourceID,
+                relativeTo: targetID,
+                after: after,
+                pinned: pinned
+            )
         }
         leftPanelController.onShowTaskMenu = { [weak self] taskID, anchorRect in
             self?.presentTaskActionMenu(taskID: taskID, anchorRect: anchorRect)
@@ -1597,6 +1605,30 @@ final class WorkspaceViewController: NSViewController {
             expandedTaskIDs.remove(taskID)
         } else {
             expandedTaskIDs.insert(taskID)
+        }
+        updateTaskSidebar()
+    }
+
+    private func moveTask(
+        _ sourceID: UUID,
+        relativeTo targetID: UUID?,
+        after: Bool,
+        pinned: Bool
+    ) {
+        let reordered = reorderTasks(
+            tasks,
+            moving: sourceID,
+            relativeTo: targetID,
+            after: after,
+            inPinnedSection: pinned
+        )
+        guard reordered != tasks else { return }
+        do {
+            try taskStore.save(reordered)
+            tasks = reordered
+            taskErrors.removeValue(forKey: sourceID)
+        } catch {
+            taskErrors[sourceID] = error.localizedDescription
         }
         updateTaskSidebar()
     }
