@@ -62,8 +62,8 @@ final class WorkspaceViewController: NSViewController {
 
     private static let sidebarDefaultsKey = "pinata.sidebar.presentation.v1"
     private static let leftPanelWidthDefaultsKey = "pinata.panel.left.width.v1"
-    private static let revealDelay: TimeInterval = 0.15
     private static let dismissDelay: TimeInterval = 0.30
+    private static let exitRevealGracePeriod: TimeInterval = 0.75
     private static let revealAnimationDuration: TimeInterval = 0.12
     private static let dismissAnimationDuration: TimeInterval = 0.10
 
@@ -74,7 +74,6 @@ final class WorkspaceViewController: NSViewController {
     private let workspaceHeader = WorkspaceHeaderView()
     private let leftPanelController = PanelViewController()
     private let leftResizeHandle = PanelResizeHandle()
-    private let edgeRevealZone = EdgeRevealView()
     private let taskStore: TaskRegistryStore
     private let repositoryStore = RepositoryRegistryStore()
     private var taskWorkspaces: [UUID: TerminalWorkspace] = [:]
@@ -115,6 +114,7 @@ final class WorkspaceViewController: NSViewController {
     private var keyEventMonitor: Any?
     private weak var observedWindow: NSWindow?
     private var trafficLightBaselineY: CGFloat?
+    private var trafficLightBaselineX: [NSWindow.ButtonType: CGFloat] = [:]
 
     init(runtime: GhosttyRuntime) {
         self.runtime = runtime
@@ -145,7 +145,10 @@ final class WorkspaceViewController: NSViewController {
     }
 
     override func loadView() {
-        let rootView = NSView()
+        let rootView = WorkspaceTrackingView()
+        rootView.onExitLeft = { [weak self] in
+            self?.revealTransientSidebar()
+        }
         rootView.wantsLayer = true
         rootView.layer?.backgroundColor = AppTheme.chromeBackground.cgColor
         view = rootView
@@ -380,7 +383,6 @@ final class WorkspaceViewController: NSViewController {
         mainColumn.addSubview(terminalHost)
         rootView.addSubview(leftPanel)
         rootView.addSubview(leftResizeHandle)
-        rootView.addSubview(edgeRevealZone)
         updateTaskSidebar()
     }
 
@@ -444,10 +446,6 @@ final class WorkspaceViewController: NSViewController {
             leftResizeHandle.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
             leftResizeHandle.widthAnchor.constraint(equalToConstant: AppTheme.resizeHandleWidth),
 
-            edgeRevealZone.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
-            edgeRevealZone.topAnchor.constraint(equalTo: rootView.topAnchor),
-            edgeRevealZone.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
-            edgeRevealZone.widthAnchor.constraint(equalToConstant: AppTheme.edgeRevealWidth),
         ])
     }
 
@@ -488,14 +486,6 @@ final class WorkspaceViewController: NSViewController {
                 self.cancelTransientDismissal()
             } else {
                 self.scheduleTransientDismissal()
-            }
-        }
-        edgeRevealZone.onHoverChanged = { [weak self] hovering in
-            guard let self else { return }
-            if hovering {
-                self.scheduleTransientReveal()
-            } else {
-                self.cancelScheduledReveal()
             }
         }
         leftResizeHandle.onDrag = { [weak self] delta in
@@ -1534,25 +1524,15 @@ final class WorkspaceViewController: NSViewController {
         leftPanel.layer?.masksToBounds = sidebarPresentation == .transient
 
         leftResizeHandle.setEnabled(docked)
-        edgeRevealZone.setEnabled(sidebarPresentation == .hidden)
         leftPanelController.setToggleActive(docked)
         leftPanelController.setFullScreen(fullScreen)
+        leftPanelController.setResizable(docked)
         updateTrafficLights()
         view.layoutSubtreeIfNeeded()
         updateWindowMinimumSize()
     }
 
-    private func scheduleTransientReveal() {
-        guard sidebarPresentation == .hidden else { return }
-        cancelScheduledReveal()
-        perform(
-            #selector(revealTransientSidebar),
-            with: nil,
-            afterDelay: Self.revealDelay
-        )
-    }
-
-    @objc private func revealTransientSidebar() {
+    private func revealTransientSidebar() {
         guard sidebarPresentation == .hidden else { return }
         cancelScheduledTransitions()
         sidebarPresentation = .transient
@@ -1564,9 +1544,10 @@ final class WorkspaceViewController: NSViewController {
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             leftPanelController.view.animator().alphaValue = 1
         }
+        scheduleTransientDismissal(after: Self.exitRevealGracePeriod)
     }
 
-    private func scheduleTransientDismissal() {
+    private func scheduleTransientDismissal(after delay: TimeInterval? = nil) {
         guard sidebarPresentation == .transient else { return }
         NSObject.cancelPreviousPerformRequests(
             withTarget: self,
@@ -1576,7 +1557,7 @@ final class WorkspaceViewController: NSViewController {
         perform(
             #selector(attemptTransientDismissal),
             with: nil,
-            afterDelay: Self.dismissDelay
+            afterDelay: delay ?? Self.dismissDelay
         )
     }
 
@@ -1630,7 +1611,13 @@ final class WorkspaceViewController: NSViewController {
     }
 
     private var shouldKeepTransientSidebarOpen: Bool {
-        if menuTracking || NSEvent.pressedMouseButtons != 0 {
+        if menuTracking
+            || taskActionMenu != nil
+            || repositoryActionMenu != nil
+            || newTaskModal != nil
+            || deleteTaskModal != nil
+            || NSEvent.pressedMouseButtons != 0
+        {
             return true
         }
         guard
@@ -1647,16 +1634,7 @@ final class WorkspaceViewController: NSViewController {
         NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     }
 
-    private func cancelScheduledReveal() {
-        NSObject.cancelPreviousPerformRequests(
-            withTarget: self,
-            selector: #selector(revealTransientSidebar),
-            object: nil
-        )
-    }
-
     private func cancelScheduledTransitions() {
-        cancelScheduledReveal()
         NSObject.cancelPreviousPerformRequests(
             withTarget: self,
             selector: #selector(attemptTransientDismissal),
@@ -1755,9 +1733,11 @@ final class WorkspaceViewController: NSViewController {
     private func updateTrafficLights() {
         guard let window = view.window else { return }
         let types: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
-        let buttons = types.compactMap(window.standardWindowButton)
+        let buttons = types.compactMap { type in
+            window.standardWindowButton(type).map { (type, $0) }
+        }
         let visible = fullScreen || sidebarPresentation != .hidden
-        buttons.forEach { $0.isHidden = !visible }
+        buttons.forEach { $0.1.isHidden = !visible }
 
         guard
             !fullScreen,
@@ -1767,9 +1747,13 @@ final class WorkspaceViewController: NSViewController {
         }
         let baselineY = trafficLightBaselineY ?? anchor.frame.origin.y
         trafficLightBaselineY = baselineY
-        for button in buttons {
+        let panelOffset = sidebarPresentation == .transient ? AppTheme.workspaceInset : 0
+        for (type, button) in buttons {
+            let baselineX = trafficLightBaselineX[type] ?? button.frame.origin.x
+            trafficLightBaselineX[type] = baselineX
             var frame = button.frame
-            frame.origin.y = baselineY - AppTheme.trafficLightVerticalOffset
+            frame.origin.x = baselineX + panelOffset
+            frame.origin.y = baselineY - AppTheme.trafficLightVerticalOffset - panelOffset
             button.frame = frame
         }
     }
@@ -1782,6 +1766,7 @@ final class WorkspaceViewController: NSViewController {
     @objc private func windowDidExitFullScreen(_ notification: Notification) {
         fullScreen = false
         trafficLightBaselineY = nil
+        trafficLightBaselineX.removeAll()
         applySidebarPresentation()
     }
 
@@ -2464,16 +2449,12 @@ private final class WorkspaceEmptyArtworkView: NSView {
 }
 
 @MainActor
-private final class EdgeRevealView: NSView {
-    var onHoverChanged: ((Bool) -> Void)?
-    private var enabled = false
+private final class WorkspaceTrackingView: NSView {
+    var onExitLeft: (() -> Void)?
     private var trackingArea: NSTrackingArea?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        translatesAutoresizingMaskIntoConstraints = false
-        isHidden = true
-        setAccessibilityElement(false)
     }
 
     @available(*, unavailable)
@@ -2486,10 +2467,6 @@ private final class EdgeRevealView: NSView {
         if let trackingArea {
             removeTrackingArea(trackingArea)
         }
-        guard enabled else {
-            trackingArea = nil
-            return
-        }
         let trackingArea = NSTrackingArea(
             rect: bounds,
             options: [.activeInKeyWindow, .mouseEnteredAndExited, .inVisibleRect],
@@ -2499,21 +2476,10 @@ private final class EdgeRevealView: NSView {
         self.trackingArea = trackingArea
     }
 
-    override func mouseEntered(with event: NSEvent) {
-        guard enabled else { return }
-        onHoverChanged?(true)
-    }
-
     override func mouseExited(with event: NSEvent) {
-        guard enabled else { return }
-        onHoverChanged?(false)
-    }
-
-    func setEnabled(_ enabled: Bool) {
-        guard enabled != self.enabled else { return }
-        self.enabled = enabled
-        isHidden = !enabled
-        updateTrackingAreas()
+        let location = convert(event.locationInWindow, from: nil)
+        guard location.x <= bounds.minX else { return }
+        onExitLeft?()
     }
 }
 

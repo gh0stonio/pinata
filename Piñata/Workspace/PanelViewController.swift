@@ -24,6 +24,8 @@ final class PanelViewController: NSViewController {
     private let taskDocument = SidebarTaskDocumentView()
     private let taskStack = NSStackView()
     private var sizingTaskDocument = false
+    private var newTaskTrailingConstraint: NSLayoutConstraint!
+    private var taskStackTrailingConstraint: NSLayoutConstraint!
     private var taskMenuTaskID: UUID?
     private var repositoryMenuScope: TaskRepositoryScope?
 
@@ -63,6 +65,13 @@ final class PanelViewController: NSViewController {
 
     func setFullScreen(_ fullScreen: Bool) {
         leftHeader?.setFullScreen(fullScreen)
+    }
+
+    func setResizable(_ resizable: Bool) {
+        let inset = AppTheme.sidebarItemInset
+            - (resizable ? AppTheme.resizeHandleWidth / 2 : 0)
+        newTaskTrailingConstraint.constant = -inset
+        taskStackTrailingConstraint.constant = -inset
     }
 
     func applyTheme() {
@@ -188,6 +197,14 @@ final class PanelViewController: NSViewController {
         leftHeader = topHeader
         brandView = brand
         self.sectionHeader = sectionHeader
+        newTaskTrailingConstraint = newTaskButton.trailingAnchor.constraint(
+            equalTo: view.trailingAnchor,
+            constant: -AppTheme.sidebarItemInset
+        )
+        taskStackTrailingConstraint = taskStack.trailingAnchor.constraint(
+            equalTo: taskDocument.trailingAnchor,
+            constant: -AppTheme.sidebarItemInset
+        )
 
         NSLayoutConstraint.activate([
             topHeader.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -206,10 +223,7 @@ final class PanelViewController: NSViewController {
                 equalTo: view.leadingAnchor,
                 constant: AppTheme.sidebarItemInset
             ),
-            newTaskButton.trailingAnchor.constraint(
-                equalTo: view.trailingAnchor,
-                constant: -AppTheme.sidebarTrailingInset(for: AppTheme.sidebarItemInset)
-            ),
+            newTaskTrailingConstraint,
             newTaskButton.topAnchor.constraint(
                 equalTo: brand.bottomAnchor,
                 constant: AppTheme.sidebarNewTaskTopSpacing
@@ -234,10 +248,7 @@ final class PanelViewController: NSViewController {
                 equalTo: taskDocument.leadingAnchor,
                 constant: AppTheme.sidebarItemInset
             ),
-            taskStack.trailingAnchor.constraint(
-                equalTo: taskDocument.trailingAnchor,
-                constant: -AppTheme.sidebarTrailingInset(for: AppTheme.sidebarItemInset)
-            ),
+            taskStackTrailingConstraint,
             taskStack.topAnchor.constraint(equalTo: taskDocument.topAnchor),
             taskDocument.bottomAnchor.constraint(greaterThanOrEqualTo: taskStack.bottomAnchor),
         ])
