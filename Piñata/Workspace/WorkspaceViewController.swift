@@ -122,7 +122,7 @@ final class WorkspaceViewController: NSViewController {
         self.runtime = runtime
         taskStore = TaskRegistryStore()
         do {
-            tasks = try taskStore.load().sorted { $0.createdAt > $1.createdAt }
+            tasks = try taskStore.load()
             taskRegistryLoaded = true
         } catch {
             tasks = []
@@ -476,6 +476,14 @@ final class WorkspaceViewController: NSViewController {
         }
         leftPanelController.onToggleTaskExpansion = { [weak self] taskID in
             self?.toggleTaskExpansion(taskID)
+        }
+        leftPanelController.onMoveTask = { [weak self] sourceID, targetID, after, pinned in
+            self?.moveTask(
+                sourceID,
+                relativeTo: targetID,
+                after: after,
+                pinned: pinned
+            )
         }
         leftPanelController.onShowTaskMenu = { [weak self] taskID, anchorRect in
             self?.presentTaskActionMenu(taskID: taskID, anchorRect: anchorRect)
@@ -856,7 +864,8 @@ final class WorkspaceViewController: NSViewController {
             repositories: task.repositories + additions.map {
                 TaskRepositoryAttachment(repositoryID: $0.id, name: $0.name)
             },
-            createdAt: task.createdAt
+            createdAt: task.createdAt,
+            isPinned: task.isPinned
         )
         dismissNewTaskModal()
         tasks[taskIndex] = updatedTask
@@ -966,21 +975,26 @@ final class WorkspaceViewController: NSViewController {
         leftPanelController.setTaskMenuTask(taskID)
 
         let menu = SidebarActionMenuView(items: [
+            .init(
+                title: task.isPinned ? "Unpin task" : "Pin task",
+                symbol: task.isPinned ? "pin.slash" : "pin"
+            ),
             .init(title: "Rename", symbol: "square.and.pencil"),
-            .init(title: "Attach repositories…", symbol: "book.closed"),
+            .init(title: "Attach repositories", symbol: "book.closed"),
             .init(title: "Delete task…", symbol: "trash", destructive: true),
         ])
         menu.onSelect = { [weak self] index in
             self?.dismissTaskActionMenu()
             switch index {
-            case 0: self?.presentTaskModal(editingTask: task, focusTitle: true)
-            case 1: self?.presentTaskModal(editingTask: task, focusTitle: false)
-            case 2: self?.confirmTaskDeletion(task.id)
+            case 0: self?.toggleTaskPin(task.id)
+            case 1: self?.presentTaskModal(editingTask: task, focusTitle: true)
+            case 2: self?.presentTaskModal(editingTask: task, focusTitle: false)
+            case 3: self?.confirmTaskDeletion(task.id)
             default: break
             }
         }
         let anchor = view.convert(anchorRect, from: nil)
-        let size = NSSize(width: 174, height: 110)
+        let size = NSSize(width: 174, height: 139)
         menu.frame = NSRect(
             x: min(anchor.maxX + 6, view.bounds.maxX - size.width - 8),
             y: min(max(8, anchor.maxY - size.height), view.bounds.maxY - size.height - 8),
@@ -998,6 +1012,27 @@ final class WorkspaceViewController: NSViewController {
             }
             return event
         }
+    }
+
+    private func toggleTaskPin(_ taskID: UUID) {
+        guard let taskIndex = tasks.firstIndex(where: { $0.id == taskID }) else { return }
+        let task = tasks[taskIndex]
+        var updatedTasks = tasks
+        updatedTasks[taskIndex] = WorkspaceTask(
+            id: task.id,
+            title: task.title,
+            repositories: task.repositories,
+            createdAt: task.createdAt,
+            isPinned: !task.isPinned
+        )
+        do {
+            try taskStore.save(updatedTasks)
+            tasks = updatedTasks
+            taskErrors.removeValue(forKey: taskID)
+        } catch {
+            taskErrors[taskID] = error.localizedDescription
+        }
+        updateTaskSidebar()
     }
 
     private func dismissTaskActionMenu() {
@@ -1329,7 +1364,8 @@ final class WorkspaceViewController: NSViewController {
                 repositories: tasks[taskIndex].repositories.filter {
                     $0.repositoryID != scope.repositoryID
                 },
-                createdAt: task.createdAt
+                createdAt: task.createdAt,
+                isPinned: task.isPinned
             )
             var updatedTasks = tasks
             updatedTasks[taskIndex] = updatedTask
@@ -1477,7 +1513,8 @@ final class WorkspaceViewController: NSViewController {
             id: task.id,
             title: task.title,
             repositories: attachments,
-            createdAt: task.createdAt
+            createdAt: task.createdAt,
+            isPinned: task.isPinned
         )
         try taskStore.save(updatedTasks)
         tasks = updatedTasks
@@ -1568,6 +1605,30 @@ final class WorkspaceViewController: NSViewController {
             expandedTaskIDs.remove(taskID)
         } else {
             expandedTaskIDs.insert(taskID)
+        }
+        updateTaskSidebar()
+    }
+
+    private func moveTask(
+        _ sourceID: UUID,
+        relativeTo targetID: UUID?,
+        after: Bool,
+        pinned: Bool
+    ) {
+        let reordered = reorderTasks(
+            tasks,
+            moving: sourceID,
+            relativeTo: targetID,
+            after: after,
+            inPinnedSection: pinned
+        )
+        guard reordered != tasks else { return }
+        do {
+            try taskStore.save(reordered)
+            tasks = reordered
+            taskErrors.removeValue(forKey: sourceID)
+        } catch {
+            taskErrors[sourceID] = error.localizedDescription
         }
         updateTaskSidebar()
     }
@@ -2130,7 +2191,7 @@ private final class WorktreeCurrentActionView: NSView, SettingsThemeApplying {
 
     func applyTheme() {
         titleLabel.textColor = step.status == .failed ? AppTheme.error : AppTheme.secondaryText
-        statusIcon.contentTintColor = step.status == .failed ? AppTheme.error : .systemGreen
+        statusIcon.contentTintColor = step.status == .failed ? AppTheme.error : AppTheme.success
     }
 
     private func installContent() {

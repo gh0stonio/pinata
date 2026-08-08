@@ -49,14 +49,14 @@ enum AppTheme {
     static let minimumWindowWidth: CGFloat = 1_250
     static let resizeHandleWidth: CGFloat = 10
     static let keyboardResizeStep: CGFloat = 12
-    static let panelSectionSpacing: CGFloat = 16
+    static let sidebarSectionSpacing: CGFloat = 22
     static let sidebarBrandSize: CGFloat = 34
     static let sidebarToggleLeading: CGFloat = 82
     static let fullScreenSidebarToggleLeading: CGFloat = 12
     static var sidebarNewTaskIconSize: CGFloat { typography.body + 5 }
     static let sidebarNewTaskHeight: CGFloat = 38
     static let sidebarNewTaskTopSpacing: CGFloat = 20
-    static let sidebarNewTaskBottomSpacing: CGFloat = 20
+    static let sidebarNewTaskBottomSpacing: CGFloat = sidebarSectionSpacing
     static let sidebarTaskListTopSpacing: CGFloat = 8
     static let sidebarSectionTitleInset: CGFloat = 28
     static let sidebarItemInset: CGFloat = 10
@@ -65,7 +65,7 @@ enum AppTheme {
     static let sidebarDisclosureLeadingInset: CGFloat = 2
     static let sidebarDisclosureControlWidth: CGFloat = 18
     static let sidebarDisclosureControlHeight: CGFloat = 22
-    static let sidebarTaskTitleDisclosureInset: CGFloat = 21
+    static let sidebarTaskTitleDisclosureInset: CGFloat = 22
     static let sidebarRepositoryTitleInset: CGFloat = 26
     static let taskModalCardWidth: CGFloat = 522
     static let taskModalPadding: CGFloat = 16
@@ -146,6 +146,7 @@ enum AppTheme {
     static private(set) var secondaryText = color(0xB6BDC0)
     static private(set) var tertiaryText = color(0xA6AEB2)
     static private(set) var error = color(0xF25555)
+    static private(set) var success = color(0x31C971)
     static private(set) var accent = color(0xFF746B)
     static private(set) var panelAccentIcon = color(0xFF746B)
     static private(set) var panelAccentBackground = color(0xFF746B).withAlphaComponent(0.14)
@@ -186,6 +187,7 @@ enum AppTheme {
         secondaryText = color(palette.secondaryText)
         tertiaryText = color(palette.tertiaryText)
         error = color(settings.theme == .dark ? 0xF25555 : 0xBC2C2C)
+        success = color(settings.theme == .dark ? 0x31C971 : 0x208A4F)
 
         accent = accentColor(for: settings.accent)
         let panelAccent = panelAccentColors(
@@ -369,6 +371,10 @@ enum AppTheme {
                 borderWidth: hovered ? 2 : 0
             )
         }
+    }
+
+    static func renderedBackground(_ background: NSColor) -> NSColor {
+        composited(background, over: chromeBackground)
     }
 
     private static func panelAccentColors(
