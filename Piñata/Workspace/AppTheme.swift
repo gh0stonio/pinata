@@ -49,14 +49,14 @@ enum AppTheme {
     static let minimumWindowWidth: CGFloat = 1_250
     static let resizeHandleWidth: CGFloat = 10
     static let keyboardResizeStep: CGFloat = 12
-    static let sidebarSectionSpacing: CGFloat = 20
+    static let sidebarSectionSpacing: CGFloat = 22
     static let sidebarBrandSize: CGFloat = 34
     static let sidebarToggleLeading: CGFloat = 82
     static let fullScreenSidebarToggleLeading: CGFloat = 12
     static var sidebarNewTaskIconSize: CGFloat { typography.body + 5 }
     static let sidebarNewTaskHeight: CGFloat = 38
     static let sidebarNewTaskTopSpacing: CGFloat = 20
-    static let sidebarNewTaskBottomSpacing: CGFloat = 20
+    static let sidebarNewTaskBottomSpacing: CGFloat = sidebarSectionSpacing
     static let sidebarTaskListTopSpacing: CGFloat = 8
     static let sidebarSectionTitleInset: CGFloat = 28
     static let sidebarItemInset: CGFloat = 10
