@@ -1,12 +1,12 @@
 # Piñata Pi Harness Architecture and Implementation Blueprint
 
-Status: proposed, future Pi Harness architecture
-Last updated: 2026-08-08
+Status: incoming proposal, future Pi Harness architecture. It does not describe current app behavior.
+Last updated: 2026-08-09
 Target: native macOS Piñata, macOS 14+
 
 ## 1. Purpose
 
-This document is the implementation source of truth for moving Piñata from its current Ghostty terminal-first shell to a durable native UI for the Pi coding harness.
+This document is the proposed implementation blueprint for moving Piñata from its current Ghostty terminal-first shell to a durable native UI for the Pi coding harness. It is intentionally separated from the current architecture documents because none of the Pi Harness phases are implemented yet.
 
 The target product has these properties:
 
@@ -50,7 +50,7 @@ The following decisions are normative unless a later ADR replaces them.
 9. **Every editable discussion gets its own worktree.** Two agents must not mutate one checkout concurrently.
 10. **Cross-discussion references are read-only by default.** Referencing another discussion never starts work or modifies its repository implicitly.
 11. **Context references are immutable snapshots.** A prompt records the exact source discussion sequence and repository revision used.
-12. **Terminal persistence initially uses tmux.** A custom daemon-owned PTY may replace it later if GhosttyKit supports external PTY streams cleanly.
+12. **Terminal layout persistence reconnects native shells.** App session restore preserves layout and working directories, while the Piñata terminal service owns each live PTY. See [terminal session architecture](../terminal-session-architecture.md).
 
 ## 3. Current baseline
 
@@ -61,6 +61,8 @@ The current native branch already provides:
 - Embedded Ghostty surfaces.
 - Multiple terminal tabs.
 - AppKit-managed terminal splits.
+- Durable local app-session snapshots for selected scope, expanded tasks, terminal tabs, split layout, and active pane.
+- Restored terminal panes reconnect to their existing Piñata-owned local PTY when the host is still running.
 - A durable local task store with pinned-task ordering.
 - Task creation, rename, pinning, repository attachment, detachment, and deletion.
 - A repository registry with branch, remote, tag, and worktree metadata.
@@ -73,11 +75,12 @@ The main current constraints are:
 
 - `PinataApp` eagerly creates `GhosttyRuntime`.
 - `WorkspaceViewController` owns `TerminalTab` values directly.
-- `TerminalViewController` and Ghostty surfaces own their shell processes.
+- `WorkspaceViewController` persists terminal workspace snapshots, while `TerminalViewController` owns the live AppKit pane tree.
+- Ghostty owns terminal emulation and rendering. The Piñata terminal service owns each PTY, so native scrolling and terminal behavior are preserved across GUI detachment.
 - Repository inspection invokes local `git` and `FileManager` directly.
-- Tasks own repository attachments, but terminal tabs are not yet persisted or restored.
+- Stale app-session references are ignored when their task or repository attachment no longer exists.
 - Tabs represent terminal controllers instead of durable discussions.
-- There is no discussion store, Pi RPC transport, or background daemon.
+- There is no discussion store or Pi RPC transport. A small local terminal service already owns durable PTYs, but there is no general Pi coordinator daemon yet.
 
 ### 3.1 Implementation status
 
@@ -107,21 +110,28 @@ Piñata has two levels of organization:
 An attachment is a named link from a task to a repository, such as `backend`. It is not a worktree. An editable discussion gets its own checkout from that attachment. A terminal can use task scratch space, a repository root, or an existing checkout.
 
 ```mermaid
-flowchart TD
-    target["Execution target\nLocal Mac or SSH host"] --> repository["Registered repository\nReusable source location"]
+flowchart TB
+    subgraph Catalog[Repository catalog]
+        Target[Execution target] --> Repository[Registered repository]
+    end
 
-    task["Task\nOne user goal"] --> attachment["Task repository\nNamed attachment, not a checkout"]
-    repository --> attachment
-    task --> tab["Task tab\nOne workspace entry"]
-    tab --> discussion["Discussion\nPi conversation"]
-    tab --> terminal["Terminal workspace\nGhostty workspace"]
-    attachment -. "can bind" .-> discussion
-    attachment -. "can bind" .-> terminal
-    discussion --> checkout["Checkout\nIsolated worktree"]
-    discussion --> pi["Pi session"]
-    terminal --> session["Terminal session(s)\nOne shell per pane"]
-    discussion --> capsule["Context capsule\nRead-only snapshot"]
+    subgraph TaskSpace[Task workspace]
+        Task[Task] --> Attachment[Repository attachment]
+        Task --> Tab[Task tab]
+        Attachment --> Checkout[Isolated checkout]
+        Tab --> Discussion[Pi discussion]
+        Tab --> Terminal[Terminal workspace]
+        Discussion --> Pi[Pi session]
+        Discussion --> Capsule[Context capsule]
+        Terminal --> Pane[Terminal panes]
+    end
+
+    Repository --> Attachment
+    Attachment -. binds .-> Discussion
+    Attachment -. binds .-> Terminal
 ```
+
+Read it from left to right: a repository is registered once in the catalog, attached to a task, then used by a Pi discussion or terminal workspace. An attachment names a repository for the task. A checkout is a separate mutable worktree, not the attachment itself.
 
 **Important boundary:** the task and worktree features in the current app are shipped. The daemon, discussions, Pi sessions, SSH targets, and context capsules in this diagram are the proposed next architecture.
 
@@ -262,7 +272,7 @@ struct TargetCapabilities: Codable, Sendable {
     var operatingSystem: String
     var architecture: String
     var hasGit: Bool
-    var hasTmux: Bool
+    var supportsPersistentTerminalStreams: Bool
     var hasPi: Bool
 }
 
@@ -425,8 +435,7 @@ struct TerminalSession: Codable, Identifiable, Sendable {
     let terminalWorkspaceID: TerminalWorkspaceID
     let targetID: TargetID
     let workingDirectory: String
-    let tmuxServerName: String
-    let tmuxSessionName: String
+    let persistentTerminalID: String?
     var title: String
     var status: TerminalSessionStatus
     var exitCode: Int32?
@@ -454,11 +463,11 @@ struct TerminalSession: Codable, Identifiable, Sendable {
 | Pi conversation context | Pi session JSONL on target | Render cache |
 | Pi lifecycle and stream | Target event journal | Coordinator mirror |
 | Discussion status | Target worker plus journal | Coordinator projection |
-| Terminal shell | tmux on target | Terminal metadata |
+| Terminal shell | target shell process | Terminal metadata |
 | Panel, selection, drafts | GUI preferences store | None |
 | Context capsule | Source daemon and task catalog | Destination session entry |
 
-The GUI must not write Pi sessions, manipulate worktrees, start Pi, start tmux, or run Git directly.
+The GUI must not write Pi sessions, manipulate worktrees, start Pi, or run Git directly.
 
 ## 7. Runtime topology
 
@@ -472,18 +481,18 @@ flowchart TB
     REMOTEW["Remote discussion workers"]
     PI1["Local Pi RPC"]
     PI2["Remote Pi RPC"]
-    TMUX1["Local tmux"]
-    TMUX2["Remote tmux"]
+    TERM1["Local terminal process"]
+    TERM2["Remote terminal process"]
 
     APP -->|"Unix socket"| LOCALD
     LOCALD --> LOCALW
     LOCALW --> PI1
-    LOCALD --> TMUX1
+    LOCALD --> TERM1
     LOCALD --> SSH
     SSH --> REMOTED
     REMOTED --> REMOTEW
     REMOTEW --> PI2
-    REMOTED --> TMUX2
+    REMOTED --> TERM2
 ```
 
 ### 7.1 GUI
@@ -525,7 +534,7 @@ The same daemon package runs remotely. A remote daemon owns only target-local re
 - Remote event journals.
 - Remote worktrees.
 - Remote Git and file operations.
-- Remote tmux sessions.
+- Remote terminal processes.
 
 It listens on a user-owned Unix socket. It does not expose a TCP port. Piñata reaches it through SSH.
 
@@ -749,7 +758,7 @@ On GUI quit:
 - Persist drafts and visual state.
 - Detach subscriptions.
 - Do not abort Pi.
-- Do not terminate tmux.
+- Do not terminate terminal processes.
 - Do not stop the daemon.
 
 ### 9.4 Daemon restart
@@ -758,7 +767,7 @@ On daemon restart:
 
 - Load the catalog and journals.
 - Reconnect to remote daemons.
-- Discover surviving remote workers and tmux sessions.
+- Discover surviving remote workers and terminal processes.
 - Mark lost local workers as `interrupted`.
 - Resume idle Pi sessions lazily.
 - Never claim that an interrupted shell command continued.
@@ -768,7 +777,7 @@ On daemon restart:
 After a local or remote host reboot:
 
 - Tasks and completed conversations restore.
-- tmux sessions that did not survive are marked exited.
+- Terminal processes that did not survive are marked exited.
 - Active Pi operations are marked interrupted.
 - The user may continue the Pi session from its last durable entry.
 
@@ -1039,49 +1048,33 @@ Ghostty runtime initialization becomes lazy and occurs only when a terminal tab 
 
 ## 13. Persistent terminal architecture
 
-### 13.1 Initial tmux design
+### 13.1 Native shell design
 
-The target daemon creates a persistent tmux session:
+Piñata uses Ghostty's supported manual I/O mode. A Piñata-owned local service owns each PTY while Ghostty remains responsible for terminal emulation, scrolling, and rendering. App restore reconnects to the existing shell when its host remains up. See [terminal session architecture](../terminal-session-architecture.md).
 
-```text
-tmux -L pinata new-session -d \
-  -s <terminal-session-id> \
-  -c <terminal-workspace-working-directory>
-```
-
-Local Ghostty attaches with a normal tmux client.
-
-Remote Ghostty attaches through a separate SSH PTY:
-
-```text
-ssh -tt <host-alias> \
-  tmux -L pinata attach-session -t <terminal-session-id>
-```
-
-Pi RPC SSH channels must never allocate a PTY.
+Remote terminal durability will use the same service protocol over SSH. Pi RPC SSH channels must never allocate a PTY.
 
 ### 13.2 Split panes
 
-Keep AppKit split layout initially. Each persistent terminal pane maps to its own tmux session identity. Persist:
+Keep AppKit split layout initially. Persist:
 
 - Split tree.
-- Pane-to-terminal-session mapping.
+- Pane working directory.
 - Active pane.
 - Terminal tab and pane titles.
 
-This preserves the native Ghostty layout while tmux owns shell durability.
+This preserves the native Ghostty layout.
 
 ### 13.3 Terminal lifecycle
 
-- Closing the app detaches clients.
-- Closing a pane explicitly stops or archives its tmux session after confirmation.
-- Closing a terminal tab handles every pane session in that terminal workspace.
-- Reopening the app recreates Ghostty clients and reattaches.
-- A missing tmux session becomes an exited terminal card, not a silently new shell.
+- Closing the app detaches the UI and leaves Piñata-owned terminal services running.
+- Closing a pane ends its shell.
+- Closing a terminal tab handles every pane shell in that terminal workspace.
+- Reopening the app reconnects to the existing shell and its output journal when the host remains up.
 
-### 13.4 Future custom PTY
+### 13.4 Host restart recovery
 
-A daemon-owned PTY may replace tmux if GhosttyKit exposes a supported external stream or PTY attachment API. Do not build a private Ghostty fork only to remove tmux.
+No process survives a Mac or remote-host restart. Piñata restores the terminal layout, marks the previous shell interrupted, and lets agent integrations resume from their own durable state.
 
 ## 14. Cross-discussion context
 
@@ -1208,7 +1201,7 @@ SSH adds:
 - `SSHTargetConnection`.
 - Remote helper bootstrap.
 - SSH authentication and host verification.
-- Target-local repository, Git, Pi, and tmux operations.
+- Target-local repository, Git, Pi, and terminal-process operations.
 
 ### 15.2 OpenSSH integration
 
@@ -1233,7 +1226,7 @@ Use separate channels:
 
 Prototype requirement:
 
-- Compatible Pi, Node, Git, and tmux already installed.
+- Compatible Pi, Node, and Git already installed.
 
 Production requirement:
 
@@ -1371,13 +1364,14 @@ agent/
       git.ts
       worktrees.ts
     terminals/
-      tmux.ts
+      terminal.ts
     context/
       capsules.ts
       mentions.ts
 
 docs/
-  pi-harness-architecture.md
+  incoming/
+    pi-harness-architecture.md
   fixtures/
     pi/
 ```
@@ -1534,18 +1528,17 @@ Acceptance:
 
 Work:
 
-- Add tmux capability detection.
+- Add persistent-terminal-stream capability detection.
 - Model the existing UI as first-class terminal task tabs.
 - Migrate existing tasks into the daemon catalog without changing their visible task organization.
 - Create daemon-managed terminal workspaces and pane sessions.
-- Make Ghostty attach to existing tmux sessions.
+- Keep Ghostty attached directly to its native shells.
 - Persist split layout and terminal mappings.
 - Make Ghostty runtime lazy.
 
 Acceptance:
 
-- Start a shell, quit Piñata, reopen, and observe the same shell.
-- A missing tmux session is reported, not silently replaced.
+- Start a shell, quit Piñata, reopen, and observe the same shell while its host is still running.
 - New Terminal creates a terminal tab without creating a Pi discussion.
 - Existing users receive one recovered implicit task containing their terminal tabs.
 - Current terminal tab and split workflows still work.
@@ -1768,7 +1761,7 @@ The migration is complete when:
 - Tool grouping never destroys underlying information.
 - `@discussion` references are versioned, bounded, and read-only.
 - SSH adds transport and deployment code without forking product behavior.
-- The GUI contains no direct durable Pi, tmux, Git, or SSH process ownership.
+- The GUI contains no direct durable Pi, Git, or SSH process ownership.
 
 ## 21. Implementation instructions for coding models
 
@@ -1790,7 +1783,7 @@ When using this document as model context:
 Suggested prompt:
 
 ```text
-Read docs/pi-harness-architecture.md completely.
+Read docs/incoming/pi-harness-architecture.md completely.
 Implement only Phase N.
 First inspect the current repository and identify the smallest compatible change.
 Keep the current terminal working.
@@ -1816,5 +1809,5 @@ These do not block the local conversation implementation:
 - Remote provider credential forwarding.
 - Safe Undo product semantics.
 - Hosted coordinator for laptop-power-off operation.
-- Custom PTY replacement for tmux.
+- Durable terminal-process ownership through a supported PTY stream.
 - Cross-discussion write delegation UX.
