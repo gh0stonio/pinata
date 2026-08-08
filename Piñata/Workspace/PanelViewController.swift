@@ -12,6 +12,8 @@ final class PanelViewController: NSViewController {
     var onSelectTask: ((UUID) -> Void)?
     var onSelectRepository: ((TaskRepositoryScope) -> Void)?
     var onToggleTaskExpansion: ((UUID) -> Void)?
+    var onShowTaskMenu: ((UUID, NSRect) -> Void)?
+    var onShowRepositoryMenu: ((TaskRepositoryScope, NSRect) -> Void)?
 
     private weak var trackingRoot: PanelTrackingView?
     private weak var leftHeader: LeftSidebarHeaderView?
@@ -22,6 +24,10 @@ final class PanelViewController: NSViewController {
     private let taskDocument = SidebarTaskDocumentView()
     private let taskStack = NSStackView()
     private var sizingTaskDocument = false
+    private var newTaskTrailingConstraint: NSLayoutConstraint!
+    private var taskStackTrailingConstraint: NSLayoutConstraint!
+    private var taskMenuTaskID: UUID?
+    private var repositoryMenuScope: TaskRepositoryScope?
 
     init() {
         super.init(nibName: nil, bundle: nil)
@@ -61,6 +67,13 @@ final class PanelViewController: NSViewController {
         leftHeader?.setFullScreen(fullScreen)
     }
 
+    func setResizable(_ resizable: Bool) {
+        let inset = AppTheme.sidebarItemInset
+            - (resizable ? AppTheme.resizeHandleWidth / 2 : 0)
+        newTaskTrailingConstraint.constant = -inset
+        taskStackTrailingConstraint.constant = -inset
+    }
+
     func applyTheme() {
         view.layer?.backgroundColor = AppTheme.chromeBackground.cgColor
         leftHeader?.applyTheme()
@@ -79,6 +92,8 @@ final class PanelViewController: NSViewController {
         _ tasks: [WorkspaceTask],
         selection: WorkspaceScope?,
         expandedTaskIDs: Set<UUID>,
+        taskActivities: [UUID: String] = [:],
+        repositoryActivities: [TaskRepositoryScope: String] = [:],
         taskErrors: [UUID: String],
         repositoryErrors: [TaskRepositoryScope: String],
         loadError: String?
@@ -100,7 +115,11 @@ final class PanelViewController: NSViewController {
                     task: task,
                     selection: selection,
                     expanded: expandedTaskIDs.contains(task.id),
+                    menuActive: taskMenuTaskID == task.id,
+                    activity: taskActivities[task.id],
                     taskError: taskErrors[task.id],
+                    repositoryMenuScope: repositoryMenuScope,
+                    repositoryActivities: repositoryActivities,
                     repositoryErrors: repositoryErrors
                 )
                 group.onSelectTask = { [weak self] in self?.onSelectTask?(task.id) }
@@ -112,12 +131,35 @@ final class PanelViewController: NSViewController {
                         TaskRepositoryScope(taskID: task.id, repositoryID: repositoryID)
                     )
                 }
+                group.onShowMenu = { [weak self] anchorRect in
+                    self?.onShowTaskMenu?(task.id, anchorRect)
+                }
+                group.onShowRepositoryMenu = { [weak self] repositoryID, anchorRect in
+                    self?.onShowRepositoryMenu?(
+                        TaskRepositoryScope(taskID: task.id, repositoryID: repositoryID),
+                        anchorRect
+                    )
+                }
                 taskStack.addArrangedSubview(group)
                 group.widthAnchor.constraint(equalTo: taskStack.widthAnchor).isActive = true
             }
         }
         applyTheme()
         sizeTaskDocumentToViewport()
+    }
+
+    func setTaskMenuTask(_ taskID: UUID?) {
+        taskMenuTaskID = taskID
+        taskStack.arrangedSubviews
+            .compactMap { $0 as? SidebarTaskGroupView }
+            .forEach { $0.setMenuActive($0.taskID == taskID) }
+    }
+
+    func setRepositoryMenuScope(_ scope: TaskRepositoryScope?) {
+        repositoryMenuScope = scope
+        taskStack.arrangedSubviews
+            .compactMap { $0 as? SidebarTaskGroupView }
+            .forEach { $0.setRepositoryMenuActive(scope) }
     }
 
     private func installLeftPanel() {
@@ -155,6 +197,14 @@ final class PanelViewController: NSViewController {
         leftHeader = topHeader
         brandView = brand
         self.sectionHeader = sectionHeader
+        newTaskTrailingConstraint = newTaskButton.trailingAnchor.constraint(
+            equalTo: view.trailingAnchor,
+            constant: -AppTheme.sidebarItemInset
+        )
+        taskStackTrailingConstraint = taskStack.trailingAnchor.constraint(
+            equalTo: taskDocument.trailingAnchor,
+            constant: -AppTheme.sidebarItemInset
+        )
 
         NSLayoutConstraint.activate([
             topHeader.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -173,15 +223,12 @@ final class PanelViewController: NSViewController {
                 equalTo: view.leadingAnchor,
                 constant: AppTheme.sidebarItemInset
             ),
-            newTaskButton.trailingAnchor.constraint(
-                equalTo: view.trailingAnchor,
-                constant: -AppTheme.sidebarTrailingInset(for: AppTheme.sidebarItemInset)
-            ),
+            newTaskTrailingConstraint,
             newTaskButton.topAnchor.constraint(
                 equalTo: brand.bottomAnchor,
                 constant: AppTheme.sidebarNewTaskTopSpacing
             ),
-            newTaskButton.heightAnchor.constraint(equalToConstant: 30),
+            newTaskButton.heightAnchor.constraint(equalToConstant: AppTheme.sidebarNewTaskHeight),
 
             sectionHeader.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             sectionHeader.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -201,10 +248,7 @@ final class PanelViewController: NSViewController {
                 equalTo: taskDocument.leadingAnchor,
                 constant: AppTheme.sidebarItemInset
             ),
-            taskStack.trailingAnchor.constraint(
-                equalTo: taskDocument.trailingAnchor,
-                constant: -AppTheme.sidebarTrailingInset(for: AppTheme.sidebarItemInset)
-            ),
+            taskStackTrailingConstraint,
             taskStack.topAnchor.constraint(equalTo: taskDocument.topAnchor),
             taskDocument.bottomAnchor.constraint(greaterThanOrEqualTo: taskStack.bottomAnchor),
         ])
@@ -300,7 +344,10 @@ private final class SidebarTaskGroupView: NSStackView {
     var onSelectTask: (() -> Void)?
     var onToggleExpansion: (() -> Void)?
     var onSelectRepository: ((UUID) -> Void)?
+    var onShowMenu: ((NSRect) -> Void)?
+    var onShowRepositoryMenu: ((UUID, NSRect) -> Void)?
 
+    let taskID: UUID
     private let taskRow: SidebarTaskRow
     private var repositoryRows: [SidebarRepositoryRow] = []
 
@@ -308,14 +355,21 @@ private final class SidebarTaskGroupView: NSStackView {
         task: WorkspaceTask,
         selection: WorkspaceScope?,
         expanded: Bool,
+        menuActive: Bool,
+        activity: String?,
         taskError: String?,
+        repositoryMenuScope: TaskRepositoryScope?,
+        repositoryActivities: [TaskRepositoryScope: String],
         repositoryErrors: [TaskRepositoryScope: String]
     ) {
+        taskID = task.id
         taskRow = SidebarTaskRow(
             title: task.title,
             hasRepositories: !task.repositories.isEmpty,
             expanded: expanded,
             selected: selection == .task(task.id),
+            menuActive: menuActive,
+            activity: activity,
             error: taskError
         )
         super.init(frame: .zero)
@@ -327,6 +381,7 @@ private final class SidebarTaskGroupView: NSStackView {
         taskRow.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
         taskRow.onSelect = { [weak self] in self?.onSelectTask?() }
         taskRow.onToggleExpansion = { [weak self] in self?.onToggleExpansion?() }
+        taskRow.onShowMenu = { [weak self] in self?.onShowMenu?($0) }
 
         if expanded {
             for repository in task.repositories.sorted(by: {
@@ -336,10 +391,17 @@ private final class SidebarTaskGroupView: NSStackView {
                 let row = SidebarRepositoryRow(
                     repository: repository,
                     selected: selection == .repository(scope),
+                    menuActive: repositoryMenuScope == scope,
+                    activity: repositoryActivities[scope] ?? (repository.worktreeProvisioning.map {
+                        !$0.succeeded && $0.failureMessage == nil
+                    } == true ? "creating" : nil),
                     error: repositoryErrors[scope]
                 )
                 row.onSelect = { [weak self] in
                     self?.onSelectRepository?(repository.repositoryID)
+                }
+                row.onShowMenu = { [weak self] anchorRect in
+                    self?.onShowRepositoryMenu?(repository.repositoryID, anchorRect)
                 }
                 addArrangedSubview(row)
                 row.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
@@ -357,6 +419,18 @@ private final class SidebarTaskGroupView: NSStackView {
         taskRow.applyTheme()
         repositoryRows.forEach { $0.applyTheme() }
     }
+
+    func setMenuActive(_ active: Bool) {
+        taskRow.setMenuActive(active)
+    }
+
+    func setRepositoryMenuActive(_ scope: TaskRepositoryScope?) {
+        repositoryRows.forEach { row in
+            row.setMenuActive(
+                scope?.taskID == taskID && scope?.repositoryID == row.repositoryID
+            )
+        }
+    }
 }
 
 @MainActor
@@ -365,30 +439,67 @@ private final class SidebarDisclosureButton: AppButton {
 }
 
 @MainActor
+private final class SidebarMenuButton: AppButton {
+    var forcedActive = false {
+        didSet { applyTheme() }
+    }
+
+    override func applyTheme() {
+        super.applyTheme()
+        guard forcedActive else { return }
+        layer?.backgroundColor = NSColor.clear.cgColor
+        contentTintColor = AppTheme.primaryText
+    }
+}
+
+@MainActor
 private final class SidebarTaskRow: AppHoverView {
     var onSelect: (() -> Void)?
     var onToggleExpansion: (() -> Void)?
+    var onShowMenu: ((NSRect) -> Void)?
 
     private let selected: Bool
+    private var menuActive: Bool
+    private let activity: String?
     private let error: String?
     private let selectButton = AppButton(role: .hitTarget)
     private let disclosureButton = SidebarDisclosureButton(role: .icon)
+    private let menuButton = SidebarMenuButton(role: .hitTarget)
     private let titleLabel: NSTextField
     private let errorIcon = NSImageView()
-    private let failedLabel: NSTextField
+    private let activityIndicator = NSProgressIndicator()
+    private let statusLabel: NSTextField
 
-    init(title: String, hasRepositories: Bool, expanded: Bool, selected: Bool, error: String?) {
+    init(
+        title: String,
+        hasRepositories: Bool,
+        expanded: Bool,
+        selected: Bool,
+        menuActive: Bool,
+        activity: String?,
+        error: String?
+    ) {
         self.selected = selected
+        self.menuActive = menuActive
+        self.activity = activity
         self.error = error
         titleLabel = NSTextField(labelWithString: title)
-        failedLabel = NSTextField(labelWithString: error == nil ? "" : "failed")
+        statusLabel = NSTextField(labelWithString: error == nil ? activity ?? "" : "failed")
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
         layer?.cornerRadius = AppTheme.workspaceControlCornerRadius
         toolTip = error ?? title
 
-        [selectButton, disclosureButton, titleLabel, errorIcon, failedLabel].forEach {
+        [
+            selectButton,
+            disclosureButton,
+            titleLabel,
+            errorIcon,
+            activityIndicator,
+            statusLabel,
+            menuButton,
+        ].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             addSubview($0)
         }
@@ -412,6 +523,20 @@ private final class SidebarTaskRow: AppHoverView {
         disclosureButton.isHidden = !hasRepositories
         disclosureButton.layer?.cornerRadius = AppTheme.workspaceControlCornerRadius
         disclosureButton.layer?.cornerCurve = .continuous
+        menuButton.image = activity == nil
+            ? NSImage(
+                systemSymbolName: "ellipsis",
+                accessibilityDescription: "Task actions"
+            )
+            : nil
+        menuButton.isEnabled = activity == nil
+        menuButton.target = self
+        menuButton.action = #selector(showMenu)
+        menuButton.setAccessibilityLabel("Task actions")
+        menuButton.layer?.cornerRadius = AppTheme.workspaceControlCornerRadius
+        menuButton.layer?.cornerCurve = .continuous
+        menuButton.isHidden = activity != nil || !menuActive
+        menuButton.forcedActive = menuActive
         titleLabel.usesSingleLineMode = true
         titleLabel.lineBreakMode = .byTruncatingTail
         errorIcon.image = NSImage(
@@ -419,7 +544,13 @@ private final class SidebarTaskRow: AppHoverView {
             accessibilityDescription: "Failed"
         )
         errorIcon.isHidden = error == nil
-        failedLabel.isHidden = error == nil
+        activityIndicator.style = .spinning
+        activityIndicator.controlSize = .small
+        activityIndicator.isHidden = activity == nil || error != nil
+        if !activityIndicator.isHidden {
+            activityIndicator.startAnimation(nil)
+        }
+        statusLabel.isHidden = error == nil && activity == nil
 
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: AppTheme.sidebarTaskRowHeight),
@@ -445,10 +576,24 @@ private final class SidebarTaskRow: AppHoverView {
                     : AppTheme.workspaceInset
             ),
             titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: errorIcon.leadingAnchor, constant: -6),
-            failedLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-            failedLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            errorIcon.trailingAnchor.constraint(equalTo: failedLabel.leadingAnchor, constant: -6),
+            titleLabel.trailingAnchor.constraint(
+                lessThanOrEqualTo: errorIcon.leadingAnchor,
+                constant: -6
+            ),
+            menuButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            menuButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            menuButton.widthAnchor.constraint(equalToConstant: activity == nil ? 28 : 0),
+            menuButton.heightAnchor.constraint(equalToConstant: 24),
+            statusLabel.trailingAnchor.constraint(equalTo: menuButton.leadingAnchor, constant: -6),
+            statusLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            activityIndicator.trailingAnchor.constraint(
+                equalTo: statusLabel.leadingAnchor,
+                constant: -6
+            ),
+            activityIndicator.centerYAnchor.constraint(equalTo: centerYAnchor),
+            activityIndicator.widthAnchor.constraint(equalToConstant: activity == nil ? 0 : 12),
+            activityIndicator.heightAnchor.constraint(equalToConstant: 12),
+            errorIcon.trailingAnchor.constraint(equalTo: activityIndicator.leadingAnchor),
             errorIcon.centerYAnchor.constraint(equalTo: centerYAnchor),
             errorIcon.widthAnchor.constraint(equalToConstant: error == nil ? 0 : 12),
             errorIcon.heightAnchor.constraint(equalToConstant: 12),
@@ -464,21 +609,33 @@ private final class SidebarTaskRow: AppHoverView {
     func applyTheme() {
         let appearance = AppTheme.buttonAppearance(
             role: selected ? .accent : .chrome,
-            hovered: !selected && isHovering
+            hovered: !selected && (isHovering || menuActive)
         )
         layer?.backgroundColor = appearance.background.cgColor
         let textColor = error == nil
             ? selected ? appearance.foreground : AppTheme.primaryText
             : NSColor.systemRed
-        titleLabel.font = AppTheme.font(ofSize: AppTheme.typography.body, weight: 550)
+        titleLabel.font = AppTheme.font(ofSize: AppTheme.typography.body, weight: 500)
         titleLabel.textColor = textColor
         disclosureButton.applyTheme()
+        menuButton.applyTheme()
         errorIcon.contentTintColor = error == nil ? AppTheme.panelAccentIcon : .systemRed
-        failedLabel.font = .monospacedSystemFont(ofSize: AppTheme.typography.label, weight: .regular)
-        failedLabel.textColor = .systemRed
+        statusLabel.font = .monospacedSystemFont(
+            ofSize: AppTheme.typography.label,
+            weight: .regular
+        )
+        statusLabel.textColor = error == nil ? AppTheme.tertiaryText : .systemRed
     }
 
     override func hoverStateDidChange() {
+        menuButton.isHidden = activity != nil || (!isHovering && !menuActive)
+        applyTheme()
+    }
+
+    func setMenuActive(_ active: Bool) {
+        menuActive = active
+        menuButton.forcedActive = active
+        menuButton.isHidden = activity != nil || (!isHovering && !active)
         applyTheme()
     }
 
@@ -488,6 +645,9 @@ private final class SidebarTaskRow: AppHoverView {
             hitView === disclosureButton || hitView.isDescendant(of: disclosureButton)
         {
             return disclosureButton
+        }
+        if hitView === menuButton || hitView.isDescendant(of: menuButton) {
+            return menuButton
         }
         return selectButton
     }
@@ -499,36 +659,219 @@ private final class SidebarTaskRow: AppHoverView {
     @objc private func toggleExpansion() {
         onToggleExpansion?()
     }
+
+    @objc private func showMenu() {
+        guard menuButton.window != nil else { return }
+        onShowMenu?(convert(bounds, to: nil))
+    }
+}
+
+@MainActor
+final class SidebarActionMenuView: NSView {
+    struct Item {
+        let title: String
+        let symbol: String
+        var destructive = false
+    }
+
+    var onSelect: ((Int) -> Void)?
+
+    private let rows: [SidebarActionMenuRow]
+    private let separator = NSView()
+
+    init(items: [Item]) {
+        precondition(items.count == 3)
+        rows = items.map {
+            SidebarActionMenuRow(
+                title: $0.title,
+                symbol: $0.symbol,
+                destructive: $0.destructive
+            )
+        }
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = 12
+        layer?.cornerCurve = .continuous
+        layer?.borderWidth = 1
+        layer?.shadowOpacity = 0.18
+        layer?.shadowRadius = 8
+        layer?.shadowOffset = NSSize(width: 0, height: -2)
+
+        (rows.map { $0 as NSView } + [separator]).forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+            addSubview($0)
+        }
+        rows.enumerated().forEach { index, row in
+            row.onSelect = { [weak self] in self?.onSelect?(index) }
+        }
+        separator.wantsLayer = true
+
+        let first = rows[0]
+        let second = rows[1]
+        let last = rows[2]
+        NSLayoutConstraint.activate([
+            first.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            first.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            first.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            first.heightAnchor.constraint(equalToConstant: AppTheme.sidebarTaskRowHeight),
+            second.leadingAnchor.constraint(equalTo: first.leadingAnchor),
+            second.trailingAnchor.constraint(equalTo: first.trailingAnchor),
+            second.topAnchor.constraint(equalTo: first.bottomAnchor),
+            second.heightAnchor.constraint(equalTo: first.heightAnchor),
+            separator.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            separator.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            separator.topAnchor.constraint(equalTo: second.bottomAnchor, constant: 5),
+            separator.heightAnchor.constraint(equalToConstant: 1),
+            last.leadingAnchor.constraint(equalTo: first.leadingAnchor),
+            last.trailingAnchor.constraint(equalTo: first.trailingAnchor),
+            last.topAnchor.constraint(equalTo: separator.bottomAnchor, constant: 5),
+            last.heightAnchor.constraint(equalTo: first.heightAnchor),
+            last.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+        ])
+        applyTheme()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is unavailable")
+    }
+
+    func applyTheme() {
+        layer?.backgroundColor = AppTheme.chromeBackground.cgColor
+        layer?.borderColor = AppTheme.border.cgColor
+        layer?.shadowColor = NSColor.black.cgColor
+        rows.forEach { $0.applyTheme() }
+        separator.layer?.backgroundColor = AppTheme.border.cgColor
+    }
+}
+
+@MainActor
+private final class SidebarActionMenuRow: AppHoverView {
+    var onSelect: (() -> Void)?
+
+    private let destructive: Bool
+    private let button = AppButton(role: .hitTarget)
+    private let icon = NSImageView()
+    private let label: NSTextField
+
+    init(title: String, symbol: String, destructive: Bool = false) {
+        self.destructive = destructive
+        label = NSTextField(labelWithString: title)
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = 6
+        layer?.cornerCurve = .continuous
+        label.usesSingleLineMode = true
+        label.lineBreakMode = .byClipping
+        icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        button.target = self
+        button.action = #selector(selectItem)
+        button.setAccessibilityLabel(title)
+        [button, icon, label].forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+            addSubview($0)
+        }
+        NSLayoutConstraint.activate([
+            button.leadingAnchor.constraint(equalTo: leadingAnchor),
+            button.trailingAnchor.constraint(equalTo: trailingAnchor),
+            button.topAnchor.constraint(equalTo: topAnchor),
+            button.bottomAnchor.constraint(equalTo: bottomAnchor),
+            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 9),
+            icon.centerYAnchor.constraint(equalTo: centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 16),
+            icon.heightAnchor.constraint(equalToConstant: 16),
+            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 9),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+        applyTheme()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is unavailable")
+    }
+
+    func applyTheme() {
+        layer?.backgroundColor = (isHovering
+            ? AppTheme.chromeHoverBackground
+            : NSColor.clear).cgColor
+        let color = destructive
+            ? NSColor.systemRed
+            : isHovering ? AppTheme.primaryText : AppTheme.secondaryText
+        icon.contentTintColor = color
+        label.font = AppTheme.font(ofSize: AppTheme.typography.settingsBody)
+        label.textColor = color
+    }
+
+    override func hoverStateDidChange() {
+        applyTheme()
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        super.hitTest(point) == nil ? nil : button
+    }
+
+    @objc private func selectItem() {
+        onSelect?()
+    }
 }
 
 @MainActor
 private final class SidebarRepositoryRow: AppHoverView {
     var onSelect: (() -> Void)?
+    var onShowMenu: ((NSRect) -> Void)?
 
+    let repositoryID: UUID
     private let selected: Bool
+    private var menuActive: Bool
+    private let activity: String?
     private let error: String?
     private let button = AppButton(role: .hitTarget)
+    private let menuButton = SidebarMenuButton(role: .hitTarget)
     private let titleLabel: NSTextField
     private let errorIcon = NSImageView()
-    private let failedLabel: NSTextField
+    private let activityIndicator = NSProgressIndicator()
+    private let statusLabel: NSTextField
 
-    init(repository: TaskRepositoryAttachment, selected: Bool, error: String?) {
+    init(
+        repository: TaskRepositoryAttachment,
+        selected: Bool,
+        menuActive: Bool,
+        activity: String?,
+        error: String?
+    ) {
+        repositoryID = repository.repositoryID
         self.selected = selected
+        self.menuActive = menuActive
+        self.activity = activity
         self.error = error
         titleLabel = NSTextField(labelWithString: repository.name)
-        failedLabel = NSTextField(labelWithString: error == nil ? "" : "failed")
+        statusLabel = NSTextField(labelWithString: error == nil ? activity ?? "" : "failed")
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
         layer?.cornerRadius = AppTheme.workspaceControlCornerRadius
         toolTip = error ?? repository.name
-        [button, titleLabel, errorIcon, failedLabel].forEach {
+        [button, titleLabel, errorIcon, activityIndicator, statusLabel, menuButton].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             addSubview($0)
         }
         button.target = self
         button.action = #selector(selectRepository)
         button.setAccessibilityLabel(repository.name)
+        menuButton.image = activity == nil
+            ? NSImage(
+                systemSymbolName: "ellipsis",
+                accessibilityDescription: "Repository actions"
+            )
+            : nil
+        menuButton.isEnabled = activity == nil
+        menuButton.target = self
+        menuButton.action = #selector(showMenu)
+        menuButton.setAccessibilityLabel("Repository actions")
+        menuButton.isHidden = activity != nil || !menuActive
+        menuButton.forcedActive = menuActive
         titleLabel.usesSingleLineMode = true
         titleLabel.lineBreakMode = .byTruncatingTail
         errorIcon.image = NSImage(
@@ -536,23 +879,43 @@ private final class SidebarRepositoryRow: AppHoverView {
             accessibilityDescription: "Failed"
         )
         errorIcon.isHidden = error == nil
-        failedLabel.isHidden = error == nil
+        activityIndicator.style = .spinning
+        activityIndicator.controlSize = .small
+        activityIndicator.isHidden = activity == nil || error != nil
+        if !activityIndicator.isHidden {
+            activityIndicator.startAnimation(nil)
+        }
+        statusLabel.isHidden = error == nil && activity == nil
 
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: 26),
+            heightAnchor.constraint(equalToConstant: AppTheme.sidebarTaskRowHeight),
             button.leadingAnchor.constraint(equalTo: leadingAnchor),
             button.trailingAnchor.constraint(equalTo: trailingAnchor),
             button.topAnchor.constraint(equalTo: topAnchor),
             button.bottomAnchor.constraint(equalTo: bottomAnchor),
             titleLabel.leadingAnchor.constraint(
                 equalTo: leadingAnchor,
-                constant: AppTheme.sidebarTaskTitleDisclosureInset
+                constant: AppTheme.sidebarRepositoryTitleInset
             ),
             titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: errorIcon.leadingAnchor, constant: -6),
-            failedLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-            failedLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            errorIcon.trailingAnchor.constraint(equalTo: failedLabel.leadingAnchor, constant: -6),
+            titleLabel.trailingAnchor.constraint(
+                lessThanOrEqualTo: errorIcon.leadingAnchor,
+                constant: -6
+            ),
+            menuButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            menuButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            menuButton.widthAnchor.constraint(equalToConstant: activity == nil ? 28 : 0),
+            menuButton.heightAnchor.constraint(equalToConstant: 24),
+            statusLabel.trailingAnchor.constraint(equalTo: menuButton.leadingAnchor, constant: -6),
+            statusLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            activityIndicator.trailingAnchor.constraint(
+                equalTo: statusLabel.leadingAnchor,
+                constant: -6
+            ),
+            activityIndicator.centerYAnchor.constraint(equalTo: centerYAnchor),
+            activityIndicator.widthAnchor.constraint(equalToConstant: activity == nil ? 0 : 12),
+            activityIndicator.heightAnchor.constraint(equalToConstant: 12),
+            errorIcon.trailingAnchor.constraint(equalTo: activityIndicator.leadingAnchor),
             errorIcon.centerYAnchor.constraint(equalTo: centerYAnchor),
             errorIcon.widthAnchor.constraint(equalToConstant: error == nil ? 0 : 14),
             errorIcon.heightAnchor.constraint(equalToConstant: 12),
@@ -579,21 +942,42 @@ private final class SidebarRepositoryRow: AppHoverView {
             weight: selected ? .semibold : .regular
         )
         titleLabel.textColor = textColor
+        menuButton.applyTheme()
         errorIcon.contentTintColor = error == nil ? AppTheme.tertiaryText : .systemRed
-        failedLabel.font = .monospacedSystemFont(ofSize: AppTheme.typography.label, weight: .regular)
-        failedLabel.textColor = .systemRed
+        statusLabel.font = .monospacedSystemFont(
+            ofSize: AppTheme.typography.label,
+            weight: .regular
+        )
+        statusLabel.textColor = error == nil ? AppTheme.tertiaryText : .systemRed
     }
 
     override func hoverStateDidChange() {
+        menuButton.isHidden = activity != nil || (!isHovering && !menuActive)
+        applyTheme()
+    }
+
+    func setMenuActive(_ active: Bool) {
+        menuActive = active
+        menuButton.forcedActive = active
+        menuButton.isHidden = activity != nil || (!isHovering && !active)
         applyTheme()
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        super.hitTest(point) == nil ? nil : button
+        guard let hitView = super.hitTest(point) else { return nil }
+        if hitView === menuButton || hitView.isDescendant(of: menuButton) {
+            return menuButton
+        }
+        return button
     }
 
     @objc private func selectRepository() {
         onSelect?()
+    }
+
+    @objc private func showMenu() {
+        guard menuButton.window != nil else { return }
+        onShowMenu?(convert(bounds, to: nil))
     }
 }
 

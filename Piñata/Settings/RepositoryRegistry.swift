@@ -120,7 +120,54 @@ struct RepositoryInspector: Sendable {
         )
     }
 
-    private func gitOutput(_ arguments: [String]) throws -> String {
+    func currentBranch(at path: String) throws -> String {
+        try gitOutput(["-C", path, "branch", "--show-current"])
+    }
+
+    func removeWorktree(
+        at path: String,
+        branchHint: String?,
+        from repository: RegisteredRepository
+    ) throws {
+        let targetURL = URL(fileURLWithPath: path).standardizedFileURL
+        let worktrees = parseWorktrees(
+            try gitOutput(["-C", repository.path, "worktree", "list", "--porcelain"])
+        )
+        let worktree = worktrees.first {
+            URL(fileURLWithPath: $0.path).standardizedFileURL == targetURL
+        }
+        let branch = worktree?.branch ?? branchHint
+        let pathExists = FileManager.default.fileExists(atPath: path)
+        guard let branch, branch.hasPrefix("pinata/") else {
+            if worktree != nil || pathExists {
+                throw RepositoryInspectionError.gitFailed(
+                    "Could not verify that the worktree belongs to Piñata."
+                )
+            }
+            return
+        }
+        guard worktree != nil || !pathExists else {
+            throw RepositoryInspectionError.gitFailed(
+                "Could not verify that the path is a Git worktree."
+            )
+        }
+
+        if worktree != nil {
+            _ = try gitOutput(
+                ["-C", repository.path, "worktree", "remove", "--force", path],
+                timeout: 15 * 60
+            )
+        }
+
+        if !(try gitOutput(["-C", repository.path, "branch", "--list", branch])).isEmpty {
+            _ = try gitOutput(["-C", repository.path, "branch", "-D", branch])
+        }
+    }
+
+    private func gitOutput(
+        _ arguments: [String],
+        timeout: TimeInterval = 30
+    ) throws -> String {
         try Task.checkCancellation()
 
         let fileManager = FileManager.default
@@ -150,7 +197,7 @@ struct RepositoryInspector: Sendable {
         process.standardError = errorHandle
         try process.run()
 
-        let deadline = Date().addingTimeInterval(30)
+        let deadline = Date().addingTimeInterval(timeout)
         while process.isRunning {
             if Task.isCancelled {
                 process.terminate()
@@ -286,5 +333,394 @@ enum WorktreePathValidator {
         return allowRepositoryRelative
             ? "Use an absolute path, ~/ path, or ./ path."
             : "Use an absolute path or ~/ path."
+    }
+}
+
+enum WorktreeProvisioningStepStatus: String, Codable, Equatable, Sendable {
+    case completed
+    case failed
+    case running
+    case pending
+}
+
+struct WorktreeProvisioningStep: Codable, Equatable, Sendable {
+    let title: String
+    let status: WorktreeProvisioningStepStatus
+    let detail: String
+}
+
+enum WorktreeProvisioningFailureSummary {
+    static func summarize(_ message: String) -> String {
+        let cleaned = message
+            .replacingOccurrences(
+                of: "\u{001B}\\[[0-9;]*[A-Za-z]",
+                with: "",
+                options: .regularExpression
+            )
+            .replacingOccurrences(of: "\r", with: "\n")
+        let lines = cleaned
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        if lines.count <= 3, cleaned.count <= 360 {
+            return lines.joined(separator: "\n")
+        }
+
+        let failures = lines.filter { line in
+            let value = line.lowercased()
+            return value.hasPrefix("fatal:")
+                || value.hasPrefix("error:")
+                || value.contains("command not found")
+                || value.contains("permission denied")
+                || value.contains("could not")
+                || value.contains("failed")
+                || value.contains("exited ")
+                || value.contains("exited with")
+        }
+        guard let failure = failures.last else {
+            return "Worktree creation stopped before completion."
+        }
+        return failure.count > 320
+            ? String(failure.prefix(319)) + "…"
+            : failure
+    }
+}
+
+struct WorktreeProvisioningReport: Codable, Equatable, Sendable {
+    let path: String
+    let branch: String
+    let baseBranch: String
+    let steps: [WorktreeProvisioningStep]
+
+    var succeeded: Bool {
+        steps.allSatisfy { $0.status == .completed }
+    }
+
+    var failureMessage: String? {
+        steps.first(where: { $0.status == .failed })
+            .map { WorktreeProvisioningFailureSummary.summarize($0.detail) }
+    }
+}
+
+enum WorktreeProvisioningError: LocalizedError {
+    case gitFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .gitFailed(let message): message
+        }
+    }
+}
+
+struct WorktreeProvisioner {
+    let globalBasePath: String
+    private let fileManager: FileManager
+
+    init(
+        globalBasePath: String,
+        fileManager: FileManager = .default
+    ) {
+        self.globalBasePath = globalBasePath
+        self.fileManager = fileManager
+    }
+
+    func preparing(
+        repository: RegisteredRepository,
+        taskID: UUID,
+        taskTitle: String
+    ) -> WorktreeProvisioningReport {
+        let root = WorktreePathResolver.root(
+            for: repository,
+            globalBasePath: globalBasePath,
+            fileManager: fileManager
+        )
+        let destination = nextAvailableDestination(
+            in: root,
+            named: WorktreePathResolver.serializedTaskName(taskTitle)
+        )
+        let remoteBranch = "origin/\(repository.defaultBranch)"
+        let branch = "pinata/\(WorktreePathResolver.serializedTaskName(taskTitle))-\(taskID.uuidString.prefix(8).lowercased())"
+        return WorktreeProvisioningReport(
+            path: destination.path,
+            branch: branch,
+            baseBranch: remoteBranch,
+            steps: [
+                pendingStep("Fetch origin"),
+                pendingStep("Create branch"),
+                pendingStep("Create worktree"),
+            ]
+        )
+    }
+
+    func provision(
+        repository: RegisteredRepository,
+        taskID: UUID,
+        taskTitle: String,
+        onUpdate: @escaping @Sendable (WorktreeProvisioningReport) -> Void = { _ in }
+    ) -> WorktreeProvisioningReport {
+        var report = preparing(
+            repository: repository,
+            taskID: taskID,
+            taskTitle: taskTitle
+        )
+        onUpdate(report)
+        func update(
+            _ index: Int,
+            status: WorktreeProvisioningStepStatus,
+            detail: String
+        ) {
+            let step = report.steps[index]
+            var steps = report.steps
+            steps[index] = WorktreeProvisioningStep(
+                title: step.title,
+                status: status,
+                detail: detail
+            )
+            report = WorktreeProvisioningReport(
+                path: report.path,
+                branch: report.branch,
+                baseBranch: report.baseBranch,
+                steps: steps
+            )
+            onUpdate(report)
+        }
+        func completeActiveProgressStep() {
+            guard let index = report.steps.indices.last(where: {
+                $0 >= 3 && report.steps[$0].status == .running
+            }) else { return }
+            var steps = report.steps
+            let step = steps[index]
+            steps[index] = WorktreeProvisioningStep(
+                title: step.title,
+                status: .completed,
+                detail: ""
+            )
+            report = WorktreeProvisioningReport(
+                path: report.path,
+                branch: report.branch,
+                baseBranch: report.baseBranch,
+                steps: steps
+            )
+            onUpdate(report)
+        }
+        func updateProgress(_ output: String) {
+            for title in progressTitles(for: output) {
+                guard !report.steps.contains(where: { $0.title == title }) else { continue }
+                completeActiveProgressStep()
+                var steps = report.steps
+                steps.append(WorktreeProvisioningStep(
+                    title: title,
+                    status: .running,
+                    detail: ""
+                ))
+                report = WorktreeProvisioningReport(
+                    path: report.path,
+                    branch: report.branch,
+                    baseBranch: report.baseBranch,
+                    steps: steps
+                )
+                onUpdate(report)
+            }
+        }
+        func finishProgressSteps() {
+            var steps = report.steps
+            for index in 3..<steps.count where steps[index].status == .running {
+                let step = steps[index]
+                steps[index] = WorktreeProvisioningStep(
+                    title: step.title,
+                    status: .completed,
+                    detail: ""
+                )
+            }
+            report = WorktreeProvisioningReport(
+                path: report.path,
+                branch: report.branch,
+                baseBranch: report.baseBranch,
+                steps: steps
+            )
+            onUpdate(report)
+        }
+
+        let fetchArguments = [
+            "-C", repository.path,
+            "fetch", "origin",
+            "refs/heads/\(repository.defaultBranch):refs/remotes/\(report.baseBranch)",
+        ]
+        update(0, status: .running, detail: "Running…")
+        let fetch = runStep(
+            report.steps[0].title,
+            arguments: fetchArguments,
+            onOutput: { _ in }
+        )
+        update(0, status: fetch.status, detail: fetch.detail)
+        guard fetch.status == .completed else { return report }
+
+        update(1, status: .running, detail: "Running…")
+        let createBranch = runStep(
+            report.steps[1].title,
+            arguments: ["-C", repository.path, "branch", report.branch, report.baseBranch],
+            onOutput: { _ in }
+        )
+        update(1, status: createBranch.status, detail: createBranch.detail)
+        guard createBranch.status == .completed else { return report }
+
+        update(2, status: .running, detail: "Running…")
+        do {
+            try fileManager.createDirectory(
+                at: URL(fileURLWithPath: report.path).deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+        } catch {
+            update(2, status: .failed, detail: error.localizedDescription)
+            return report
+        }
+        let addWorktree = runStep(
+            report.steps[2].title,
+            arguments: ["-C", repository.path, "worktree", "add", report.path, report.branch],
+            onOutput: { output in
+                updateProgress(output)
+            }
+        )
+        update(2, status: addWorktree.status, detail: addWorktree.detail)
+        if addWorktree.status == .completed {
+            finishProgressSteps()
+        }
+        return report
+    }
+
+    private func nextAvailableDestination(in root: URL, named name: String) -> URL {
+        var suffix = 1
+        var destination = root.appendingPathComponent(name, isDirectory: true)
+        while fileManager.fileExists(atPath: destination.path) {
+            suffix += 1
+            destination = root.appendingPathComponent("\(name)-\(suffix)", isDirectory: true)
+        }
+        return destination
+    }
+
+    private func runStep(
+        _ title: String,
+        arguments: [String],
+        onOutput: (String) -> Void = { _ in }
+    ) -> WorktreeProvisioningStep {
+        do {
+            _ = try runGit(arguments, onOutput: onOutput)
+            return WorktreeProvisioningStep(
+                title: title,
+                status: .completed,
+                detail: ""
+            )
+        } catch {
+            return WorktreeProvisioningStep(
+                title: title,
+                status: .failed,
+                detail: WorktreeProvisioningFailureSummary.summarize(error.localizedDescription)
+            )
+        }
+    }
+
+    private func pendingStep(_ title: String) -> WorktreeProvisioningStep {
+        WorktreeProvisioningStep(
+            title: title,
+            status: .pending,
+            detail: ""
+        )
+    }
+
+    private func runGit(
+        _ arguments: [String],
+        onOutput: (String) -> Void
+    ) throws -> String {
+        let pipe = Pipe()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = arguments
+        process.standardOutput = pipe
+        process.standardError = pipe
+        try process.run()
+        try pipe.fileHandleForWriting.close()
+
+        var data = Data()
+        var pending = ""
+        while let chunk = try pipe.fileHandleForReading.read(upToCount: 4_096), !chunk.isEmpty {
+            data.append(chunk)
+            pending += normalizedOutput(String(decoding: chunk, as: UTF8.self))
+            let lines = pending.components(separatedBy: "\n")
+            lines.dropLast().forEach(onOutput)
+            pending = lines.last ?? ""
+        }
+        if !pending.isEmpty { onOutput(pending) }
+        process.waitUntilExit()
+
+        let result = normalizedOutput(String(decoding: data, as: UTF8.self))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard process.terminationStatus == 0 else {
+            throw WorktreeProvisioningError.gitFailed(
+                result.isEmpty ? "Could not create worktree." : result
+            )
+        }
+        return result
+    }
+
+    private func normalizedOutput(_ output: String) -> String {
+        output
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+    }
+
+    private func progressTitles(for output: String) -> [String] {
+        var titles: [String] = []
+        for line in output.split(whereSeparator: \.isNewline) {
+            let value = line.lowercased()
+            if value.contains("preparing worktree") { titles.append("Preparing worktree") }
+            if value.contains("updating files") { titles.append("Copying files") }
+            if value.contains("checking out files") { titles.append("Checking out files") }
+            if value.contains("receiving objects") { titles.append("Receiving changes") }
+            if value.contains("resolving deltas") { titles.append("Resolving changes") }
+            if value.contains("post-worktree") { titles.append("Run post-worktree hook") }
+            if value.contains("post-checkout") { titles.append("Run post-checkout hook") }
+            if value.contains("setup.sh") || value.contains("post-install") {
+                titles.append("Run setup script")
+            }
+        }
+        return titles
+    }
+}
+
+enum WorktreePathResolver {
+    static func serializedTaskName(_ title: String) -> String {
+        let normalized = title.folding(
+            options: [.diacriticInsensitive, .widthInsensitive, .caseInsensitive],
+            locale: .current
+        ).lowercased()
+        let words = normalized.components(separatedBy: CharacterSet.alphanumerics.inverted)
+        let value = words.filter { !$0.isEmpty }.joined(separator: "-")
+        return value.isEmpty ? "task" : value
+    }
+
+    static func root(
+        for repository: RegisteredRepository,
+        globalBasePath: String,
+        fileManager: FileManager = .default
+    ) -> URL {
+        let usesRepositoryOverride = repository.worktreeBasePath != nil
+        let path = repository.worktreeBasePath ?? globalBasePath
+        let root: URL
+        if path == "~" {
+            root = fileManager.homeDirectoryForCurrentUser
+        } else if path.hasPrefix("~/") {
+            root = fileManager.homeDirectoryForCurrentUser.appendingPathComponent(String(path.dropFirst(2)))
+        } else if path.hasPrefix("./") {
+            root = URL(fileURLWithPath: repository.path)
+                .appendingPathComponent(String(path.dropFirst(2)))
+        } else {
+            root = URL(fileURLWithPath: path)
+        }
+        let standardizedRoot = root.standardizedFileURL
+        return usesRepositoryOverride
+            ? standardizedRoot
+            : standardizedRoot.appendingPathComponent(serializedTaskName(repository.name))
     }
 }
