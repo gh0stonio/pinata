@@ -341,6 +341,7 @@ final class WorkspaceViewController: NSViewController {
         workspaceCard.layer?.backgroundColor = AppTheme.background.cgColor
         workspaceCard.layer?.borderColor = AppTheme.border.cgColor
         mainColumn.layer?.backgroundColor = AppTheme.background.cgColor
+        terminalHost.layer?.backgroundColor = AppTheme.background.cgColor
         workspaceHeader.applyTheme()
         leftPanelController.applyTheme()
         allTerminalWorkspaces.forEach { workspace in
@@ -1885,8 +1886,10 @@ private final class WorktreeProvisioningView: NSView, SettingsThemeApplying {
     }
 
     func applyTheme() {
-        repositoryLabel.textColor = report.failureMessage == nil ? AppTheme.primaryText : .systemRed
-        detailLabel.textColor = .systemRed
+        repositoryLabel.textColor = report.failureMessage == nil
+            ? AppTheme.primaryText
+            : AppTheme.error
+        detailLabel.textColor = AppTheme.error
         artwork.needsDisplay = true
         currentAction.applyTheme()
     }
@@ -1963,8 +1966,8 @@ private final class WorktreeCurrentActionView: NSView, SettingsThemeApplying {
     }
 
     func applyTheme() {
-        titleLabel.textColor = step.status == .failed ? .systemRed : AppTheme.secondaryText
-        statusIcon.contentTintColor = step.status == .failed ? .systemRed : .systemGreen
+        titleLabel.textColor = step.status == .failed ? AppTheme.error : AppTheme.secondaryText
+        statusIcon.contentTintColor = step.status == .failed ? AppTheme.error : .systemGreen
     }
 
     private func installContent() {
@@ -2114,7 +2117,7 @@ private final class WorkspaceEmptyStateView: NSStackView {
 
         let titleLabel = NSTextField(labelWithString: title)
         titleLabel.font = AppTheme.font(ofSize: AppTheme.typography.title, weight: 650)
-        titleLabel.textColor = state.isError ? .systemRed : AppTheme.primaryText
+        titleLabel.textColor = state.isError ? AppTheme.error : AppTheme.primaryText
         addArrangedSubview(titleLabel)
         setCustomSpacing(12, after: titleLabel)
 
@@ -2299,7 +2302,7 @@ private final class WorkspaceEmptyArtworkView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        let color = kind == .error ? NSColor.systemRed : AppTheme.panelAccentIcon
+        let color = kind == .error ? AppTheme.error : AppTheme.panelAccentIcon
         let card = NSRect(x: 28, y: 12, width: 128, height: 92)
         let shadow = card.offsetBy(dx: -13, dy: 11)
         drawCard(shadow, fill: AppTheme.controlSelection, border: AppTheme.border)
@@ -2437,12 +2440,12 @@ private final class WorkspaceEmptyArtworkView: NSView {
         triangle.stroke()
         color.setFill()
         NSBezierPath(
-            roundedRect: NSRect(x: rect.midX - 2, y: rect.minY + 47, width: 4, height: 18),
+            roundedRect: NSRect(x: rect.midX - 2, y: rect.minY + 42, width: 4, height: 18),
             xRadius: 2,
             yRadius: 2
         ).fill()
         NSBezierPath(
-            ovalIn: NSRect(x: rect.midX - 3, y: rect.minY + 38, width: 6, height: 6)
+            ovalIn: NSRect(x: rect.midX - 3, y: rect.minY + 33, width: 6, height: 6)
         ).fill()
     }
 
