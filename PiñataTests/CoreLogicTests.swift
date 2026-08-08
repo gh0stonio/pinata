@@ -169,6 +169,27 @@ final class CoreLogicTests: XCTestCase {
             AppTheme.configure(settings)
             XCTAssertEqual(rgbHex(AppTheme.background), theme.palette.background)
             XCTAssertEqual(rgbHex(AppTheme.primaryText), theme.palette.primaryText)
+            XCTAssertEqual(
+                rgbHex(AppTheme.error),
+                theme == .dark ? 0xF25555 : 0xBC2C2C
+            )
+            XCTAssertEqual(
+                rgbHex(AppTheme.success),
+                theme == .dark ? 0x31C971 : 0x208A4F
+            )
+        }
+
+        let fontSizes: [(AppFontSize, CGFloat, CGFloat)] = [
+            (.small, 16.5, 12),
+            (.regular, 17.5, 13),
+            (.large, 18.5, 14),
+        ]
+        for (fontSize, title, body) in fontSizes {
+            var settings = UserSettings.defaults
+            settings.appFontSize = fontSize
+            AppTheme.configure(settings)
+            XCTAssertEqual(AppTheme.typography.title, title)
+            XCTAssertEqual(AppTheme.typography.body, body)
         }
 
         for accent in AccentPreference.allCases {
@@ -205,6 +226,10 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertEqual(
             RepositoryInspector.organization(from: "https://github.com/gh0stonio/pinata.git"),
             "gh0stonio"
+        )
+        XCTAssertEqual(
+            RepositoryInspector.organization(from: "git@github.com:git-team/pinata.git"),
+            "git-team"
         )
         XCTAssertNil(RepositoryInspector.organization(from: "not-a-remote"))
         XCTAssertNil(WorktreePathValidator.error(for: "   ", allowRepositoryRelative: false))
