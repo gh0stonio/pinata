@@ -65,7 +65,7 @@ enum AppTheme {
     static let sidebarDisclosureLeadingInset: CGFloat = 2
     static let sidebarDisclosureControlWidth: CGFloat = 18
     static let sidebarDisclosureControlHeight: CGFloat = 22
-    static let sidebarTaskTitleDisclosureInset: CGFloat = 21
+    static let sidebarTaskTitleDisclosureInset: CGFloat = 22
     static let sidebarRepositoryTitleInset: CGFloat = 26
     static let taskModalCardWidth: CGFloat = 522
     static let taskModalPadding: CGFloat = 16
@@ -369,6 +369,10 @@ enum AppTheme {
                 borderWidth: hovered ? 2 : 0
             )
         }
+    }
+
+    static func renderedBackground(_ background: NSColor) -> NSColor {
+        composited(background, over: chromeBackground)
     }
 
     private static func panelAccentColors(
