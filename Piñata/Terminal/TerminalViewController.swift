@@ -2,16 +2,16 @@ import AppKit
 
 typealias PaneID = UUID
 
-enum SplitAxis {
+enum SplitAxis: String, Codable, Equatable, Sendable {
     case vertical
     case horizontal
 }
 
-indirect enum PaneNode {
+indirect enum PaneNode: Codable, Equatable, Sendable {
     case pane(PaneID)
     case split(Split)
 
-    struct Split {
+    struct Split: Codable, Equatable, Sendable {
         let id: UUID
         let axis: SplitAxis
         var ratio: CGFloat
@@ -90,6 +90,25 @@ indirect enum PaneNode {
     }
 }
 
+struct TerminalPaneSnapshot: Codable, Equatable, Sendable {
+    var id: PaneID
+    var workingDirectory: String
+}
+
+struct TerminalSessionSnapshot: Codable, Equatable, Sendable {
+    var root: PaneNode
+    var activePaneID: PaneID
+    var panes: [TerminalPaneSnapshot]
+
+    var isValid: Bool {
+        let paneIDs = panes.map(\.id)
+        return !paneIDs.isEmpty
+            && Set(paneIDs).count == paneIDs.count
+            && Set(root.paneIDs) == Set(paneIDs)
+            && root.paneIDs.contains(activePaneID)
+    }
+}
+
 @MainActor
 final class TerminalViewController: NSViewController {
     private let runtime: GhosttyRuntime
@@ -98,6 +117,7 @@ final class TerminalViewController: NSViewController {
     private var paneControllers: [PaneID: TerminalPaneViewController] = [:]
     private var rootController: NSViewController?
     var onCloseLastPane: (() -> Void)?
+    var onChange: (() -> Void)?
 
     init(
         runtime: GhosttyRuntime,
@@ -112,6 +132,22 @@ final class TerminalViewController: NSViewController {
             paneID: paneID,
             workingDirectory: workingDirectory
         )
+    }
+
+    init(runtime: GhosttyRuntime, snapshot: TerminalSessionSnapshot) {
+        self.runtime = runtime
+        root = snapshot.root
+        activePaneID = snapshot.activePaneID
+        super.init(nibName: nil, bundle: nil)
+        for pane in snapshot.panes {
+            paneControllers[pane.id] = makePaneController(
+                paneID: pane.id,
+                workingDirectory: pane.workingDirectory
+            )
+        }
+        if paneControllers[activePaneID] == nil {
+            activePaneID = root.paneIDs.first ?? UUID()
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -155,6 +191,22 @@ final class TerminalViewController: NSViewController {
         updateActivePane()
     }
 
+    var sessionSnapshot: TerminalSessionSnapshot {
+        TerminalSessionSnapshot(
+            root: root,
+            activePaneID: activePaneID,
+            panes: root.paneIDs.compactMap { paneID in
+                paneControllers[paneID].map {
+                    TerminalPaneSnapshot(id: paneID, workingDirectory: $0.workingDirectory)
+                }
+            }
+        )
+    }
+
+    func terminateSessions() {
+        paneControllers.values.forEach { $0.terminateSession() }
+    }
+
     private func invalidateSplitViews(in view: NSView) {
         if view is PaneSplitView { view.needsDisplay = true }
         view.subviews.forEach(invalidateSplitViews)
@@ -168,7 +220,7 @@ final class TerminalViewController: NSViewController {
         let newPaneID = UUID()
         paneControllers[newPaneID] = makePaneController(
             paneID: newPaneID,
-            workingDirectory: source.terminalView.workingDirectory
+            workingDirectory: source.workingDirectory
         )
         root = root.replacing(
             paneID,
@@ -184,6 +236,7 @@ final class TerminalViewController: NSViewController {
         rebuild()
         updateActivePane()
         focusActivePane()
+        onChange?()
     }
 
     private func close(_ paneID: PaneID) {
@@ -194,6 +247,7 @@ final class TerminalViewController: NSViewController {
         guard let nextRoot = root.removing(paneID) else { return }
         let nearest = root.nearestPane(to: paneID)
         if let removed = paneControllers.removeValue(forKey: paneID) {
+            removed.terminateSession()
             removed.view.removeFromSuperview()
             removed.removeFromParent()
         }
@@ -204,6 +258,7 @@ final class TerminalViewController: NSViewController {
         rebuild()
         updateActivePane()
         focusActivePane()
+        onChange?()
     }
 
     private func makePaneController(
@@ -231,6 +286,7 @@ final class TerminalViewController: NSViewController {
         guard paneControllers[paneID] != nil, activePaneID != paneID else { return }
         activePaneID = paneID
         updateActivePane()
+        onChange?()
     }
 
     private func updateActivePane() {
@@ -281,6 +337,7 @@ final class TerminalViewController: NSViewController {
             let controller = SplitHostController(split: split) { [weak self] splitID, ratio in
                 guard let self else { return }
                 self.root = self.root.settingRatio(splitID: splitID, ratio: ratio)
+                self.onChange?()
             }
             let first = NSSplitViewItem(viewController: makeNodeController(split.first))
             let second = NSSplitViewItem(viewController: makeNodeController(split.second))
@@ -306,7 +363,11 @@ private final class TerminalPaneViewController: NSViewController {
 
     init(paneID: PaneID, runtime: GhosttyRuntime, workingDirectory: String) {
         self.paneID = paneID
-        terminalView = GhosttySurfaceView(runtime: runtime, workingDirectory: workingDirectory)
+        terminalView = GhosttySurfaceView(
+            runtime: runtime,
+            workingDirectory: workingDirectory,
+            sessionID: paneID
+        )
         header = PaneHeaderView(title: PaneHeaderView.displayTitle(terminalView.defaultTitle))
         super.init(nibName: nil, bundle: nil)
 
@@ -333,6 +394,12 @@ private final class TerminalPaneViewController: NSViewController {
             guard let self else { return }
             self.didRequestClose?(self.paneID)
         }
+    }
+
+    var workingDirectory: String { terminalView.workingDirectory }
+
+    func terminateSession() {
+        terminalView.terminateSession()
     }
 
     required init?(coder: NSCoder) {

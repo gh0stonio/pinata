@@ -5,7 +5,8 @@ import GhosttyKit
 @MainActor
 final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
     private let runtime: GhosttyRuntime
-    private let launchCommand: String
+    private let terminalSession: TerminalSessionClient
+    private let ioBridge: GhosttyIOBridge
     private var markedTextStorage = NSMutableAttributedString()
     private var suppressFocusMouseUp = false
     private var trackingAreaToken: NSTrackingArea?
@@ -24,12 +25,18 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
 
     init(
         runtime: GhosttyRuntime,
-        workingDirectory: String = FileManager.default.homeDirectoryForCurrentUser.path
+        workingDirectory: String = FileManager.default.homeDirectoryForCurrentUser.path,
+        sessionID: UUID
     ) {
         self.runtime = runtime
         self.workingDirectory = workingDirectory
-        launchCommand = "\(Self.shellQuote(UserShell.loginPath)) -l"
+        terminalSession = TerminalSessionClient(id: sessionID, workingDirectory: workingDirectory)
+        ioBridge = GhosttyIOBridge()
         super.init(frame: .zero)
+        ioBridge.session = terminalSession
+        terminalSession.onOutput = { [weak self] data in
+            self?.processTerminalOutput(data)
+        }
         wantsLayer = true
         layerContentsRedrawPolicy = .duringViewResize
         registerForDraggedTypes([.fileURL])
@@ -40,6 +47,7 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
     }
 
     deinit {
+        terminalSession.disconnect()
         if let surface {
             ghostty_surface_free(surface)
         }
@@ -96,17 +104,6 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
         ghostty_surface_set_focus(surface, focused && window?.firstResponder === self)
     }
 
-    func restartAfterProcessExit(_ processAlive: Bool) {
-        guard !processAlive, let surface else { return }
-        ghostty_surface_set_focus(surface, false)
-        self.surface = nil
-        ghostty_surface_free(surface)
-        lastPixelWidth = 0
-        lastPixelHeight = 0
-        didChangeTitle?(defaultTitle)
-        scheduleSurfaceCreation()
-    }
-
     private func scheduleSurfaceCreation() {
         guard surface == nil, !surfaceCreationScheduled, window != nil else { return }
         surfaceCreationScheduled = true
@@ -133,24 +130,25 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
     private func createSurface() throws {
         let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
         let created = workingDirectory.withCString { directory in
-            launchCommand.withCString { command in
-                var config = ghostty_surface_config_new()
-                config.platform_tag = GHOSTTY_PLATFORM_MACOS
-                config.platform.macos = ghostty_platform_macos_s(
-                    nsview: Unmanaged.passUnretained(self).toOpaque()
-                )
-                config.userdata = Unmanaged.passUnretained(self).toOpaque()
-                config.scale_factor = scale
-                config.working_directory = directory
-                config.command = command
-                config.context = GHOSTTY_SURFACE_CONTEXT_SPLIT
-                return ghostty_surface_new(runtime.app, &config)
-            }
+            var config = ghostty_surface_config_new()
+            config.platform_tag = GHOSTTY_PLATFORM_MACOS
+            config.platform.macos = ghostty_platform_macos_s(
+                nsview: Unmanaged.passUnretained(self).toOpaque()
+            )
+            config.userdata = Unmanaged.passUnretained(self).toOpaque()
+            config.scale_factor = scale
+            config.working_directory = directory
+            config.context = GHOSTTY_SURFACE_CONTEXT_SPLIT
+            config.io_mode = GHOSTTY_SURFACE_IO_MANUAL
+            config.io_write_cb = ghosttyManualIOWrite
+            config.io_write_userdata = Unmanaged.passUnretained(ioBridge).toOpaque()
+            return ghostty_surface_new(runtime.app, &config)
         }
         guard let created else { throw GhosttyError.surfaceCreation }
         surface = created
         ghostty_surface_set_focus(created, window?.firstResponder === self)
         updateSurfaceGeometry()
+        terminalSession.start()
         runtime.tick()
     }
 
@@ -171,6 +169,8 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
             ghostty_surface_set_display_id(surface, displayID)
         }
         ghostty_surface_set_size(surface, width, height)
+        let size = ghostty_surface_size(surface)
+        terminalSession.send(.resize(columns: size.columns, rows: size.rows))
         ghostty_surface_refresh(surface)
         layer?.setNeedsDisplay()
     }
@@ -402,6 +402,23 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
         }
     }
 
+    func terminateSession() {
+        terminalSession.close()
+    }
+
+    private func processTerminalOutput(_ data: Data) {
+        guard let surface else { return }
+        data.withUnsafeBytes { bytes in
+            guard let baseAddress = bytes.baseAddress else { return }
+            ghostty_surface_process_output(
+                surface,
+                baseAddress.assumingMemoryBound(to: CChar.self),
+                UInt(bytes.count)
+            )
+        }
+        ghostty_surface_refresh(surface)
+    }
+
     func insertText(_ string: Any, replacementRange: NSRange) {
         let value = (string as? NSAttributedString)?.string ?? String(describing: string)
         markedTextStorage = NSMutableAttributedString()
@@ -500,9 +517,10 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
     private static func shellQuote(_ value: String) -> String {
         "'\(value.replacingOccurrences(of: "'", with: "'\"'\"'"))'"
     }
+
 }
 
-private enum UserShell {
+enum UserShell {
     static var loginPath: String {
         if let record = getpwuid(getuid()), let shell = record.pointee.pw_shell {
             let path = String(cString: shell)
@@ -510,4 +528,18 @@ private enum UserShell {
         }
         return ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
     }
+}
+
+private final class GhosttyIOBridge: @unchecked Sendable {
+    weak var session: TerminalSessionClient?
+}
+
+private func ghosttyManualIOWrite(
+    _ userdata: UnsafeMutableRawPointer?,
+    _ bytes: UnsafePointer<CChar>?,
+    _ length: UInt
+) {
+    guard let userdata, let bytes else { return }
+    let bridge = Unmanaged<GhosttyIOBridge>.fromOpaque(userdata).takeUnretainedValue()
+    bridge.session?.send(.input(Data(bytes: bytes, count: Int(length))))
 }

@@ -118,6 +118,88 @@ final class CoreLogicTests: XCTestCase {
         )
     }
 
+    func testAppSessionStoreRoundTripsTerminalLayout() throws {
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+
+        let taskID = UUID()
+        let tabID = UUID()
+        let paneID = UUID()
+        let terminal = TerminalSessionSnapshot(
+            root: .pane(paneID),
+            activePaneID: paneID,
+            panes: [
+                TerminalPaneSnapshot(
+                    id: paneID,
+                    workingDirectory: "/tmp/pinata"
+                ),
+            ]
+        )
+        let session = AppSession(
+            activeScope: .task(taskID),
+            expandedTaskIDs: [taskID],
+            terminalWorkspaces: [
+                StoredTerminalWorkspace(
+                    scope: .task(taskID),
+                    title: "Terminal",
+                    workingDirectory: "/tmp/pinata",
+                    tabs: [StoredTerminalTab(id: tabID, title: "Terminal", terminal: terminal)],
+                    activeTabID: tabID,
+                    nextTabNumber: 2
+                ),
+            ]
+        )
+        let store = AppSessionStore(fileURL: directoryURL.appendingPathComponent("session.json"))
+
+        try store.save(session)
+
+        XCTAssertEqual(try store.load(), session)
+    }
+
+    func testTerminalSessionSnapshotRejectsMismatchedPanes() {
+        let rootPaneID = UUID()
+        let storedPaneID = UUID()
+        let snapshot = TerminalSessionSnapshot(
+            root: .pane(rootPaneID),
+            activePaneID: rootPaneID,
+            panes: [
+                TerminalPaneSnapshot(
+                    id: storedPaneID,
+                    workingDirectory: "/tmp"
+                ),
+            ]
+        )
+
+        XCTAssertFalse(snapshot.isValid)
+    }
+
+    func testTerminalServiceProtocolRoundTripsEveryMessage() throws {
+        let messages: [TerminalServiceMessage] = [
+            .attach,
+            .input(Data("echo Piñata\n".utf8)),
+            .resize(columns: 120, rows: 40),
+            .output(Data("output\n".utf8)),
+            .close,
+        ]
+
+        for message in messages {
+            XCTAssertEqual(try JSONDecoder().decode(
+                TerminalServiceMessage.self,
+                from: JSONEncoder().encode(message)
+            ), message)
+        }
+    }
+
+    func testTerminalServicePathsArePerSessionAndSocketSafe() {
+        let first = UUID(uuidString: "AAB1E84C-4BAE-4A15-82F1-775571891A81")!
+        let second = UUID(uuidString: "3C7E4BFD-5A8B-49E5-8D8A-719EF01EB0CE")!
+
+        XCTAssertNotEqual(TerminalSessionPaths.logURL(for: first), TerminalSessionPaths.logURL(for: second))
+        XCTAssertNotEqual(TerminalSessionPaths.socketPath(for: first), TerminalSessionPaths.socketPath(for: second))
+        XCTAssertLessThan(TerminalSessionPaths.socketPath(for: first).utf8.count, 104)
+    }
+
     func testOlderSettingsKeepNewFieldDefaults() throws {
         let settings = try JSONDecoder().decode(
             UserSettings.self,

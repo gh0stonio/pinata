@@ -58,6 +58,40 @@ final class WorkspaceViewController: NSViewController {
                 activeTabID = nil
             }
         }
+
+        init(runtime: GhosttyRuntime, snapshot: StoredTerminalWorkspace) {
+            title = snapshot.title
+            workingDirectory = snapshot.workingDirectory
+            tabs = snapshot.tabs.compactMap { tab in
+                guard tab.terminal.isValid else { return nil }
+                return TerminalTab(
+                    id: tab.id,
+                    title: tab.title,
+                    controller: TerminalViewController(runtime: runtime, snapshot: tab.terminal)
+                )
+            }
+            activeTabID = tabs.contains(where: { $0.id == snapshot.activeTabID })
+                ? snapshot.activeTabID
+                : tabs.first?.id
+            nextTabNumber = max(2, snapshot.nextTabNumber)
+        }
+
+        func snapshot(for scope: StoredWorkspaceScope) -> StoredTerminalWorkspace {
+            StoredTerminalWorkspace(
+                scope: scope,
+                title: title,
+                workingDirectory: workingDirectory,
+                tabs: tabs.map {
+                    StoredTerminalTab(
+                        id: $0.id,
+                        title: $0.title,
+                        terminal: $0.controller.sessionSnapshot
+                    )
+                },
+                activeTabID: activeTabID,
+                nextTabNumber: nextTabNumber
+            )
+        }
     }
 
     private static let sidebarDefaultsKey = "pinata.sidebar.presentation.v1"
@@ -75,6 +109,7 @@ final class WorkspaceViewController: NSViewController {
     private let leftPanelController = PanelViewController()
     private let leftResizeHandle = PanelResizeHandle()
     private let taskStore: TaskRegistryStore
+    private let sessionStore = AppSessionStore()
     private let repositoryStore = RepositoryRegistryStore()
     private var taskWorkspaces: [UUID: TerminalWorkspace] = [:]
     private var repositoryWorkspaces: [TaskRepositoryScope: TerminalWorkspace] = [:]
@@ -117,17 +152,47 @@ final class WorkspaceViewController: NSViewController {
     private weak var observedWindow: NSWindow?
     private var trafficLightBaselineY: CGFloat?
     private var trafficLightBaselineX: [NSWindow.ButtonType: CGFloat] = [:]
+    private var sessionSaveWorkItem: DispatchWorkItem?
 
     init(runtime: GhosttyRuntime) {
         self.runtime = runtime
         taskStore = TaskRegistryStore()
+        let loadedTasks: [WorkspaceTask]
+        let didLoadTaskRegistry: Bool
+        let loadError: String?
         do {
-            tasks = try taskStore.load()
-            taskRegistryLoaded = true
+            loadedTasks = try taskStore.load()
+            didLoadTaskRegistry = true
+            loadError = nil
         } catch {
-            tasks = []
-            taskRegistryLoaded = false
-            taskLoadError = "Could not load tasks: \(error.localizedDescription)"
+            loadedTasks = []
+            didLoadTaskRegistry = false
+            loadError = "Could not load tasks: \(error.localizedDescription)"
+        }
+        tasks = loadedTasks
+        taskRegistryLoaded = didLoadTaskRegistry
+        taskLoadError = loadError
+        let restoredSession = try? sessionStore.load()
+        expandedTaskIDs = restoredSession?.expandedTaskIDs.filter { taskID in
+            loadedTasks.contains(where: { $0.id == taskID })
+        } ?? []
+        activeScope = restoredSession?.activeScope.flatMap { scope in
+            Self.workspaceScope(from: scope, in: loadedTasks)
+        }
+        if let restoredSession {
+            for snapshot in restoredSession.terminalWorkspaces {
+                guard !snapshot.tabs.isEmpty,
+                      let scope = Self.workspaceScope(from: snapshot.scope, in: loadedTasks)
+                else { continue }
+                let workspace = TerminalWorkspace(runtime: runtime, snapshot: snapshot)
+                guard !workspace.tabs.isEmpty else { continue }
+                switch scope {
+                case .task(let taskID):
+                    taskWorkspaces[taskID] = workspace
+                case .repository(let repositoryScope):
+                    repositoryWorkspaces[repositoryScope] = workspace
+                }
+            }
         }
         let stored = UserDefaults.standard.string(forKey: Self.sidebarDefaultsKey)
         sidebarPresentation = stored == SidebarPresentation.hidden.rawValue ? .hidden : .docked
@@ -223,6 +288,7 @@ final class WorkspaceViewController: NSViewController {
                     title: "Terminal",
                     workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path
                 )
+                scheduleSessionSave()
                 installActiveWorkspace()
                 return
             }
@@ -243,6 +309,7 @@ final class WorkspaceViewController: NSViewController {
         }
         workspace.tabs.append(tab)
         workspace.activeTabID = id
+        scheduleSessionSave()
         if isViewLoaded {
             installActiveWorkspace()
         }
@@ -563,6 +630,7 @@ final class WorkspaceViewController: NSViewController {
             workspace.tabs.contains(where: { $0.id == id })
         else { return }
         workspace.activeTabID = id
+        scheduleSessionSave()
         installActiveWorkspace()
     }
 
@@ -609,6 +677,9 @@ final class WorkspaceViewController: NSViewController {
         }
         controller.onCloseLastPane = { [weak self] in
             self?.closeTerminalTab(activeTabID)
+        }
+        controller.onChange = { [weak self] in
+            self?.scheduleSessionSave()
         }
         if controller.parent !== self {
             addChild(controller)
@@ -733,6 +804,7 @@ final class WorkspaceViewController: NSViewController {
             let index = workspace.tabs.firstIndex(where: { $0.id == id })
         else { return }
         let tab = workspace.tabs.remove(at: index)
+        tab.controller.terminateSessions()
         tab.controller.view.removeFromSuperview()
         tab.controller.removeFromParent()
         if workspace.activeTabID == id {
@@ -740,6 +812,7 @@ final class WorkspaceViewController: NSViewController {
                 ? nil
                 : workspace.tabs[min(index, workspace.tabs.count - 1)].id
         }
+        scheduleSessionSave()
         installActiveWorkspace()
     }
 
@@ -841,6 +914,7 @@ final class WorkspaceViewController: NSViewController {
             expandedTaskIDs.insert(task.id)
         }
         updateTaskSidebar()
+        scheduleSessionSave()
         installActiveWorkspace()
         DispatchQueue.main.async { [weak self] in
             self?.saveAndProvision(repositories, for: task)
@@ -871,6 +945,7 @@ final class WorkspaceViewController: NSViewController {
         tasks[taskIndex] = updatedTask
         expandedTaskIDs.insert(task.id)
         updateTaskSidebar()
+        scheduleSessionSave()
         DispatchQueue.main.async { [weak self] in
             self?.saveAndProvision(additions, for: updatedTask)
         }
@@ -925,6 +1000,7 @@ final class WorkspaceViewController: NSViewController {
             automaticProvisioningFocus[task.id] = scope
         }
         updateTaskSidebar()
+        scheduleSessionSave()
         installActiveWorkspace()
 
         let updates = AsyncStream<(TaskRepositoryScope, WorktreeProvisioningReport)> { continuation in
@@ -1299,6 +1375,7 @@ final class WorkspaceViewController: NSViewController {
                 activeScope = tasks.first.map { .task($0.id) }
             }
             updateTaskSidebar()
+            scheduleSessionSave()
             installActiveWorkspace()
         }
     }
@@ -1321,6 +1398,7 @@ final class WorkspaceViewController: NSViewController {
             if let workspace = repositoryWorkspaces.removeValue(forKey: scope) {
                 closeTerminals(in: workspace)
             }
+            scheduleSessionSave()
             repositoryRemovalStates[scope] = .removing("Removing worktree and branch")
             updateTaskSidebar()
             installActiveWorkspace()
@@ -1380,6 +1458,7 @@ final class WorkspaceViewController: NSViewController {
             repositoryErrors.removeValue(forKey: scope)
             activeScope = .task(task.id)
             updateTaskSidebar()
+            scheduleSessionSave()
             installActiveWorkspace()
         }
     }
@@ -1398,6 +1477,7 @@ final class WorkspaceViewController: NSViewController {
 
     private func closeTerminals(in workspace: TerminalWorkspace) {
         for tab in workspace.tabs {
+            tab.controller.terminateSessions()
             if tab.controller.isViewLoaded {
                 tab.controller.view.removeFromSuperview()
             }
@@ -1431,7 +1511,9 @@ final class WorkspaceViewController: NSViewController {
     ) {
         do {
             try storeWorktreeProvisioning(report, for: scope)
-            repositoryWorkspaces.removeValue(forKey: scope)
+            if let workspace = repositoryWorkspaces.removeValue(forKey: scope) {
+                closeTerminals(in: workspace)
+            }
             if let failureMessage = report.failureMessage {
                 repositoryErrors[scope] = failureMessage
             } else if report.succeeded,
@@ -1452,6 +1534,7 @@ final class WorkspaceViewController: NSViewController {
         }
         let changedFocus = updateAutomaticProvisioningFocus(for: scope.taskID)
         updateTaskSidebar()
+        scheduleSessionSave()
         if changedFocus || activeScope == .repository(scope) {
             installActiveWorkspace()
         }
@@ -1529,6 +1612,7 @@ final class WorkspaceViewController: NSViewController {
             expandedTaskIDs.insert(taskID)
         }
         updateTaskSidebar()
+        scheduleSessionSave()
         installActiveWorkspace()
     }
 
@@ -1544,6 +1628,7 @@ final class WorkspaceViewController: NSViewController {
 
         if taskDeletionStates[scope.taskID] != nil || repositoryRemovalStates[scope] != nil {
             updateTaskSidebar()
+            scheduleSessionSave()
             installActiveWorkspace()
             return
         }
@@ -1551,6 +1636,7 @@ final class WorkspaceViewController: NSViewController {
         if let report = attachment.worktreeProvisioning, let failureMessage = report.failureMessage {
             repositoryErrors[scope] = failureMessage
             updateTaskSidebar()
+            scheduleSessionSave()
             installActiveWorkspace()
             return
         }
@@ -1574,6 +1660,7 @@ final class WorkspaceViewController: NSViewController {
             }
         }
         updateTaskSidebar()
+        scheduleSessionSave()
         installActiveWorkspace()
     }
 
@@ -1607,6 +1694,7 @@ final class WorkspaceViewController: NSViewController {
             expandedTaskIDs.insert(taskID)
         }
         updateTaskSidebar()
+        scheduleSessionSave()
     }
 
     private func moveTask(
@@ -1860,6 +1948,77 @@ final class WorkspaceViewController: NSViewController {
     private func persistSidebarPresentation() {
         guard sidebarPresentation != .transient else { return }
         UserDefaults.standard.set(sidebarPresentation.rawValue, forKey: Self.sidebarDefaultsKey)
+    }
+
+    func persistSession() {
+        sessionSaveWorkItem?.cancel()
+        sessionSaveWorkItem = nil
+        do {
+            try sessionStore.save(AppSession(
+                activeScope: storedScope(from: activeScope),
+                expandedTaskIDs: expandedTaskIDs,
+                terminalWorkspaces: storedTerminalWorkspaces
+            ))
+        } catch {
+            NSLog("Could not persist app session: \(error.localizedDescription)")
+        }
+    }
+
+    private func scheduleSessionSave() {
+        sessionSaveWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in self?.persistSession() }
+        sessionSaveWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: workItem)
+    }
+
+    private var storedTerminalWorkspaces: [StoredTerminalWorkspace] {
+        let taskSnapshots = taskWorkspaces
+            .sorted { $0.key.uuidString < $1.key.uuidString }
+            .map { taskID, workspace in
+                workspace.snapshot(for: .task(taskID))
+            }
+        let repositorySnapshots = repositoryWorkspaces
+            .sorted {
+                if $0.key.taskID != $1.key.taskID {
+                    return $0.key.taskID.uuidString < $1.key.taskID.uuidString
+                }
+                return $0.key.repositoryID.uuidString < $1.key.repositoryID.uuidString
+            }
+            .map { scope, workspace in
+                workspace.snapshot(for: .repository(
+                    taskID: scope.taskID,
+                    repositoryID: scope.repositoryID
+                ))
+            }
+        return taskSnapshots + repositorySnapshots
+    }
+
+    private func storedScope(from scope: WorkspaceScope?) -> StoredWorkspaceScope? {
+        switch scope {
+        case .task(let taskID):
+            .task(taskID)
+        case .repository(let scope):
+            .repository(taskID: scope.taskID, repositoryID: scope.repositoryID)
+        case nil:
+            nil
+        }
+    }
+
+    private static func workspaceScope(
+        from storedScope: StoredWorkspaceScope,
+        in tasks: [WorkspaceTask]
+    ) -> WorkspaceScope? {
+        switch storedScope {
+        case .task(let taskID):
+            return tasks.contains(where: { $0.id == taskID }) ? .task(taskID) : nil
+        case .repository(let taskID, let repositoryID):
+            guard tasks.contains(where: {
+                $0.id == taskID && $0.repositories.contains(where: { $0.repositoryID == repositoryID })
+            }) else {
+                return nil
+            }
+            return .repository(TaskRepositoryScope(taskID: taskID, repositoryID: repositoryID))
+        }
     }
 
     private func observeWindowIfNeeded() {
