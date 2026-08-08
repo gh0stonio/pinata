@@ -2191,7 +2191,7 @@ private final class WorktreeCurrentActionView: NSView, SettingsThemeApplying {
 
     func applyTheme() {
         titleLabel.textColor = step.status == .failed ? AppTheme.error : AppTheme.secondaryText
-        statusIcon.contentTintColor = step.status == .failed ? AppTheme.error : .systemGreen
+        statusIcon.contentTintColor = step.status == .failed ? AppTheme.error : AppTheme.success
     }
 
     private func installContent() {

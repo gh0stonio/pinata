@@ -146,6 +146,7 @@ enum AppTheme {
     static private(set) var secondaryText = color(0xB6BDC0)
     static private(set) var tertiaryText = color(0xA6AEB2)
     static private(set) var error = color(0xF25555)
+    static private(set) var success = color(0x31C971)
     static private(set) var accent = color(0xFF746B)
     static private(set) var panelAccentIcon = color(0xFF746B)
     static private(set) var panelAccentBackground = color(0xFF746B).withAlphaComponent(0.14)
@@ -186,6 +187,7 @@ enum AppTheme {
         secondaryText = color(palette.secondaryText)
         tertiaryText = color(palette.tertiaryText)
         error = color(settings.theme == .dark ? 0xF25555 : 0xBC2C2C)
+        success = color(settings.theme == .dark ? 0x31C971 : 0x208A4F)
 
         accent = accentColor(for: settings.accent)
         let panelAccent = panelAccentColors(
