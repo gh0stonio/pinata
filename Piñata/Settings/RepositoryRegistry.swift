@@ -363,6 +363,9 @@ enum WorktreeProvisioningFailureSummary {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
 
+        guard !lines.isEmpty else {
+            return "Worktree creation stopped before completion."
+        }
         if lines.count <= 3, cleaned.count <= 360 {
             return lines.joined(separator: "\n")
         }

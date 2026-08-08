@@ -1,13 +1,13 @@
 import AppKit
 
-private typealias PaneID = UUID
+typealias PaneID = UUID
 
-private enum SplitAxis {
+enum SplitAxis {
     case vertical
     case horizontal
 }
 
-private indirect enum PaneNode {
+indirect enum PaneNode {
     case pane(PaneID)
     case split(Split)
 
