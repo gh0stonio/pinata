@@ -47,11 +47,15 @@ The current `main` branch includes:
 - macOS 14 or newer.
 - App version `0.0.1`, build `1`.
 - Native Ghostty terminal tabs and split panes.
-- Resizable task sidebar.
-- Workspace-native appearance and repository settings.
-- Local repository registration, Git metadata, branches, tags, and worktree defaults.
+- Task sidebar with pinned tasks, drag sorting, and collapsed/transient presentation.
+- Create, rename, pin, attach repositories to, detach repositories from, and delete tasks.
+- Local repository registration, Git metadata, branches, tags, and global or per-repository worktree defaults.
+- Per-task Git worktrees with a Piñata branch, created from a freshly fetched repository default branch.
+- Parallel worktree provisioning with current-step status, failure recovery, and retry actions.
+- Theme, accent, font-size, terminal-size, and light/dark appearance settings.
+- Worktree-aware terminals, task and repository action menus, and safe cleanup of Piñata-owned worktrees and branches.
 
-Tasks, file browsing, diffs, reviews, checks, and pull request workflows are not implemented yet.
+File browsing, diffs, reviews, checks, pull request workflows, durable terminal restoration, and Pi discussion/daemon support are not implemented yet.
 
 ## Project Structure
 
@@ -163,6 +167,17 @@ xcodebuild \
   -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath DerivedData \
   analyze
+```
+
+### Test
+
+```bash
+xcodebuild \
+  -project Piñata.xcodeproj \
+  -scheme Piñata \
+  -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath DerivedData \
+  test
 ```
 
 ### Clean
