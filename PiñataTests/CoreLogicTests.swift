@@ -153,11 +153,13 @@ final class CoreLogicTests: XCTestCase {
         )
 
         let updates = WorktreeUpdates()
-        let report = WorktreeProvisioner(
+        let taskID = UUID()
+        let provisioner = WorktreeProvisioner(
             globalBasePath: directoryURL.appendingPathComponent("worktrees").path
-        ).provision(
+        )
+        let report = provisioner.provision(
             repository: repository,
-            taskID: UUID(),
+            taskID: taskID,
             taskTitle: "Fix API & UI!",
             onUpdate: { updates.values.append($0) }
         )
@@ -196,6 +198,18 @@ final class CoreLogicTests: XCTestCase {
         )
         XCTAssertFalse(FileManager.default.fileExists(atPath: path))
         XCTAssertEqual(try runGit(["-C", repository.path, "branch", "--list", report.branch]), "")
+
+        let retry = provisioner.provision(
+            repository: repository,
+            taskID: taskID,
+            taskTitle: "Fix API & UI!"
+        )
+        XCTAssertTrue(retry.succeeded)
+        try RepositoryInspector().removeWorktree(
+            at: retry.path,
+            branchHint: retry.branch,
+            from: repository
+        )
     }
 
     @MainActor
