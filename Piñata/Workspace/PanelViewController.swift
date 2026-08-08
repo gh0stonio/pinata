@@ -358,6 +358,7 @@ final class PanelViewController: NSViewController {
         scrollView.scrollerStyle = .overlay
         scrollView.horizontalScrollElasticity = .none
         taskDocument.translatesAutoresizingMaskIntoConstraints = true
+        taskDocument.autoresizingMask = [.width]
         taskStack.translatesAutoresizingMaskIntoConstraints = false
         taskStack.orientation = .vertical
         taskStack.alignment = .leading
@@ -420,7 +421,6 @@ final class PanelViewController: NSViewController {
             ),
             taskStackTrailingConstraint,
             taskStack.topAnchor.constraint(equalTo: taskDocument.topAnchor),
-            taskDocument.bottomAnchor.constraint(greaterThanOrEqualTo: taskStack.bottomAnchor),
         ])
     }
 
@@ -434,8 +434,9 @@ final class PanelViewController: NSViewController {
             NSSize(width: viewport.width, height: max(viewport.height, taskDocument.frame.height))
         )
         taskDocument.layoutSubtreeIfNeeded()
+        let contentHeight = taskStack.fittingSize.height
         taskDocument.setFrameSize(
-            NSSize(width: viewport.width, height: max(viewport.height, taskStack.frame.maxY))
+            NSSize(width: viewport.width, height: max(viewport.height, contentHeight))
         )
     }
 }

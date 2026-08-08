@@ -10,6 +10,7 @@ final class PinataApp: NSObject, NSApplicationDelegate {
     private var settings = UserSettings.defaults
 
     static func main() {
+        if TerminalServiceEntryPoint.runIfRequested() { return }
         let application = NSApplication.shared
         let delegate = PinataApp()
         application.delegate = delegate
@@ -126,6 +127,10 @@ final class PinataApp: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        workspaceViewController?.persistSession()
     }
 
     private func installMenu() {

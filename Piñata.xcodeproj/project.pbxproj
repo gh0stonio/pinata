@@ -30,6 +30,8 @@
 		000000000000000000000059 /* CoreLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000060 /* CoreLogicTests.swift */; };
 		000000000000000000000072 /* TaskRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000073 /* TaskRegistry.swift */; };
 		000000000000000000000074 /* NewTaskModalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000075 /* NewTaskModalView.swift */; };
+		000000000000000000000076 /* AppSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000077 /* AppSession.swift */; };
+		000000000000000000000082 /* TerminalSessionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000083 /* TerminalSessionService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -68,6 +70,8 @@
 		000000000000000000000061 /* PiñataTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "PiñataTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		000000000000000000000073 /* TaskRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskRegistry.swift; sourceTree = "<group>"; };
 		000000000000000000000075 /* NewTaskModalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewTaskModalView.swift; sourceTree = "<group>"; };
+		000000000000000000000077 /* AppSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSession.swift; sourceTree = "<group>"; };
+		000000000000000000000083 /* TerminalSessionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSessionService.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -134,6 +138,7 @@
 				000000000000000000000027 /* WorkspaceViewController.swift */,
 				000000000000000000000073 /* TaskRegistry.swift */,
 				000000000000000000000075 /* NewTaskModalView.swift */,
+				000000000000000000000077 /* AppSession.swift */,
 			);
 			path = Workspace;
 			sourceTree = "<group>";
@@ -144,6 +149,7 @@
 				000000000000000000000034 /* GhosttyRuntime.swift */,
 				000000000000000000000035 /* GhosttySurfaceView.swift */,
 				000000000000000000000037 /* TerminalViewController.swift */,
+				000000000000000000000083 /* TerminalSessionService.swift */,
 			);
 			path = Terminal;
 			sourceTree = "<group>";
@@ -287,6 +293,8 @@
 				000000000000000000000052 /* RepositorySettingsView.swift in Sources */,
 				000000000000000000000072 /* TaskRegistry.swift in Sources */,
 				000000000000000000000074 /* NewTaskModalView.swift in Sources */,
+				000000000000000000000076 /* AppSession.swift in Sources */,
+				000000000000000000000082 /* TerminalSessionService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

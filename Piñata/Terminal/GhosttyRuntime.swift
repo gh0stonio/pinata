@@ -33,7 +33,6 @@ final class GhosttyRuntime {
         runtimeConfig.read_clipboard_cb = ghosttyRuntimeReadClipboard
         runtimeConfig.confirm_read_clipboard_cb = ghosttyRuntimeConfirmClipboard
         runtimeConfig.write_clipboard_cb = ghosttyRuntimeWriteClipboard
-        runtimeConfig.close_surface_cb = ghosttyRuntimeCloseSurface
 
         guard let app = ghostty_app_new(&runtimeConfig, config) else {
             Unmanaged<GhosttyRuntimeState>.fromOpaque(opaque).release()
@@ -207,17 +206,6 @@ private func ghosttyRuntimeWriteClipboard(
     DispatchQueue.main.async {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
-    }
-}
-
-private func ghosttyRuntimeCloseSurface(
-    _ userdata: UnsafeMutableRawPointer?,
-    _ processAlive: Bool
-) {
-    guard let userdata else { return }
-    let terminal = Unmanaged<GhosttySurfaceView>.fromOpaque(userdata).takeUnretainedValue()
-    DispatchQueue.main.async {
-        terminal.restartAfterProcessExit(processAlive)
     }
 }
 
