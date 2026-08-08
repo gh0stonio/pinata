@@ -47,6 +47,46 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertFalse(task.isPinned)
     }
 
+    func testTaskReorderingMovesWithinAndAcrossSections() {
+        let pinnedOne = WorkspaceTask(title: "Pinned one", isPinned: true)
+        let regular = WorkspaceTask(title: "Regular")
+        let pinnedTwo = WorkspaceTask(title: "Pinned two", isPinned: true)
+        let tasks = [pinnedOne, regular, pinnedTwo]
+
+        XCTAssertEqual(
+            reorderTasks(
+                tasks,
+                moving: pinnedTwo.id,
+                relativeTo: pinnedOne.id,
+                after: false,
+                inPinnedSection: true
+            ).map(\.title),
+            ["Pinned two", "Pinned one", "Regular"]
+        )
+        let unpinned = reorderTasks(
+            tasks,
+            moving: pinnedOne.id,
+            relativeTo: regular.id,
+            after: true,
+            inPinnedSection: false
+        )
+        XCTAssertEqual(unpinned.map(\.title), ["Regular", "Pinned one", "Pinned two"])
+        XCTAssertFalse(unpinned[1].isPinned)
+    }
+
+    func testTaskReorderingMovesIntoEmptySection() {
+        let regular = WorkspaceTask(title: "Regular")
+        let pinned = reorderTasks(
+            [regular],
+            moving: regular.id,
+            relativeTo: nil,
+            after: false,
+            inPinnedSection: true
+        )
+        XCTAssertEqual(pinned.map(\.title), ["Regular"])
+        XCTAssertTrue(pinned[0].isPinned)
+    }
+
     func testOlderSettingsKeepNewFieldDefaults() throws {
         let settings = try JSONDecoder().decode(
             UserSettings.self,

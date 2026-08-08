@@ -1,7 +1,160 @@
 import AppKit
 
+private extension NSPasteboard.PasteboardType {
+    static let sidebarTaskID = Self("io.pinata.sidebar-task-id")
+}
+
 private final class SidebarTaskDocumentView: NSView {
     override var isFlipped: Bool { true }
+}
+
+@MainActor
+private final class SidebarTaskStackView: NSStackView {
+    var onMoveTask: ((UUID, UUID?, Bool, Bool) -> Void)?
+
+    private struct DropTarget {
+        let sourceID: UUID
+        let relativeTaskID: UUID?
+        let sectionPinned: Bool
+        let after: Bool
+        let edge: CGFloat
+    }
+
+    private let insertionLayer = CALayer()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        insertionLayer.cornerRadius = 1
+        registerForDraggedTypes([.sidebarTaskID])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is unavailable")
+    }
+
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        updateDropTarget(sender)?.operation ?? []
+    }
+
+    override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        updateDropTarget(sender)?.operation ?? []
+    }
+
+    override func draggingExited(_ sender: (any NSDraggingInfo)?) {
+        clearInsertionIndicator()
+    }
+
+    override func draggingEnded(_ sender: any NSDraggingInfo) {
+        clearInsertionIndicator()
+    }
+
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        defer { clearInsertionIndicator() }
+        guard let target = dropTarget(sender) else { return false }
+        onMoveTask?(
+            target.sourceID,
+            target.relativeTaskID,
+            target.after,
+            target.sectionPinned
+        )
+        return true
+    }
+
+    private func updateDropTarget(
+        _ sender: any NSDraggingInfo
+    ) -> (operation: NSDragOperation, target: DropTarget)? {
+        guard let target = dropTarget(sender) else {
+            clearInsertionIndicator()
+            return nil
+        }
+        if let source = arrangedSubviews
+            .compactMap({ $0 as? SidebarTaskGroupView })
+            .first(where: { $0.taskID == target.sourceID })
+        {
+            updateDraggingImage(sender, source: source)
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        insertionLayer.backgroundColor = AppTheme.panelAccentIcon.withAlphaComponent(0.55).cgColor
+        insertionLayer.frame = NSRect(
+            x: 0,
+            y: target.edge - 1,
+            width: bounds.width,
+            height: 2
+        )
+        if insertionLayer.superlayer == nil {
+            layer?.addSublayer(insertionLayer)
+        }
+        return (.move, target)
+    }
+
+    private func clearInsertionIndicator() {
+        insertionLayer.removeFromSuperlayer()
+    }
+
+    private func updateDraggingImage(
+        _ sender: any NSDraggingInfo,
+        source: SidebarTaskGroupView
+    ) {
+        let point = convert(sender.draggingLocation, from: nil)
+        let size = source.dragPreviewSize
+        let frame = NSRect(
+            x: point.x - size.width / 2,
+            y: point.y - size.height / 2,
+            width: size.width,
+            height: size.height
+        )
+        sender.enumerateDraggingItems(
+            options: [],
+            for: self,
+            classes: [NSPasteboardItem.self],
+            searchOptions: [:]
+        ) { item, _, stop in
+            item.setDraggingFrame(frame, contents: source.dragPreviewImage())
+            stop.pointee = true
+        }
+    }
+
+    private func dropTarget(
+        _ sender: any NSDraggingInfo
+    ) -> DropTarget? {
+        guard
+            let value = sender.draggingPasteboard.string(forType: .sidebarTaskID),
+            let sourceID = UUID(uuidString: value)
+        else { return nil }
+        let tasks = arrangedSubviews.compactMap { $0 as? SidebarTaskGroupView }
+        guard tasks.contains(where: { $0.taskID == sourceID }) else { return nil }
+        let point = convert(sender.draggingLocation, from: nil)
+        if let target = tasks.first(where: {
+            $0.frame.insetBy(dx: 0, dy: -3).contains(point)
+        }) {
+            let after = isFlipped ? point.y > target.frame.midY : point.y < target.frame.midY
+            let edge = after
+                ? (isFlipped ? target.frame.maxY : target.frame.minY)
+                : (isFlipped ? target.frame.minY : target.frame.maxY)
+            return DropTarget(
+                sourceID: sourceID,
+                relativeTaskID: target.taskID,
+                sectionPinned: target.isPinned,
+                after: after,
+                edge: edge
+            )
+        }
+        guard let header = arrangedSubviews
+            .compactMap({ $0 as? SidebarSectionHeaderView })
+            .first(where: { $0.frame.insetBy(dx: 0, dy: -6).contains(point) })
+        else { return nil }
+        return DropTarget(
+            sourceID: sourceID,
+            relativeTaskID: nil,
+            sectionPinned: header.isPinnedSection,
+            after: false,
+            edge: isFlipped ? header.frame.maxY : header.frame.minY
+        )
+    }
 }
 
 @MainActor
@@ -14,6 +167,7 @@ final class PanelViewController: NSViewController {
     var onToggleTaskExpansion: ((UUID) -> Void)?
     var onShowTaskMenu: ((UUID, NSRect) -> Void)?
     var onShowRepositoryMenu: ((TaskRepositoryScope, NSRect) -> Void)?
+    var onMoveTask: ((UUID, UUID?, Bool, Bool) -> Void)?
 
     private weak var trackingRoot: PanelTrackingView?
     private weak var leftHeader: LeftSidebarHeaderView?
@@ -21,7 +175,7 @@ final class PanelViewController: NSViewController {
     private let newTaskButton = SidebarNewTaskButton(frame: .zero)
     private let taskScrollView = NSScrollView()
     private let taskDocument = SidebarTaskDocumentView()
-    private let taskStack = NSStackView()
+    private let taskStack = SidebarTaskStackView()
     private var sizingTaskDocument = false
     private var newTaskTrailingConstraint: NSLayoutConstraint!
     private var taskStackTrailingConstraint: NSLayoutConstraint!
@@ -105,11 +259,15 @@ final class PanelViewController: NSViewController {
             $0.removeFromSuperview()
         }
 
-        func addHeader(_ title: String) {
-            let header = SidebarSectionHeaderView(title: title)
+        func addHeader(_ title: String, isPinnedSection: Bool) -> SidebarSectionHeaderView {
+            let header = SidebarSectionHeaderView(
+                title: title,
+                isPinnedSection: isPinnedSection
+            )
             taskStack.addArrangedSubview(header)
             header.widthAnchor.constraint(equalTo: taskStack.widthAnchor).isActive = true
             taskStack.setCustomSpacing(AppTheme.sidebarTaskListTopSpacing, after: header)
+            return header
         }
 
         func addTask(_ task: WorkspaceTask) {
@@ -147,15 +305,15 @@ final class PanelViewController: NSViewController {
         }
 
         let pinnedTasks = tasks.filter(\.isPinned)
-        if !pinnedTasks.isEmpty {
-            addHeader("PINNED")
-            pinnedTasks.forEach(addTask)
-            if let lastPinned = taskStack.arrangedSubviews.last {
-                taskStack.setCustomSpacing(AppTheme.sidebarSectionSpacing, after: lastPinned)
-            }
+        let pinnedHeader = addHeader("PINNED", isPinnedSection: true)
+        pinnedTasks.forEach(addTask)
+        if let lastPinned = taskStack.arrangedSubviews.last as? SidebarTaskGroupView {
+            taskStack.setCustomSpacing(AppTheme.sidebarSectionSpacing, after: lastPinned)
+        } else {
+            taskStack.setCustomSpacing(AppTheme.sidebarSectionSpacing, after: pinnedHeader)
         }
 
-        addHeader("TASKS")
+        _ = addHeader("TASKS", isPinnedSection: false)
         if let loadError {
             taskStack.addArrangedSubview(SidebarMessageView(loadError, error: true))
         }
@@ -204,6 +362,9 @@ final class PanelViewController: NSViewController {
         taskStack.orientation = .vertical
         taskStack.alignment = .leading
         taskStack.spacing = 2
+        taskStack.onMoveTask = { [weak self] sourceID, targetID, after, pinned in
+            self?.onMoveTask?(sourceID, targetID, after, pinned)
+        }
         taskDocument.addSubview(taskStack)
         scrollView.documentView = taskDocument
         view.addSubview(topHeader)
@@ -357,6 +518,7 @@ private final class SidebarTaskGroupView: NSStackView {
     var onShowRepositoryMenu: ((UUID, NSRect) -> Void)?
 
     let taskID: UUID
+    let isPinned: Bool
     private let taskRow: SidebarTaskRow
     private var repositoryRows: [SidebarRepositoryRow] = []
 
@@ -372,6 +534,7 @@ private final class SidebarTaskGroupView: NSStackView {
         repositoryErrors: [TaskRepositoryScope: String]
     ) {
         taskID = task.id
+        isPinned = task.isPinned
         let collapsedRepositoryError = expanded ? nil : task.repositories.lazy.compactMap {
             repositoryErrors[TaskRepositoryScope(
                 taskID: task.id,
@@ -379,6 +542,7 @@ private final class SidebarTaskGroupView: NSStackView {
             )]
         }.first
         taskRow = SidebarTaskRow(
+            taskID: task.id,
             title: task.title,
             hasRepositories: !task.repositories.isEmpty,
             expanded: expanded,
@@ -446,6 +610,12 @@ private final class SidebarTaskGroupView: NSStackView {
             )
         }
     }
+
+    var dragPreviewSize: NSSize { taskRow.bounds.size }
+
+    func dragPreviewImage() -> NSImage? {
+        taskRow.dragPreviewImage()
+    }
 }
 
 @MainActor
@@ -510,6 +680,46 @@ private final class SidebarTrailingActionOverlay: NSView {
 }
 
 @MainActor
+private final class SidebarTaskSelectButton: AppButton, NSDraggingSource {
+    var taskID: UUID?
+    var dragEnabled = true
+    var dragImage: (() -> NSImage?)?
+
+    override func mouseDown(with event: NSEvent) {
+        let origin = convert(event.locationInWindow, from: nil)
+        while let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
+            let point = convert(next.locationInWindow, from: nil)
+            if next.type == .leftMouseDragged,
+               dragEnabled,
+               hypot(point.x - origin.x, point.y - origin.y) >= 4 {
+                startDragging(with: next)
+                return
+            }
+            if next.type == .leftMouseUp {
+                if bounds.contains(point) { performClick(nil) }
+                return
+            }
+        }
+    }
+
+    func draggingSession(
+        _ session: NSDraggingSession,
+        sourceOperationMaskFor context: NSDraggingContext
+    ) -> NSDragOperation {
+        .move
+    }
+
+    private func startDragging(with event: NSEvent) {
+        guard let taskID else { return }
+        let pasteboardItem = NSPasteboardItem()
+        pasteboardItem.setString(taskID.uuidString, forType: .sidebarTaskID)
+        let item = NSDraggingItem(pasteboardWriter: pasteboardItem)
+        item.setDraggingFrame(bounds, contents: dragImage?())
+        beginDraggingSession(with: [item], event: event, source: self)
+    }
+}
+
+@MainActor
 private final class SidebarTaskRow: AppHoverView {
     var onSelect: (() -> Void)?
     var onToggleExpansion: (() -> Void)?
@@ -520,7 +730,7 @@ private final class SidebarTaskRow: AppHoverView {
     private var menuActive: Bool
     private let activity: String?
     private let error: String?
-    private let selectButton = AppButton(role: .hitTarget)
+    private let selectButton = SidebarTaskSelectButton(role: .hitTarget)
     private let disclosureButton = SidebarDisclosureButton(role: .icon)
     private let menuOverlay = SidebarTrailingActionOverlay()
     private var menuButton: SidebarMenuButton { menuOverlay.button }
@@ -530,6 +740,7 @@ private final class SidebarTaskRow: AppHoverView {
     private let statusLabel: NSTextField
 
     init(
+        taskID: UUID,
         title: String,
         hasRepositories: Bool,
         expanded: Bool,
@@ -565,6 +776,9 @@ private final class SidebarTaskRow: AppHoverView {
         }
         selectButton.target = self
         selectButton.action = #selector(selectTask)
+        selectButton.taskID = taskID
+        selectButton.dragEnabled = activity == nil
+        selectButton.dragImage = { [weak self] in self?.dragPreviewImage() }
         selectButton.setAccessibilityLabel(title)
         disclosureButton.role = selected ? .accentIcon : .hitTarget
         disclosureButton.image = hasRepositories
@@ -720,6 +934,34 @@ private final class SidebarTaskRow: AppHoverView {
             return menuButton
         }
         return selectButton
+    }
+
+    func dragPreviewImage() -> NSImage? {
+        let background = layer?.backgroundColor
+        let menuHidden = menuOverlay.isHidden
+        layer?.backgroundColor = NSColor.clear.cgColor
+        menuOverlay.isHidden = true
+        defer {
+            layer?.backgroundColor = background
+            menuOverlay.isHidden = menuHidden
+        }
+        if let bitmap = bitmapImageRepForCachingDisplay(in: bounds) {
+            cacheDisplay(in: bounds, to: bitmap)
+            let content = NSImage(size: bounds.size)
+            content.addRepresentation(bitmap)
+            let preview = NSImage(size: bounds.size)
+            preview.lockFocus()
+            AppTheme.controlBackground.setFill()
+            NSBezierPath(
+                roundedRect: bounds,
+                xRadius: AppTheme.workspaceControlCornerRadius,
+                yRadius: AppTheme.workspaceControlCornerRadius
+            ).fill()
+            content.draw(in: bounds)
+            preview.unlockFocus()
+            return preview
+        }
+        return nil
     }
 
     @objc private func selectTask() {
@@ -1221,9 +1463,11 @@ private final class SidebarBrandView: NSView {
 
 @MainActor
 private final class SidebarSectionHeaderView: NSView {
+    let isPinnedSection: Bool
     private let titleLabel: NSTextField
 
-    init(title: String) {
+    init(title: String, isPinnedSection: Bool) {
+        self.isPinnedSection = isPinnedSection
         titleLabel = NSTextField(labelWithString: title)
         super.init(frame: .zero)
         wantsLayer = true
