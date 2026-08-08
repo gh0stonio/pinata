@@ -47,7 +47,6 @@ enum AppTheme {
     static let workspaceCornerRadius: CGFloat = 10
     static let minimumCenterWidth: CGFloat = 480
     static let minimumWindowWidth: CGFloat = 1_250
-    static let edgeRevealWidth: CGFloat = 6
     static let resizeHandleWidth: CGFloat = 10
     static let keyboardResizeStep: CGFloat = 12
     static let panelSectionSpacing: CGFloat = 16
@@ -62,9 +61,6 @@ enum AppTheme {
     static let sidebarSectionTitleInset: CGFloat = 28
     static let sidebarItemInset: CGFloat = 10
     static let sidebarTaskRowHeight: CGFloat = 29
-    static func sidebarTrailingInset(for visualInset: CGFloat) -> CGFloat {
-        visualInset - resizeHandleWidth / 2
-    }
     static let sidebarDisclosureSymbolSize: CGFloat = 8
     static let sidebarDisclosureLeadingInset: CGFloat = 2
     static let sidebarDisclosureControlWidth: CGFloat = 18
