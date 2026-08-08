@@ -83,6 +83,8 @@ final class WorkspaceViewController: NSViewController {
     private var expandedTaskIDs = Set<UUID>()
     private var taskErrors: [UUID: String] = [:]
     private var repositoryErrors: [TaskRepositoryScope: String] = [:]
+    private var retryingRepositoryScopes = Set<TaskRepositoryScope>()
+    private var automaticProvisioningFocus: [UUID: TaskRepositoryScope] = [:]
     private var taskDeletionStates: [UUID: TaskDeletionState] = [:]
     private var repositoryRemovalStates: [TaskRepositoryScope: RepositoryRemovalState] = [:]
     private var taskLoadError: String?
@@ -569,7 +571,11 @@ final class WorkspaceViewController: NSViewController {
            let report = attachment.worktreeProvisioning,
            !report.succeeded {
             setWorkspaceHeaderVisible(false)
-            installWorktreeProvisioning(report, repositoryName: attachment.name)
+            installWorktreeProvisioning(
+                report,
+                repositoryName: attachment.name,
+                scope: scope
+            )
             return
         }
         guard let workspace = activeTerminalWorkspace else {
@@ -614,12 +620,16 @@ final class WorkspaceViewController: NSViewController {
 
     private func installWorktreeProvisioning(
         _ report: WorktreeProvisioningReport,
-        repositoryName: String
+        repositoryName: String,
+        scope: TaskRepositoryScope
     ) {
         let view = WorktreeProvisioningView(
             repositoryName: repositoryName,
             report: report
         )
+        view.onRetry = { [weak self] in
+            self?.retryWorktreeProvisioning(scope)
+        }
         view.translatesAutoresizingMaskIntoConstraints = false
         terminalHost.addSubview(view)
         NSLayoutConstraint.activate([
@@ -628,6 +638,85 @@ final class WorkspaceViewController: NSViewController {
             view.topAnchor.constraint(equalTo: terminalHost.topAnchor),
             view.bottomAnchor.constraint(equalTo: terminalHost.bottomAnchor),
         ])
+    }
+
+    private func retryWorktreeProvisioning(_ scope: TaskRepositoryScope) {
+        guard
+            let task = tasks.first(where: { $0.id == scope.taskID }),
+            let attachment = task.repositories.first(where: {
+                $0.repositoryID == scope.repositoryID
+            }),
+            let report = attachment.worktreeProvisioning,
+            report.failureMessage != nil,
+            taskDeletionStates[scope.taskID] == nil,
+            repositoryRemovalStates[scope] == nil,
+            retryingRepositoryScopes.insert(scope).inserted
+        else { return }
+        repositoryErrors.removeValue(forKey: scope)
+        updateTaskSidebar()
+
+        let repository: RegisteredRepository
+        do {
+            let repositories = try repositoryStore.load()
+            guard let match = repositories.first(where: { $0.id == scope.repositoryID }) else {
+                throw WorkspaceTaskError.repositoryUnavailable(attachment.name)
+            }
+            repository = match
+        } catch {
+            failWorktreeRetry(error.localizedDescription, report: report, for: scope)
+            return
+        }
+
+        Task { @MainActor [weak self] in
+            let failure = await Task.detached { [report, repository] in
+                do {
+                    try RepositoryInspector().removeWorktree(
+                        at: report.path,
+                        branchHint: report.branch,
+                        from: repository
+                    )
+                    return nil as String?
+                } catch {
+                    return error.localizedDescription
+                }
+            }.value
+            guard let self else { return }
+            retryingRepositoryScopes.remove(scope)
+            if let failure {
+                failWorktreeRetry(failure, report: report, for: scope)
+                return
+            }
+            guard
+                taskDeletionStates[scope.taskID] == nil,
+                repositoryRemovalStates[scope] == nil,
+                let currentTask = tasks.first(where: { $0.id == scope.taskID })
+            else {
+                updateTaskSidebar()
+                return
+            }
+            saveAndProvision([repository], for: currentTask)
+        }
+    }
+
+    private func failWorktreeRetry(
+        _ message: String,
+        report: WorktreeProvisioningReport,
+        for scope: TaskRepositoryScope
+    ) {
+        retryingRepositoryScopes.remove(scope)
+        updateWorktreeProvisioning(
+            WorktreeProvisioningReport(
+                path: report.path,
+                branch: report.branch,
+                baseBranch: report.baseBranch,
+                steps: [WorktreeProvisioningStep(
+                    title: "Prepare retry",
+                    status: .failed,
+                    detail: message
+                )]
+            ),
+            for: scope
+        )
     }
 
     private func closeTerminalTab(_ id: UUID) {
@@ -819,10 +908,12 @@ final class WorkspaceViewController: NSViewController {
             }
         }
         if let firstRepository = provisionableRepositories.first {
-            activeScope = .repository(TaskRepositoryScope(
+            let scope = TaskRepositoryScope(
                 taskID: task.id,
                 repositoryID: firstRepository.id
-            ))
+            )
+            activeScope = .repository(scope)
+            automaticProvisioningFocus[task.id] = scope
         }
         updateTaskSidebar()
         installActiveWorkspace()
@@ -1323,10 +1414,44 @@ final class WorkspaceViewController: NSViewController {
         } catch {
             repositoryErrors[scope] = error.localizedDescription
         }
+        let changedFocus = updateAutomaticProvisioningFocus(for: scope.taskID)
         updateTaskSidebar()
-        if activeScope == .repository(scope) {
+        if changedFocus || activeScope == .repository(scope) {
             installActiveWorkspace()
         }
+    }
+
+    private func updateAutomaticProvisioningFocus(for taskID: UUID) -> Bool {
+        guard let focusedScope = automaticProvisioningFocus[taskID] else { return false }
+        guard activeScope == .repository(focusedScope) else {
+            automaticProvisioningFocus.removeValue(forKey: taskID)
+            return false
+        }
+        guard let task = tasks.first(where: { $0.id == taskID }) else {
+            automaticProvisioningFocus.removeValue(forKey: taskID)
+            return false
+        }
+        guard let focusedAttachment = task.repositories.first(where: {
+            $0.repositoryID == focusedScope.repositoryID
+        }) else {
+            automaticProvisioningFocus.removeValue(forKey: taskID)
+            return false
+        }
+        if focusedAttachment.worktreePath != nil {
+            automaticProvisioningFocus.removeValue(forKey: taskID)
+            return false
+        }
+        guard focusedAttachment.worktreeProvisioning?.failureMessage != nil else { return false }
+        guard let successfulAttachment = task.repositories.first(where: {
+            $0.worktreePath != nil
+        }) else { return false }
+
+        activeScope = .repository(TaskRepositoryScope(
+            taskID: taskID,
+            repositoryID: successfulAttachment.repositoryID
+        ))
+        automaticProvisioningFocus.removeValue(forKey: taskID)
+        return true
     }
 
     private func storeWorktreeProvisioning(
@@ -1360,6 +1485,7 @@ final class WorkspaceViewController: NSViewController {
 
     private func selectTask(_ taskID: UUID) {
         guard tasks.contains(where: { $0.id == taskID }) else { return }
+        automaticProvisioningFocus.removeValue(forKey: taskID)
         if settingsController != nil { dismissSettings() }
         activeScope = .task(taskID)
         if let task = tasks.first(where: { $0.id == taskID }), !task.repositories.isEmpty {
@@ -1374,6 +1500,7 @@ final class WorkspaceViewController: NSViewController {
             let task = tasks.first(where: { $0.id == scope.taskID }),
             let attachment = task.repositories.first(where: { $0.repositoryID == scope.repositoryID })
         else { return }
+        automaticProvisioningFocus.removeValue(forKey: scope.taskID)
         if settingsController != nil { dismissSettings() }
         activeScope = .repository(scope)
         expandedTaskIDs.insert(scope.taskID)
@@ -1446,16 +1573,37 @@ final class WorkspaceViewController: NSViewController {
     }
 
     private func updateTaskSidebar() {
-        let repositoryActivities = repositoryRemovalStates.compactMapValues { state in
+        var displayedRepositoryErrors = repositoryErrors
+        for task in tasks {
+            for repository in task.repositories {
+                guard let failure = repository.worktreeProvisioning?.failureMessage else { continue }
+                let scope = TaskRepositoryScope(
+                    taskID: task.id,
+                    repositoryID: repository.repositoryID
+                )
+                if displayedRepositoryErrors[scope] == nil {
+                    displayedRepositoryErrors[scope] = failure
+                }
+            }
+        }
+        var repositoryActivities = repositoryRemovalStates.compactMapValues { state in
             if case .removing = state { "detaching" } else { nil }
+        }
+        for scope in retryingRepositoryScopes where repositoryActivities[scope] == nil {
+            repositoryActivities[scope] = "retrying"
         }
         var taskActivities = taskDeletionStates.compactMapValues { state in
             if case .deleting = state { "deleting" } else { nil }
         }
         for task in tasks where taskActivities[task.id] == nil {
-            if repositoryActivities.keys.contains(where: { $0.taskID == task.id }) {
+            let repositoryActivityValues = repositoryActivities.compactMap {
+                $0.key.taskID == task.id ? $0.value : nil
+            }
+            if repositoryActivityValues.contains("detaching") {
                 taskActivities[task.id] = "detaching"
-            } else if task.repositories.contains(where: {
+            } else if repositoryActivityValues.contains("retrying") {
+                taskActivities[task.id] = "retrying"
+            } else if !expandedTaskIDs.contains(task.id), task.repositories.contains(where: {
                 guard let report = $0.worktreeProvisioning else { return false }
                 return !report.succeeded && report.failureMessage == nil
             }) {
@@ -1469,7 +1617,7 @@ final class WorkspaceViewController: NSViewController {
             taskActivities: taskActivities,
             repositoryActivities: repositoryActivities,
             taskErrors: taskErrors,
-            repositoryErrors: repositoryErrors,
+            repositoryErrors: displayedRepositoryErrors,
             loadError: taskLoadError
         )
     }
@@ -1856,6 +2004,8 @@ final class WorkspaceViewController: NSViewController {
 
 @MainActor
 private final class WorktreeProvisioningView: NSView, SettingsThemeApplying {
+    var onRetry: (() -> Void)?
+
     private let content = NSStackView()
     private let artwork: WorkspaceEmptyArtworkView
     private let repositoryLabel: NSTextField
@@ -1926,7 +2076,20 @@ private final class WorktreeProvisioningView: NSView, SettingsThemeApplying {
             content.setCustomSpacing(12, after: currentAction)
             content.addArrangedSubview(detailLabel)
             detailLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 480).isActive = true
+            content.setCustomSpacing(24, after: detailLabel)
+            let retryButton = WorkspaceEmptyActionButton(
+                title: "Retry",
+                symbolName: "arrow.clockwise"
+            )
+            retryButton.target = self
+            retryButton.action = #selector(retry(_:))
+            content.addArrangedSubview(retryButton)
         }
+    }
+
+    @objc private func retry(_ sender: AppButton) {
+        sender.isEnabled = false
+        onRetry?()
     }
 
     private static func visibleStep(in report: WorktreeProvisioningReport) -> WorktreeProvisioningStep {
