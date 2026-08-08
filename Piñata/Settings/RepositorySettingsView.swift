@@ -47,7 +47,7 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
 
     func applyTheme() {
         page.applyTheme()
-        errorLabel.textColor = .systemRed
+        errorLabel.textColor = AppTheme.error
         errorLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsBody)
         registerAction.applyTheme()
         repositoryRows.arrangedSubviews.compactMap { $0 as? SettingsThemeApplying }.forEach {

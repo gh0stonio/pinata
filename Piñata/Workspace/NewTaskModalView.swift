@@ -376,9 +376,9 @@ private final class NewTaskRepositoryEmptyView: NSView {
     func applyTheme() {
         layer?.backgroundColor = AppTheme.chromeBackground.cgColor
         layer?.borderColor = AppTheme.border.cgColor
-        icon.contentTintColor = error ? .systemRed : AppTheme.tertiaryText
+        icon.contentTintColor = error ? AppTheme.error : AppTheme.tertiaryText
         messageLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsBody)
-        messageLabel.textColor = error ? .systemRed : AppTheme.tertiaryText
+        messageLabel.textColor = error ? AppTheme.error : AppTheme.tertiaryText
     }
 }
 
@@ -543,7 +543,7 @@ private final class NewTaskActionButton: AppButton {
 
     override func applyTheme() {
         if destructive {
-            let color = isEnabled ? NSColor.systemRed : AppTheme.tertiaryText
+            let color = isEnabled ? AppTheme.error : AppTheme.tertiaryText
             layer?.backgroundColor = (isHovering
                 ? color.withAlphaComponent(0.28)
                 : color.withAlphaComponent(0.18)).cgColor
