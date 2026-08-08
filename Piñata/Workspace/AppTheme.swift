@@ -49,7 +49,7 @@ enum AppTheme {
     static let minimumWindowWidth: CGFloat = 1_250
     static let resizeHandleWidth: CGFloat = 10
     static let keyboardResizeStep: CGFloat = 12
-    static let panelSectionSpacing: CGFloat = 16
+    static let sidebarSectionSpacing: CGFloat = 20
     static let sidebarBrandSize: CGFloat = 34
     static let sidebarToggleLeading: CGFloat = 82
     static let fullScreenSidebarToggleLeading: CGFloat = 12

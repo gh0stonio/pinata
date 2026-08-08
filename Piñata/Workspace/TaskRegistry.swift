@@ -29,17 +29,33 @@ struct WorkspaceTask: Codable, Equatable, Identifiable, Sendable {
     let title: String
     let repositories: [TaskRepositoryAttachment]
     let createdAt: Date
+    let isPinned: Bool
 
     init(
         id: UUID = UUID(),
         title: String,
         repositories: [TaskRepositoryAttachment] = [],
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        isPinned: Bool = false
     ) {
         self.id = id
         self.title = title
         self.repositories = repositories
         self.createdAt = createdAt
+        self.isPinned = isPinned
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, repositories, createdAt, isPinned
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(UUID.self, forKey: .id)
+        title = try values.decode(String.self, forKey: .title)
+        repositories = try values.decode([TaskRepositoryAttachment].self, forKey: .repositories)
+        createdAt = try values.decode(Date.self, forKey: .createdAt)
+        isPinned = try values.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
     }
 }
 

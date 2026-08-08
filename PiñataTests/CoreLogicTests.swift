@@ -23,7 +23,8 @@ final class CoreLogicTests: XCTestCase {
             title: "Build task sidebar",
             repositories: [
                 TaskRepositoryAttachment(repositoryID: repository.id, name: repository.name),
-            ]
+            ],
+            isPinned: true
         )
         let taskStore = TaskRegistryStore(fileURL: taskFileURL)
 
@@ -34,6 +35,16 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertEqual(try taskStore.load(), [task])
         try Data("{".utf8).write(to: taskFileURL)
         XCTAssertThrowsError(try taskStore.load())
+    }
+
+    func testOlderTasksDefaultToUnpinned() throws {
+        let id = UUID()
+        let data = Data(
+            #"[{"id":"\#(id.uuidString)","title":"Legacy","repositories":[],"createdAt":0}]"#.utf8
+        )
+
+        let task = try XCTUnwrap(JSONDecoder().decode([WorkspaceTask].self, from: data).first)
+        XCTAssertFalse(task.isPinned)
     }
 
     func testOlderSettingsKeepNewFieldDefaults() throws {
@@ -300,7 +311,8 @@ final class CoreLogicTests: XCTestCase {
             title: "Clickable task",
             repositories: [
                 TaskRepositoryAttachment(repositoryID: repositoryID, name: "clickable-repo"),
-            ]
+            ],
+            isPinned: true
         )
         let controller = PanelViewController()
         controller.view.frame = NSRect(x: 0, y: 0, width: 264, height: 700)
@@ -334,6 +346,12 @@ final class CoreLogicTests: XCTestCase {
             let button = try XCTUnwrap(controller.view.hitTest(location) as? NSButton)
             button.performClick(nil)
         }
+
+        let labels = descendants(of: controller.view)
+            .compactMap { $0 as? NSTextField }
+            .map(\.stringValue)
+        XCTAssertTrue(labels.contains("PINNED"))
+        XCTAssertTrue(labels.contains("TASKS"))
 
         try clickLabel(task.title)
         XCTAssertEqual(selectedTaskID, task.id)
