@@ -176,7 +176,6 @@ final class PanelViewController: NSViewController {
     private let taskScrollView = NSScrollView()
     private let taskDocument = SidebarTaskDocumentView()
     private let taskStack = SidebarTaskStackView()
-    private var sizingTaskDocument = false
     private var newTaskTrailingConstraint: NSLayoutConstraint!
     private var taskStackTrailingConstraint: NSLayoutConstraint!
     private var taskMenuTaskID: UUID?
@@ -193,7 +192,6 @@ final class PanelViewController: NSViewController {
 
     override func loadView() {
         let rootView = PanelTrackingView()
-        rootView.translatesAutoresizingMaskIntoConstraints = false
         rootView.wantsLayer = true
         rootView.layer?.backgroundColor = AppTheme.chromeBackground.cgColor
         rootView.setAccessibilityRole(.group)
@@ -205,11 +203,6 @@ final class PanelViewController: NSViewController {
         view = rootView
 
         installLeftPanel()
-    }
-
-    override func viewDidLayout() {
-        super.viewDidLayout()
-        sizeTaskDocumentToViewport()
     }
 
     func setToggleActive(_ active: Bool) {
@@ -304,26 +297,35 @@ final class PanelViewController: NSViewController {
             group.widthAnchor.constraint(equalTo: taskStack.widthAnchor).isActive = true
         }
 
+        func addMessage(_ message: String, error: Bool) -> SidebarMessageView {
+            let view = SidebarMessageView(message, error: error)
+            taskStack.addArrangedSubview(view)
+            view.widthAnchor.constraint(equalTo: taskStack.widthAnchor).isActive = true
+            return view
+        }
+
         let pinnedTasks = tasks.filter(\.isPinned)
         let pinnedHeader = addHeader("PINNED", isPinnedSection: true)
-        pinnedTasks.forEach(addTask)
-        if let lastPinned = taskStack.arrangedSubviews.last as? SidebarTaskGroupView {
-            taskStack.setCustomSpacing(AppTheme.sidebarSectionSpacing, after: lastPinned)
+        if pinnedTasks.isEmpty {
+            _ = addMessage("No pinned tasks yet.", error: false)
         } else {
-            taskStack.setCustomSpacing(AppTheme.sidebarSectionSpacing, after: pinnedHeader)
+            pinnedTasks.forEach(addTask)
         }
+        taskStack.setCustomSpacing(
+            AppTheme.sidebarSectionSpacing,
+            after: taskStack.arrangedSubviews.last ?? pinnedHeader
+        )
 
         _ = addHeader("TASKS", isPinnedSection: false)
         if let loadError {
-            taskStack.addArrangedSubview(SidebarMessageView(loadError, error: true))
+            _ = addMessage(loadError, error: true)
         }
         if tasks.isEmpty, loadError == nil {
-            taskStack.addArrangedSubview(SidebarMessageView("No tasks yet.", error: false))
+            _ = addMessage("No tasks yet.", error: false)
         } else {
             tasks.filter { !$0.isPinned }.forEach(addTask)
         }
         applyTheme()
-        sizeTaskDocumentToViewport()
     }
 
     func setTaskMenuTask(_ taskID: UUID?) {
@@ -357,8 +359,7 @@ final class PanelViewController: NSViewController {
         scrollView.autohidesScrollers = true
         scrollView.scrollerStyle = .overlay
         scrollView.horizontalScrollElasticity = .none
-        taskDocument.translatesAutoresizingMaskIntoConstraints = true
-        taskDocument.autoresizingMask = [.width]
+        taskDocument.translatesAutoresizingMaskIntoConstraints = false
         taskStack.translatesAutoresizingMaskIntoConstraints = false
         taskStack.orientation = .vertical
         taskStack.alignment = .leading
@@ -415,29 +416,18 @@ final class PanelViewController: NSViewController {
                 constant: AppTheme.sidebarNewTaskBottomSpacing
             ),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            taskDocument.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            taskDocument.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            taskDocument.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+            taskDocument.heightAnchor.constraint(greaterThanOrEqualTo: scrollView.contentView.heightAnchor),
             taskStack.leadingAnchor.constraint(
                 equalTo: taskDocument.leadingAnchor,
                 constant: AppTheme.sidebarItemInset
             ),
             taskStackTrailingConstraint,
             taskStack.topAnchor.constraint(equalTo: taskDocument.topAnchor),
+            taskDocument.bottomAnchor.constraint(greaterThanOrEqualTo: taskStack.bottomAnchor),
         ])
-    }
-
-    private func sizeTaskDocumentToViewport() {
-        guard !sizingTaskDocument else { return }
-        let viewport = taskScrollView.contentView.bounds.size
-        guard viewport.width > 0, viewport.height > 0 else { return }
-        sizingTaskDocument = true
-        defer { sizingTaskDocument = false }
-        taskDocument.setFrameSize(
-            NSSize(width: viewport.width, height: max(viewport.height, taskDocument.frame.height))
-        )
-        taskDocument.layoutSubtreeIfNeeded()
-        let contentHeight = taskStack.fittingSize.height
-        taskDocument.setFrameSize(
-            NSSize(width: viewport.width, height: max(viewport.height, contentHeight))
-        )
     }
 }
 

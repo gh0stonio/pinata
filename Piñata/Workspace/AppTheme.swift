@@ -543,10 +543,23 @@ class AppHoverView: NSView {
         setHovering(false)
     }
 
+    func refreshHoverState() {
+        updateHoverStateForCurrentPointer()
+    }
+
     private func setHovering(_ hovering: Bool) {
         guard isHovering != hovering else { return }
         isHovering = hovering
         hoverStateDidChange()
+    }
+
+    private func updateHoverStateForCurrentPointer() {
+        guard let window else {
+            setHovering(false)
+            return
+        }
+        let pointInWindow = window.convertPoint(fromScreen: NSEvent.mouseLocation)
+        setHovering(bounds.contains(convert(pointInWindow, from: nil)))
     }
 }
 
