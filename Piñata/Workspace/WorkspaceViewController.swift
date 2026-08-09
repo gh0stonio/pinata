@@ -28,6 +28,7 @@ final class WorkspaceViewController: NSViewController {
     private final class TerminalWorkspace {
         let title: String
         let workingDirectory: String
+        let target: TerminalTarget
         var tabs: [TerminalTab]
         var activeTabID: UUID?
         var nextTabNumber = 2
@@ -36,10 +37,12 @@ final class WorkspaceViewController: NSViewController {
             runtime: GhosttyRuntime,
             title: String,
             workingDirectory: String,
+            target: TerminalTarget = .local,
             startsWithTab: Bool = true
         ) {
             self.title = title
             self.workingDirectory = workingDirectory
+            self.target = target
             if startsWithTab {
                 let tabID = UUID()
                 tabs = [
@@ -48,7 +51,8 @@ final class WorkspaceViewController: NSViewController {
                         title: title,
                         controller: TerminalViewController(
                             runtime: runtime,
-                            workingDirectory: workingDirectory
+                            workingDirectory: workingDirectory,
+                            target: target
                         )
                     )
                 ]
@@ -62,6 +66,7 @@ final class WorkspaceViewController: NSViewController {
         init(runtime: GhosttyRuntime, snapshot: StoredTerminalWorkspace) {
             title = snapshot.title
             workingDirectory = snapshot.workingDirectory
+            target = snapshot.tabs.first?.terminal.panes.first?.target ?? .local
             tabs = snapshot.tabs.compactMap { tab in
                 guard tab.terminal.isValid else { return nil }
                 return TerminalTab(
@@ -111,6 +116,7 @@ final class WorkspaceViewController: NSViewController {
     private let taskStore: TaskRegistryStore
     private let sessionStore = AppSessionStore()
     private let repositoryStore = RepositoryRegistryStore()
+    private let sshConnectionStore = SSHConnectionStore()
     private var taskWorkspaces: [UUID: TerminalWorkspace] = [:]
     private var repositoryWorkspaces: [TaskRepositoryScope: TerminalWorkspace] = [:]
     private var tasks: [WorkspaceTask]
@@ -302,7 +308,8 @@ final class WorkspaceViewController: NSViewController {
             title: isFirstTab ? workspace.title : "\(workspace.title) \(workspace.nextTabNumber)",
             controller: TerminalViewController(
                 runtime: runtime,
-                workingDirectory: workspace.workingDirectory
+                workingDirectory: workspace.workingDirectory,
+                target: workspace.target
             )
         )
         if !isFirstTab {
@@ -327,17 +334,23 @@ final class WorkspaceViewController: NSViewController {
         }
 
         let repositories: [RegisteredRepository]
+        let connections: [UUID: SSHConnection]
         let repositoryError: String?
         do {
             repositories = try repositoryStore.load()
+            connections = Dictionary(
+                uniqueKeysWithValues: ((try? sshConnectionStore.load()) ?? []).map { ($0.id, $0) }
+            )
             repositoryError = nil
         } catch {
             repositories = []
+            connections = [:]
             repositoryError = "Could not load repositories: \(error.localizedDescription)"
         }
 
         let modal = NewTaskModalView(
             repositories: repositories,
+            connections: connections,
             repositoryError: repositoryError,
             editingTask: editingTask
         )
@@ -740,12 +753,14 @@ final class WorkspaceViewController: NSViewController {
         updateTaskSidebar()
 
         let repository: RegisteredRepository
+        let connection: SSHConnection?
         do {
             let repositories = try repositoryStore.load()
             guard let match = repositories.first(where: { $0.id == scope.repositoryID }) else {
                 throw WorkspaceTaskError.repositoryUnavailable(attachment.name)
             }
             repository = match
+            connection = try sshConnection(for: repository)
         } catch {
             failWorktreeRetry(error.localizedDescription, report: report, for: scope)
             return
@@ -757,7 +772,8 @@ final class WorkspaceViewController: NSViewController {
                     try RepositoryInspector().removeWorktree(
                         at: report.path,
                         branchHint: report.branch,
-                        from: repository
+                        from: repository,
+                        connection: connection
                     )
                     return nil as String?
                 } catch {
@@ -980,10 +996,20 @@ final class WorkspaceViewController: NSViewController {
         }
 
         let worktreeBasePath = RepositoryDefaultsStore().loadWorktreeBasePath()
-        let provisioner = WorktreeProvisioner(globalBasePath: worktreeBasePath)
-        var provisionableRepositories: [RegisteredRepository] = []
+        var provisionableRepositories: [(repository: RegisteredRepository, connection: SSHConnection?)] = []
         for repository in repositories {
             let scope = TaskRepositoryScope(taskID: task.id, repositoryID: repository.id)
+            let connection: SSHConnection?
+            do {
+                connection = try sshConnection(for: repository)
+            } catch {
+                repositoryErrors[scope] = error.localizedDescription
+                continue
+            }
+            let provisioner = WorktreeProvisioner(
+                globalBasePath: worktreeBasePath,
+                connection: connection
+            )
             let report = provisioner.preparing(
                 repository: repository,
                 taskID: task.id,
@@ -991,12 +1017,12 @@ final class WorkspaceViewController: NSViewController {
             )
             do {
                 try storeWorktreeProvisioning(report, for: scope)
-                provisionableRepositories.append(repository)
+                provisionableRepositories.append((repository, connection))
             } catch {
                 repositoryErrors[scope] = error.localizedDescription
             }
         }
-        if let firstRepository = provisionableRepositories.first {
+        if let firstRepository = provisionableRepositories.first?.repository {
             let scope = TaskRepositoryScope(
                 taskID: task.id,
                 repositoryID: firstRepository.id
@@ -1011,14 +1037,16 @@ final class WorkspaceViewController: NSViewController {
         let updates = AsyncStream<(TaskRepositoryScope, WorktreeProvisioningReport)> { continuation in
             Task.detached { [provisionableRepositories, task, worktreeBasePath] in
                 await withTaskGroup(of: Void.self) { group in
-                    for repository in provisionableRepositories {
+                    for item in provisionableRepositories {
                         group.addTask {
+                            let repository = item.repository
                             let scope = TaskRepositoryScope(
                                 taskID: task.id,
                                 repositoryID: repository.id
                             )
                             let provisioner = WorktreeProvisioner(
-                                globalBasePath: worktreeBasePath
+                                globalBasePath: worktreeBasePath,
+                                connection: item.connection
                             )
                             _ = provisioner.provision(
                                 repository: repository,
@@ -1141,23 +1169,34 @@ final class WorkspaceViewController: NSViewController {
         dismissTaskActionMenu()
         dismissRepositoryActionMenu()
         leftPanelController.setRepositoryMenuScope(scope)
+        let isRemote: Bool
+        if let repository = try? repositoryStore.load().first(where: { $0.id == attachment.repositoryID }),
+           case .ssh = repository.target {
+            isRemote = true
+        } else {
+            isRemote = false
+        }
 
-        let menu = SidebarActionMenuView(items: [
+        var items: [SidebarActionMenuView.Item] = [
             .init(title: "Copy branch name", symbol: "doc.on.doc"),
-            .init(title: "Reveal worktree", symbol: "folder"),
-            .init(title: "Detach from task…", symbol: "xmark.circle", destructive: true),
-        ])
+        ]
+        if !isRemote {
+            items.append(.init(title: "Reveal worktree", symbol: "folder"))
+        }
+        items.append(.init(title: "Detach from task…", symbol: "xmark.circle", destructive: true))
+        let menu = SidebarActionMenuView(items: items)
         menu.onSelect = { [weak self] index in
             self?.dismissRepositoryActionMenu()
             switch index {
             case 0: self?.copyBranchName(attachment)
+            case 1 where isRemote: self?.confirmRepositoryRemoval(scope)
             case 1: self?.revealWorktree(attachment)
             case 2: self?.confirmRepositoryRemoval(scope)
             default: break
             }
         }
         let anchor = view.convert(anchorRect, from: nil)
-        let size = NSSize(width: 220, height: 110)
+        let size = NSSize(width: 220, height: isRemote ? 76 : 110)
         menu.frame = NSRect(
             x: min(anchor.maxX + 6, view.bounds.maxX - size.width - 8),
             y: min(max(8, anchor.maxY - size.height), view.bounds.maxY - size.height - 8),
@@ -1323,7 +1362,8 @@ final class WorkspaceViewController: NSViewController {
                 }
             }
 
-            let errorMessage = await Task.detached { [attachments, registeredRepositories] in
+            let connections = (try? sshConnectionStore.load()) ?? []
+            let errorMessage = await Task.detached { [attachments, registeredRepositories, connections] in
                 let repositoriesByID = Dictionary(
                     uniqueKeysWithValues: registeredRepositories.map { ($0.id, $0) }
                 )
@@ -1334,11 +1374,21 @@ final class WorkspaceViewController: NSViewController {
                         guard let repository = repositoriesByID[attachment.repositoryID] else {
                             throw WorkspaceTaskError.repositoryUnavailable(attachment.name)
                         }
+                        let connection: SSHConnection?
+                        if case .ssh(let connectionID) = repository.target {
+                            guard let value = connections.first(where: { $0.id == connectionID }) else {
+                                throw WorkspaceTaskError.repositoryUnavailable(attachment.name)
+                            }
+                            connection = value
+                        } else {
+                            connection = nil
+                        }
                         try RepositoryInspector().removeWorktree(
                             at: path,
                             branchHint: attachment.branch
                                 ?? attachment.worktreeProvisioning?.branch,
-                            from: repository
+                            from: repository,
+                            connection: connection
                         )
                     }
                     return nil as String?
@@ -1410,6 +1460,7 @@ final class WorkspaceViewController: NSViewController {
 
             if let path = attachment.worktreePath ?? attachment.worktreeProvisioning?.path {
                 let repository: RegisteredRepository
+                let connection: SSHConnection?
                 do {
                     guard let match = try repositoryStore.load().first(where: {
                         $0.id == attachment.repositoryID
@@ -1417,6 +1468,7 @@ final class WorkspaceViewController: NSViewController {
                         throw WorkspaceTaskError.repositoryUnavailable(attachment.name)
                     }
                     repository = match
+                    connection = try sshConnection(for: repository)
                 } catch {
                     failRepositoryRemoval(scope, message: error.localizedDescription)
                     return
@@ -1427,7 +1479,8 @@ final class WorkspaceViewController: NSViewController {
                             at: path,
                             branchHint: attachment.branch
                                 ?? attachment.worktreeProvisioning?.branch,
-                            from: repository
+                            from: repository,
+                            connection: connection
                         )
                         return nil as String?
                     } catch {
@@ -1528,7 +1581,8 @@ final class WorkspaceViewController: NSViewController {
                 try installRepositoryWorkspace(
                     for: scope,
                     name: attachment.name,
-                    workingDirectory: report.path
+                    workingDirectory: report.path,
+                    target: try terminalTarget(for: registeredRepository(id: scope.repositoryID))
                 )
                 repositoryErrors.removeValue(forKey: scope)
             } else {
@@ -1653,10 +1707,12 @@ final class WorkspaceViewController: NSViewController {
                     throw WorkspaceTaskError.repositoryUnavailable(attachment.name)
                 }
                 let workingDirectory = attachment.worktreePath ?? repository.path
+                let target = try terminalTarget(for: repository)
                 try installRepositoryWorkspace(
                     for: scope,
                     name: attachment.name,
                     workingDirectory: workingDirectory,
+                    target: target,
                     startsWithTab: false
                 )
                 repositoryErrors.removeValue(forKey: scope)
@@ -1673,19 +1729,48 @@ final class WorkspaceViewController: NSViewController {
         for scope: TaskRepositoryScope,
         name: String,
         workingDirectory: String,
+        target: TerminalTarget = .local,
         startsWithTab: Bool = true
     ) throws {
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: workingDirectory, isDirectory: &isDirectory),
-              isDirectory.boolValue else {
-            throw WorkspaceTaskError.repositoryUnavailable(name)
+        if case .local = target {
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: workingDirectory, isDirectory: &isDirectory),
+                  isDirectory.boolValue else {
+                throw WorkspaceTaskError.repositoryUnavailable(name)
+            }
         }
         repositoryWorkspaces[scope] = TerminalWorkspace(
             runtime: runtime,
             title: "~/\(name)",
             workingDirectory: workingDirectory,
+            target: target,
             startsWithTab: startsWithTab
         )
+    }
+
+    private func sshConnection(for repository: RegisteredRepository) throws -> SSHConnection? {
+        guard case .ssh(let connectionID) = repository.target else { return nil }
+        guard let connection = try sshConnectionStore.load().first(where: { $0.id == connectionID }) else {
+            throw WorkspaceTaskError.repositoryUnavailable(repository.name)
+        }
+        guard connection.isEnabled else {
+            throw WorkspaceTaskError.repositoryUnavailable(repository.name)
+        }
+        return connection
+    }
+
+    private func terminalTarget(for repository: RegisteredRepository) throws -> TerminalTarget {
+        if let connection = try sshConnection(for: repository) {
+            return .ssh(connection)
+        }
+        return .local
+    }
+
+    private func registeredRepository(id: UUID) throws -> RegisteredRepository {
+        guard let repository = try repositoryStore.load().first(where: { $0.id == id }) else {
+            throw WorkspaceTaskError.repositoryUnavailable("repository")
+        }
+        return repository
     }
 
     private func toggleTaskExpansion(_ taskID: UUID) {
@@ -1727,6 +1812,14 @@ final class WorkspaceViewController: NSViewController {
     }
 
     private func updateTaskSidebar() {
+        let repositoryTargets: [UUID: RepositoryTarget]
+        do {
+            repositoryTargets = try Dictionary(
+                uniqueKeysWithValues: repositoryStore.load().map { ($0.id, $0.target) }
+            )
+        } catch {
+            repositoryTargets = [:]
+        }
         var displayedRepositoryErrors = repositoryErrors
         for task in tasks {
             for repository in task.repositories {
@@ -1770,6 +1863,7 @@ final class WorkspaceViewController: NSViewController {
             expandedTaskIDs: expandedTaskIDs,
             taskActivities: taskActivities,
             repositoryActivities: repositoryActivities,
+            repositoryTargets: repositoryTargets,
             taskErrors: taskErrors,
             repositoryErrors: displayedRepositoryErrors,
             loadError: taskLoadError

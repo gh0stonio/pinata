@@ -24,6 +24,7 @@ final class SettingsViewController: NSViewController {
         terminalFontControl: terminalFontControl
     )
     private let gitContent = RepositorySettingsView()
+    private let connectionsContent = ConnectionsSettingsView()
     private lazy var navigationGroups = [
         SettingsNavigationGroup(
             title: "PERSONAL",
@@ -45,6 +46,14 @@ final class SettingsViewController: NSViewController {
                     title: "Git",
                     image: GitPullRequestIcon.image,
                     content: gitContent
+                ),
+                SettingsPageItem(
+                    title: "Connections",
+                    image: NSImage(
+                        systemSymbolName: "network",
+                        accessibilityDescription: nil
+                    ) ?? NSImage(),
+                    content: connectionsContent
                 ),
             ]
         ),

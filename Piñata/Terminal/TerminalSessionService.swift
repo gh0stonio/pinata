@@ -39,7 +39,7 @@ enum TerminalSessionPaths {
 
 final class TerminalSessionClient: @unchecked Sendable {
     private let id: UUID
-    private let workingDirectory: String
+    private let launchConfiguration: TerminalLaunchConfiguration
     private let queue: DispatchQueue
     private var socketFD: Int32 = -1
     private var source: DispatchSourceRead?
@@ -54,9 +54,9 @@ final class TerminalSessionClient: @unchecked Sendable {
     private var reportedConnectionFailure = false
 
     var onOutput: ((Data) -> Void)?
-    init(id: UUID, workingDirectory: String) {
+    init(id: UUID, launchConfiguration: TerminalLaunchConfiguration) {
         self.id = id
-        self.workingDirectory = workingDirectory
+        self.launchConfiguration = launchConfiguration
         queue = DispatchQueue(label: "dev.pinata.terminal-client.\(id.uuidString)")
     }
 
@@ -121,10 +121,14 @@ final class TerminalSessionClient: @unchecked Sendable {
         }
         let process = Process()
         process.executableURL = executableURL
+        guard let launchData = try? JSONEncoder().encode(launchConfiguration) else {
+            report("Could not encode the terminal launch configuration.")
+            return
+        }
         process.arguments = [
             "--pinata-terminal-service",
             id.uuidString,
-            workingDirectory,
+            launchData.base64EncodedString(),
         ]
         var environment = ProcessInfo.processInfo.environment
         environment["TERM"] = "xterm-ghostty"
@@ -296,32 +300,59 @@ private final class TerminalServiceClient {
 private final class ChildLaunchConfiguration {
     private let workingDirectory: UnsafeMutablePointer<CChar>
     private let shellPath: UnsafeMutablePointer<CChar>
+    private let sshPath: UnsafeMutablePointer<CChar>?
     private let terminfoPath: UnsafeMutablePointer<CChar>?
     private let arguments: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>
+    private let argumentCount: Int
     private let termKey = strdup("TERM")!
     private let termValue = strdup("xterm-ghostty")!
     private let terminfoKey = strdup("TERMINFO")!
 
-    init(workingDirectory: String) {
+    init(launchConfiguration: TerminalLaunchConfiguration) {
+        let workingDirectory = launchConfiguration.workingDirectory
         self.workingDirectory = strdup(workingDirectory)!
         let shell = UserShell.loginPath
         shellPath = strdup(shell)!
-        let shellName = URL(fileURLWithPath: shell).lastPathComponent
         terminfoPath = Bundle.main.url(forResource: "terminfo", withExtension: nil).map {
             strdup($0.path)
         }
-        arguments = .allocate(capacity: 3)
-        arguments[0] = strdup(shellName)
-        arguments[1] = strdup("-l")
-        arguments[2] = nil
+        switch launchConfiguration.target {
+        case .local:
+            sshPath = nil
+            let shellName = URL(fileURLWithPath: shell).lastPathComponent
+            arguments = .allocate(capacity: 3)
+            argumentCount = 2
+            arguments[0] = strdup(shellName)
+            arguments[1] = strdup("-l")
+            arguments[2] = nil
+        case .ssh(let connection):
+            sshPath = strdup("/usr/bin/ssh")!
+            arguments = .allocate(capacity: 13)
+            argumentCount = 12
+            arguments[0] = strdup("ssh")
+            arguments[1] = strdup("-A")
+            arguments[2] = strdup("-S")
+            arguments[3] = strdup("none")
+            arguments[4] = strdup("-o")
+            arguments[5] = strdup("ControlMaster=no")
+            arguments[6] = strdup("-o")
+            arguments[7] = strdup("ClearAllForwardings=yes")
+            arguments[8] = strdup("-tt")
+            arguments[9] = strdup("--")
+            arguments[10] = strdup(connection.host)
+            arguments[11] = strdup("cd -- \(SSHCommand.shellQuote(workingDirectory)) && exec ${SHELL:-/bin/sh} -l")
+            arguments[12] = nil
+        }
     }
 
     deinit {
         free(workingDirectory)
         free(shellPath)
+        free(sshPath)
         free(terminfoPath)
-        free(arguments[0])
-        free(arguments[1])
+        for index in 0..<argumentCount where arguments[index] != nil {
+            free(arguments[index])
+        }
         arguments.deallocate()
         free(termKey)
         free(termValue)
@@ -329,19 +360,23 @@ private final class ChildLaunchConfiguration {
     }
 
     func execLoginShell() -> Never {
-        _ = chdir(workingDirectory)
         setenv(termKey, termValue, 1)
         if let terminfoPath {
             setenv(terminfoKey, terminfoPath, 1)
         }
-        execv(shellPath, arguments)
+        if let sshPath {
+            execv(sshPath, arguments)
+        } else {
+            _ = chdir(workingDirectory)
+            execv(shellPath, arguments)
+        }
         _exit(127)
     }
 }
 
 final class TerminalSessionService {
     private let id: UUID
-    private let workingDirectory: String
+    private let launchConfiguration: TerminalLaunchConfiguration
     private let socketPath: String
     private let logURL: URL
     private let restoringInterruptedSession: Bool
@@ -359,13 +394,13 @@ final class TerminalSessionService {
     private var ptyWriteOffset = 0
     private var restartingShell = false
 
-    init(id: UUID, workingDirectory: String) {
+    init(id: UUID, launchConfiguration: TerminalLaunchConfiguration) {
         self.id = id
-        self.workingDirectory = workingDirectory
+        self.launchConfiguration = launchConfiguration
         socketPath = TerminalSessionPaths.socketPath(for: id)
         logURL = TerminalSessionPaths.logURL(for: id)
         restoringInterruptedSession = FileManager.default.fileExists(atPath: logURL.path)
-        childLaunch = ChildLaunchConfiguration(workingDirectory: workingDirectory)
+        childLaunch = ChildLaunchConfiguration(launchConfiguration: launchConfiguration)
         queue = DispatchQueue(label: "dev.pinata.terminal-service.\(id.uuidString)")
     }
 
@@ -671,10 +706,12 @@ enum TerminalServiceEntryPoint {
     static func runIfRequested() -> Bool {
         let arguments = CommandLine.arguments
         guard arguments.count == 4, arguments[1] == "--pinata-terminal-service",
-              let id = UUID(uuidString: arguments[2])
+              let id = UUID(uuidString: arguments[2]),
+              let data = Data(base64Encoded: arguments[3]),
+              let launchConfiguration = try? JSONDecoder().decode(TerminalLaunchConfiguration.self, from: data)
         else { return false }
         do {
-            let service = TerminalSessionService(id: id, workingDirectory: arguments[3])
+            let service = TerminalSessionService(id: id, launchConfiguration: launchConfiguration)
             try service.run()
         } catch {
             fputs("Piñata terminal service failed: \(error)\n", stderr)

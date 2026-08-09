@@ -93,6 +93,24 @@ indirect enum PaneNode: Codable, Equatable, Sendable {
 struct TerminalPaneSnapshot: Codable, Equatable, Sendable {
     var id: PaneID
     var workingDirectory: String
+    var target: TerminalTarget
+
+    init(id: PaneID, workingDirectory: String, target: TerminalTarget = .local) {
+        self.id = id
+        self.workingDirectory = workingDirectory
+        self.target = target
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, workingDirectory, target
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(PaneID.self, forKey: .id)
+        workingDirectory = try container.decode(String.self, forKey: .workingDirectory)
+        target = try container.decodeIfPresent(TerminalTarget.self, forKey: .target) ?? .local
+    }
 }
 
 struct TerminalSessionSnapshot: Codable, Equatable, Sendable {
@@ -121,7 +139,8 @@ final class TerminalViewController: NSViewController {
 
     init(
         runtime: GhosttyRuntime,
-        workingDirectory: String = FileManager.default.homeDirectoryForCurrentUser.path
+        workingDirectory: String = FileManager.default.homeDirectoryForCurrentUser.path,
+        target: TerminalTarget = .local
     ) {
         let paneID = UUID()
         self.runtime = runtime
@@ -130,7 +149,8 @@ final class TerminalViewController: NSViewController {
         super.init(nibName: nil, bundle: nil)
         paneControllers[paneID] = makePaneController(
             paneID: paneID,
-            workingDirectory: workingDirectory
+            workingDirectory: workingDirectory,
+            target: target
         )
     }
 
@@ -142,7 +162,8 @@ final class TerminalViewController: NSViewController {
         for pane in snapshot.panes {
             paneControllers[pane.id] = makePaneController(
                 paneID: pane.id,
-                workingDirectory: pane.workingDirectory
+                workingDirectory: pane.workingDirectory,
+                target: pane.target
             )
         }
         if paneControllers[activePaneID] == nil {
@@ -197,7 +218,11 @@ final class TerminalViewController: NSViewController {
             activePaneID: activePaneID,
             panes: root.paneIDs.compactMap { paneID in
                 paneControllers[paneID].map {
-                    TerminalPaneSnapshot(id: paneID, workingDirectory: $0.workingDirectory)
+                    TerminalPaneSnapshot(
+                        id: paneID,
+                        workingDirectory: $0.workingDirectory,
+                        target: $0.target
+                    )
                 }
             }
         )
@@ -220,7 +245,8 @@ final class TerminalViewController: NSViewController {
         let newPaneID = UUID()
         paneControllers[newPaneID] = makePaneController(
             paneID: newPaneID,
-            workingDirectory: source.workingDirectory
+            workingDirectory: source.workingDirectory,
+            target: source.target
         )
         root = root.replacing(
             paneID,
@@ -263,12 +289,14 @@ final class TerminalViewController: NSViewController {
 
     private func makePaneController(
         paneID: PaneID,
-        workingDirectory: String
+        workingDirectory: String,
+        target: TerminalTarget
     ) -> TerminalPaneViewController {
         let controller = TerminalPaneViewController(
             paneID: paneID,
             runtime: runtime,
-            workingDirectory: workingDirectory
+            workingDirectory: workingDirectory,
+            target: target
         )
         controller.didFocus = { [weak self] paneID in
             self?.activate(paneID)
@@ -361,11 +389,17 @@ private final class TerminalPaneViewController: NSViewController {
     var didRequestSplit: ((PaneID, SplitAxis) -> Void)?
     var didRequestClose: ((PaneID) -> Void)?
 
-    init(paneID: PaneID, runtime: GhosttyRuntime, workingDirectory: String) {
+    init(
+        paneID: PaneID,
+        runtime: GhosttyRuntime,
+        workingDirectory: String,
+        target: TerminalTarget
+    ) {
         self.paneID = paneID
         terminalView = GhosttySurfaceView(
             runtime: runtime,
             workingDirectory: workingDirectory,
+            target: target,
             sessionID: paneID
         )
         header = PaneHeaderView(title: PaneHeaderView.displayTitle(terminalView.defaultTitle))
@@ -397,6 +431,7 @@ private final class TerminalPaneViewController: NSViewController {
     }
 
     var workingDirectory: String { terminalView.workingDirectory }
+    var target: TerminalTarget { terminalView.target }
 
     func terminateSession() {
         terminalView.terminateSession()

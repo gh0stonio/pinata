@@ -32,6 +32,8 @@
 		000000000000000000000074 /* NewTaskModalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000075 /* NewTaskModalView.swift */; };
 		000000000000000000000076 /* AppSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000077 /* AppSession.swift */; };
 		000000000000000000000082 /* TerminalSessionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000083 /* TerminalSessionService.swift */; };
+		000000000000000000000084 /* SSHConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000085 /* SSHConnection.swift */; };
+		000000000000000000000086 /* ConnectionsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000087 /* ConnectionsSettingsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -72,6 +74,8 @@
 		000000000000000000000075 /* NewTaskModalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewTaskModalView.swift; sourceTree = "<group>"; };
 		000000000000000000000077 /* AppSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSession.swift; sourceTree = "<group>"; };
 		000000000000000000000083 /* TerminalSessionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSessionService.swift; sourceTree = "<group>"; };
+		000000000000000000000085 /* SSHConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHConnection.swift; sourceTree = "<group>"; };
+		000000000000000000000087 /* ConnectionsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionsSettingsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -161,6 +165,8 @@
 				000000000000000000000046 /* SettingsViewController.swift */,
 				000000000000000000000058 /* SettingsComponents.swift */,
 				000000000000000000000053 /* RepositoryRegistry.swift */,
+				000000000000000000000085 /* SSHConnection.swift */,
+				000000000000000000000087 /* ConnectionsSettingsView.swift */,
 				000000000000000000000054 /* RepositorySettingsView.swift */,
 			);
 			path = Settings;
@@ -295,6 +301,8 @@
 				000000000000000000000074 /* NewTaskModalView.swift in Sources */,
 				000000000000000000000076 /* AppSession.swift in Sources */,
 				000000000000000000000082 /* TerminalSessionService.swift in Sources */,
+				000000000000000000000084 /* SSHConnection.swift in Sources */,
+				000000000000000000000086 /* ConnectionsSettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -47,15 +47,15 @@ This preserves terminal display state, not a serializable process checkpoint. If
 
 Long-running agents stay alive exactly like any other child process while the host remains up. Their own durable session IDs, transcripts, and checkpoints remain the source of truth for host-restart recovery. Piñata will surface an interrupted session and offer the agent's native resume command when that integration is added.
 
-## SSH direction
+## SSH terminals
 
-SSH support will use the same protocol and session model:
+SSH uses the same local protocol and session model:
 
 ```text
-Ghostty manual I/O ↔ Piñata app ↔ SSH tunnel ↔ remote Piñata session service ↔ remote PTY
+Ghostty manual I/O ↔ local Piñata terminal service ↔ ssh -tt alias ↔ remote shell
 ```
 
-The remote service will be installed or started by Piñata, not replaced with `ssh -tt` or tmux. This keeps local and remote behavior aligned, including Ghostty scrolling, pane restoration, journaling, and explicit session cleanup.
+The SSH client is the service child process, so a normal app restart reconnects Ghostty to the still-running local client and remote shell. A Mac or remote-host restart starts a fresh remote shell at the saved working directory. See [SSH connections](ssh-connections.md) for setup and limits.
 
 ## Boundaries
 

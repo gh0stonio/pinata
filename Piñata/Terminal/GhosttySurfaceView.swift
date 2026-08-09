@@ -16,6 +16,7 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
 
     nonisolated(unsafe) private(set) var surface: ghostty_surface_t?
     var workingDirectory: String
+    let target: TerminalTarget
     var didFocus: (() -> Void)?
     var didChangeTitle: ((String) -> Void)?
     var defaultTitle: String { URL(fileURLWithPath: UserShell.loginPath).lastPathComponent }
@@ -26,11 +27,19 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
     init(
         runtime: GhosttyRuntime,
         workingDirectory: String = FileManager.default.homeDirectoryForCurrentUser.path,
+        target: TerminalTarget = .local,
         sessionID: UUID
     ) {
         self.runtime = runtime
         self.workingDirectory = workingDirectory
-        terminalSession = TerminalSessionClient(id: sessionID, workingDirectory: workingDirectory)
+        self.target = target
+        terminalSession = TerminalSessionClient(
+            id: sessionID,
+            launchConfiguration: TerminalLaunchConfiguration(
+                workingDirectory: workingDirectory,
+                target: target
+            )
+        )
         ioBridge = GhosttyIOBridge()
         super.init(frame: .zero)
         ioBridge.session = terminalSession

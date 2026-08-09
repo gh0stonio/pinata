@@ -41,6 +41,160 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertThrowsError(try repositoryStore.load())
     }
 
+    func testRepositoryRemovalOnlyChangesTheRegistry() throws {
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+        let store = RepositoryRegistryStore(fileURL: directoryURL.appendingPathComponent("repos.json"))
+        let removed = RegisteredRepository(
+            name: "removed",
+            path: "/tmp/removed",
+            branches: ["main"],
+            defaultBranch: "main",
+            currentBranch: "main",
+            remoteURL: nil,
+            organization: nil
+        )
+        let retained = RegisteredRepository(
+            name: "retained",
+            path: "/tmp/retained",
+            branches: ["main"],
+            defaultBranch: "main",
+            currentBranch: "main",
+            remoteURL: nil,
+            organization: nil
+        )
+        try store.save([removed, retained])
+
+        XCTAssertEqual(try store.remove(id: removed.id), [retained])
+        XCTAssertEqual(try store.load(), [retained])
+        XCTAssertEqual(try store.remove(id: UUID()), [retained])
+    }
+
+    func testSSHConnectionsAndRemoteRepositoriesRoundTrip() throws {
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+        let connection = SSHConnection(name: "Build host", host: "build", isEnabled: false)
+        let connectionStore = SSHConnectionStore(fileURL: directoryURL.appendingPathComponent("ssh.json"))
+        let repository = RegisteredRepository(
+            name: "pinata",
+            path: "/srv/pinata",
+            branches: ["main"],
+            defaultBranch: "main",
+            currentBranch: "main",
+            remoteURL: "git@example.com:team/pinata.git",
+            organization: "team",
+            target: .ssh(connection.id)
+        )
+        let repositoryStore = RepositoryRegistryStore(fileURL: directoryURL.appendingPathComponent("repos.json"))
+
+        try connectionStore.save([connection])
+        try repositoryStore.save([repository])
+
+        XCTAssertEqual(try connectionStore.load(), [connection])
+        let legacyConnection = try JSONDecoder().decode(
+            SSHConnection.self,
+            from: Data("{\"id\":\"\(UUID())\",\"name\":\"Legacy\",\"host\":\"legacy\"}".utf8)
+        )
+        XCTAssertTrue(legacyConnection.isEnabled)
+        XCTAssertEqual(try repositoryStore.load(), [repository])
+        XCTAssertEqual(
+            SSHConfigReader.parse("""
+            Host build staging
+                HostName ssh.example.com
+                User deploy
+                Port 2200
+                IdentityFile ~/.ssh/deploy
+            Host *
+                ServerAliveInterval 30
+            """),
+            [
+                SSHConfigHost(
+                    alias: "build",
+                    aliases: ["build", "staging"],
+                    hostName: "ssh.example.com",
+                    user: "deploy",
+                    port: "2200",
+                    identityFile: "~/.ssh/deploy"
+                ),
+            ]
+        )
+        XCTAssertTrue(SSHConfigHost(alias: "github.com", hostName: nil, user: nil).isGitTransport)
+        let configDirectory = directoryURL.appendingPathComponent("config.d", isDirectory: true)
+        try FileManager.default.createDirectory(at: configDirectory, withIntermediateDirectories: true)
+        try "Include config.d/*\nHost primary\n  HostName primary.example.com\n".write(
+            to: directoryURL.appendingPathComponent("config"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "Host secondary\n  HostName secondary.example.com\n".write(
+            to: configDirectory.appendingPathComponent("secondary"),
+            atomically: true,
+            encoding: .utf8
+        )
+        XCTAssertEqual(
+            try SSHConfigReader(configURL: directoryURL.appendingPathComponent("config")).loadHosts().map(\.alias),
+            ["primary", "secondary"]
+        )
+    }
+
+    func testOlderRepositoriesAndTerminalPanesDefaultToLocal() throws {
+        let repositoryID = UUID()
+        let legacyRepository = Data("""
+        {"id":"\(repositoryID.uuidString)","name":"pinata","path":"/tmp/pinata","branches":["main"],"defaultBranch":"main","currentBranch":"main"}
+        """.utf8)
+        let repository = try JSONDecoder().decode(RegisteredRepository.self, from: legacyRepository)
+        XCTAssertEqual(repository.target, .local)
+
+        let paneID = UUID()
+        let legacyPane = Data("{\"id\":\"\(paneID.uuidString)\",\"workingDirectory\":\"/tmp\"}".utf8)
+        let pane = try JSONDecoder().decode(TerminalPaneSnapshot.self, from: legacyPane)
+        XCTAssertEqual(pane.target, .local)
+    }
+
+    func testRemoteWorktreePathUsesRemoteBaseWithoutExpandingHome() {
+        let repository = RegisteredRepository(
+            name: "pinata",
+            path: "/srv/pinata",
+            branches: ["main"],
+            defaultBranch: "main",
+            currentBranch: "main",
+            remoteURL: nil,
+            organization: nil
+        )
+
+        XCTAssertEqual(
+            WorktreePathResolver.remoteRoot(for: repository, globalBasePath: "~/.pinata/worktrees"),
+            "~/.pinata/worktrees/pinata"
+        )
+    }
+
+    func testRemoteFolderBrowserParsesDirectoriesAndNavigatesParents() {
+        XCTAssertEqual(
+            RemoteDirectoryInspector.parseDirectories("/srv/.cache\n/srv/api\n/srv/Apps\n\n"),
+            ["/srv/api", "/srv/Apps", "/srv/.cache"]
+        )
+        XCTAssertEqual(
+            RemoteDirectoryInspector.parseDirectoryTree(
+                "/srv/.cache\n/srv/api\n/srv/Apps\n",
+                root: "/srv"
+            ),
+            [
+                "/srv": ["/srv/api", "/srv/Apps", "/srv/.cache"],
+            ]
+        )
+        XCTAssertEqual(RemoteDirectoryInspector.parent(of: "~/projects/api"), "~/projects")
+        XCTAssertEqual(RemoteDirectoryInspector.parent(of: "~"), nil)
+        XCTAssertEqual(RemoteDirectoryInspector.parent(of: "/"), nil)
+
+        let process = SSHCommand.makeProcess(
+            connection: SSHConnection(name: "Build", host: "build"),
+            command: ["pwd"]
+        )
+        XCTAssertTrue(process.arguments?.contains("ClearAllForwardings=yes") == true)
+    }
+
     func testOlderTasksDefaultToUnpinned() throws {
         let id = UUID()
         let data = Data(
