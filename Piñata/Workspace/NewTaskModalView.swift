@@ -21,8 +21,8 @@ final class NewTaskModalView: NSView, NSTextFieldDelegate {
     private let noteLabel = NSTextField(
         wrappingLabelWithString: "Leave these empty to start as a conversation, then attach repositories once the work needs to write code."
     )
-    private let cancelButton = NewTaskActionButton(title: "Cancel", primary: false)
-    private let createButton = NewTaskActionButton(title: "Create task", primary: true)
+    private let cancelButton = ModalActionButton(title: "Cancel", primary: false)
+    private let createButton = ModalActionButton(title: "Create task", primary: true)
     private let divider = NSView()
     private var mouseDownMonitor: Any?
 
@@ -515,7 +515,7 @@ private final class NewTaskRepositoryRow: AppHoverView {
 }
 
 @MainActor
-private final class NewTaskActionButton: AppButton {
+final class ModalActionButton: AppButton {
     private let destructive: Bool
 
     init(title: String, primary: Bool, destructive: Bool = false) {
@@ -535,8 +535,11 @@ private final class NewTaskActionButton: AppButton {
     }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(
-            width: ceil(attributedTitle.size().width) + AppTheme.taskModalButtonHorizontalPadding,
+        let imageWidth = image.map { $0.size.width + AppTheme.taskModalButtonImageGap } ?? 0
+        return NSSize(
+            width: ceil(attributedTitle.size().width)
+                + imageWidth
+                + AppTheme.taskModalButtonHorizontalPadding,
             height: super.intrinsicContentSize.height
         )
     }
@@ -567,8 +570,8 @@ final class DeleteTaskModalView: NSView {
     private let titleLabel: NSTextField
     private let detailLabel: NSTextField
     private let divider = NSView()
-    private let cancelButton = NewTaskActionButton(title: "Cancel", primary: false)
-    private let deleteButton: NewTaskActionButton
+    private let cancelButton = ModalActionButton(title: "Cancel", primary: false)
+    private let deleteButton: ModalActionButton
 
     convenience init(taskTitle: String) {
         self.init(
@@ -581,7 +584,7 @@ final class DeleteTaskModalView: NSView {
     init(title: String, detail: String, actionTitle: String) {
         titleLabel = NSTextField(labelWithString: title)
         detailLabel = NSTextField(wrappingLabelWithString: detail)
-        deleteButton = NewTaskActionButton(
+        deleteButton = ModalActionButton(
             title: actionTitle,
             primary: false,
             destructive: true

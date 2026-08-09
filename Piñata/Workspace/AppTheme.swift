@@ -82,6 +82,7 @@ enum AppTheme {
     static let taskModalCancelButtonMinimumWidth: CGFloat = 64
     static let taskModalCreateButtonMinimumWidth: CGFloat = 96
     static let taskModalButtonHorizontalPadding: CGFloat = 24
+    static let taskModalButtonImageGap: CGFloat = 6
     static let taskModalButtonSpacing: CGFloat = 12
     static let taskModalButtonCornerRadius: CGFloat = 7
     static let taskModalRowHeight: CGFloat = 35
