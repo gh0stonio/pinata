@@ -13,12 +13,14 @@ flowchart TB
     Workspace --> Terminals[Terminal workspaces]
     Workspace --> TaskStore[TaskRegistryStore]
     Workspace --> RepositoryStore[RepositoryRegistryStore]
+    Workspace --> ConnectionStore[SSHConnectionStore]
     Workspace --> SessionStore[AppSessionStore]
     Terminals --> TerminalVC[TerminalViewController]
     TerminalVC --> Ghostty[GhosttySurfaceView]
     Ghostty --> Service[TerminalSessionService]
-    Settings --> Theme[UserSettings]
+    Settings --> Theme[UserSettingsStore]
     Settings --> RepositoryStore
+    Settings --> ConnectionStore
 ```
 
 ## Ownership rules
@@ -59,6 +61,13 @@ classDiagram
         String path
         String defaultBranch
         String worktreeBasePath
+        RepositoryTarget target
+    }
+    class SSHConnection {
+        UUID id
+        String name
+        String host
+        Bool isEnabled
     }
     class WorktreeProvisioningReport {
         String path
@@ -74,6 +83,7 @@ classDiagram
     }
     WorkspaceTask --> TaskRepositoryAttachment
     TaskRepositoryAttachment --> RegisteredRepository : references by repositoryID
+    RegisteredRepository --> SSHConnection : target ID when remote
     TaskRepositoryAttachment --> WorktreeProvisioningReport
     AppSession --> StoredWorkspaceScope
     AppSession --> StoredTerminalWorkspace
@@ -89,6 +99,7 @@ All persisted data is local to the macOS user account.
 flowchart LR
     AppSupport[Application Support/<bundle-id>] --> Tasks[tasks.json]
     AppSupport --> Repos[repositories.json]
+    AppSupport --> Connections[ssh-connections.json]
     AppSupport --> Session[app-session.json]
     AppSupport --> Journals[terminal-sessions/<pane-id>.log]
     Defaults[UserDefaults] --> Appearance[appearance and typography]
@@ -100,6 +111,7 @@ flowchart LR
 | --- | --- | --- |
 | Tasks, attachment order, pins, worktree metadata | `tasks.json` | Task create, edit, reorder, provision, detach, delete. |
 | Registered repositories and overrides | `repositories.json` | Repository registration or settings edit. |
+| SSH connection names, aliases, and enabled state | `ssh-connections.json` | Connection edit or enable change. |
 | UI and terminal layout snapshot | `app-session.json` | Relevant workspace change, with a short coalescing delay, and app termination. |
 | Terminal output journal | Per-pane log | Terminal service receives PTY output. |
 | Appearance and small UI preferences | `UserDefaults` | Settings or sidebar presentation change. |
@@ -149,6 +161,7 @@ The snapshot preserves UI topology, not process memory. See [Terminal session ar
 
 - AppKit views and user interaction stay on the main actor.
 - Git provisioning runs away from the UI, while each report update returns to the main UI before mutation.
+- Remote Git provisioning uses the registered OpenSSH alias with non-interactive authentication. SSH credentials remain outside Piñata.
 - The durable terminal service runs as a separate process. Socket I/O and PTY reads avoid blocking AppKit rendering.
 - Registry and session stores are synchronous local file operations invoked at clear state boundaries.
 
@@ -169,7 +182,6 @@ The app does not treat a failed attachment as a failed task. It only marks the a
 
 Do not put the following in current production code until the feature exists:
 
-- SSH targets or remote execution abstractions.
 - Pi worker management or agent transcript storage.
 - GitHub API workflows.
 - A replacement terminal renderer or custom terminal scrollback.

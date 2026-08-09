@@ -1,0 +1,103 @@
+# Application map
+
+This is the current, implemented UI map. Use it to locate a user flow before changing a view. For ownership and persisted schemas, read [Application architecture](application-architecture.md).
+
+## Window routes
+
+```mermaid
+flowchart LR
+    App[Piñata window] --> Sidebar[Sidebar]
+    Sidebar --> Task[Task workspace]
+    Sidebar --> Attachment[Repository workspace]
+    Task --> Terminal[Terminal tabs and splits]
+    Attachment --> Terminal
+    App --> Settings[Settings]
+    Settings --> Appearance[Appearance]
+    Settings --> Git[Git and repositories]
+    Settings --> Connections[SSH connections]
+    Git --> Repository[Repository details]
+```
+
+| Surface | Purpose | Primary action |
+| --- | --- | --- |
+| Sidebar | Browse pinned and unpinned tasks, then their attachments. | Select, reorder, open task actions. |
+| Task workspace | Owns a task's terminal layout. | Open a task terminal or select an attachment. |
+| Repository workspace | Shows one attachment's provisioning state or terminal layout. | Retry a failed worktree or open its terminal. |
+| New task sheet | Creates a task with zero or more repository attachments. | Choose local or enabled SSH repositories. |
+| Appearance | Changes theme, accent, and font preferences. | Persist `UserSettings`. |
+| Git | Sets the default worktree base and manages registered repositories. | Open repository details. |
+| Connections | Reads SSH aliases from OpenSSH configuration and enables hosts. | Browse and register remote Git folders. |
+| Repository details | Shows inspected Git metadata and repository overrides. | Change default branch or worktree base, remove registration. |
+
+## Source map
+
+| Area | Source | Responsibility |
+| --- | --- | --- |
+| App lifecycle | `PinataApp.swift` | Creates the workspace, menus, and settings window. |
+| Workspace | `Workspace/` | Sidebar, task and attachment selection, task sheets, session snapshot, and shared theme. |
+| Settings | `Settings/` | Appearance, shared settings layout, repositories, worktree provisioning, and SSH connections. |
+| Terminal | `Terminal/` | Ghostty integration, terminal tabs and splits, and the durable terminal service. |
+
+## Repository targets
+
+```mermaid
+flowchart TB
+    Task[Task] --> Attachment[Repository attachment]
+    Attachment --> Repo[Registered repository]
+    Repo --> Local[Local target]
+    Repo --> SSH[SSH target]
+    Local --> LocalGit[Git in local checkout]
+    SSH --> Alias[Saved OpenSSH alias]
+    Alias --> RemoteGit[Git on remote checkout]
+    LocalGit --> Worktree[Piñata-owned worktree]
+    RemoteGit --> Worktree
+    Worktree --> Pane[Terminal pane]
+```
+
+The target is part of the registered repository, not the task attachment. A task can therefore combine local and SSH-backed repositories. A remote target stores a connection ID; the connection stores only the selected OpenSSH alias and display state. Piñata never stores a key or password.
+
+## Navigation and terminal lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> Task: select task
+    Task --> Attachment: select repository attachment
+    Attachment --> Provisioning: creating or retrying worktree
+    Provisioning --> Attachment: ready
+    Provisioning --> Failed: Git or SSH failure
+    Failed --> Provisioning: retry
+    Task --> Terminal: open terminal
+    Attachment --> Terminal: open terminal
+    Terminal --> Task: close terminal tab
+    Terminal --> Attachment: close terminal tab
+```
+
+Closing the app preserves the terminal layout and leaves terminal services running. Closing a terminal tab or pane explicitly stops that session. A local terminal starts a local login shell. A remote terminal starts `ssh -tt <alias>` through the local terminal service.
+
+## Settings hierarchy
+
+```mermaid
+flowchart TB
+    Settings[Settings shell] --> Menu[Settings menu]
+    Menu --> Appearance[Appearance]
+    Menu --> Git[Git]
+    Menu --> Connections[Connections]
+    Git --> Repositories[Repository list]
+    Repositories --> Details[Repository details]
+    Connections --> Hosts[Enabled SSH hosts]
+    Hosts --> Browser[Remote folder browser]
+```
+
+The settings shell uses the same content gutter, section rhythm, and label/control columns for top-level and repository-detail pages. Repository detail pages add a breadcrumb in the shared content header.
+
+## Persistence at a glance
+
+| Data | Local store | Notes |
+| --- | --- | --- |
+| Tasks and attachments | `tasks.json` | Includes worktree path, branch, and latest provisioning report. |
+| Registered repositories | `repositories.json` | Includes local or SSH target and worktree override. |
+| SSH connections | `ssh-connections.json` | Stores display name, OpenSSH alias, and enabled state only. |
+| Workspace and terminal layout | `app-session.json` | Restores valid task, attachment, tab, and split references. |
+| Appearance and sidebar preferences | `UserDefaults` | Theme, accent, typography, panel state, and global worktree base. |
+
+All files are per-user under Application Support, except `UserDefaults`. Terminal output journals are separate per-pane files and are removed when the pane is explicitly closed.
