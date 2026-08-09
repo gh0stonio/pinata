@@ -2,27 +2,24 @@ import AppKit
 
 @MainActor
 enum SettingsLayout {
-    static let summaryMinimumWidth: CGFloat = 216
-    static let summaryMaximumWidth: CGFloat = 280
-    static let rowLabelMinimumWidth: CGFloat = 200
-    static let rowControlMinimumWidth: CGFloat = 240
-    static let rowControlMaximumWidth: CGFloat = 430
-    static let rowColumnGap: CGFloat = 20
-    static let splitColumnGap: CGFloat = 20
-    static var contentMinimumWidth: CGFloat {
-        pageHorizontalPadding * 2
-            + summaryMinimumWidth
-            + splitColumnGap
-            + rowLabelMinimumWidth
-            + rowColumnGap
-            + rowControlMinimumWidth
-    }
-    static let sectionGap: CGFloat = 16
-    static let pageHorizontalPadding: CGFloat = 24
-    static let pageVerticalPadding: CGFloat = 18
+    static let rightColumnWidth: CGFloat = 330
+    static let rowControlMaximumWidth: CGFloat = rightColumnWidth
+    static let sectionGap: CGFloat = 20
+    static let pageHorizontalPadding: CGFloat = 44
+    static let pageVerticalPadding: CGFloat = 35
+    static let pageBottomPadding: CGFloat = pageVerticalPadding
+    static let detailPageTopPadding: CGFloat = 16
+    static let twoColumnLabelMinimumWidth: CGFloat = 160
     static let blockVerticalPadding: CGFloat = 20
+    static let sectionHeaderTopPadding: CGFloat = 8
+    static let sectionHeaderBottomPadding: CGFloat = 4
+    static let sectionHeaderContentGap: CGFloat = 2
+    static let rowVerticalPadding: CGFloat = 8
     static let titleToDetailGap: CGFloat = 5
-    static let rowHeight: CGFloat = 64
+    static let rowToControlGap: CGFloat = 10
+    static let rowColumnGap: CGFloat = 24
+    static let rowHeight: CGFloat = 52
+    static let rowGap: CGFloat = 2
     static let controlHeight: CGFloat = 32
     static let controlCornerRadius: CGFloat = 6
     static let choiceInset: CGFloat = 2
@@ -31,14 +28,15 @@ enum SettingsLayout {
     static let colorChoiceGap: CGFloat = 7
     static let stepperButtonWidth: CGFloat = 24
     static let navigationCornerRadius: CGFloat = 7
-    static let compactRowHeight: CGFloat = 48
+    static let compactRowHeight: CGFloat = 40
     static let compactRowCornerRadius: CGFloat = 8
-    static let compactContentInset: CGFloat = 12
-    static let compactIconSize: CGFloat = 14
+    static let compactContentInset: CGFloat = 10
+    static let compactIconSize: CGFloat = 13
     static let compactMetadataGap: CGFloat = 16
     static let compactChevronWidth: CGFloat = 10
     static let compactChevronHeight: CGFloat = 14
     static let navigationRowHeight: CGFloat = 28
+    static let navigationRowGap: CGFloat = 2
     static let navigationIconSize: CGFloat = 18
     static let navigationItemGap: CGFloat = 12
     static let navigationLabelGap: CGFloat = 8
@@ -48,15 +46,25 @@ enum SettingsLayout {
     static let skeletonCornerRadius: CGFloat = 4
     static let controlHorizontalPadding: CGFloat = 10
     static let breadcrumbHeight: CGFloat = 24
+    static let detailHeaderTopPadding: CGFloat = 18
     static let breadcrumbGap: CGFloat = 6
+    static let breadcrumbBackOffset: CGFloat = 16
     static let breadcrumbToContentGap: CGFloat = 2
     static let themeControlWidth: CGFloat = 122
     static let intensityControlWidth: CGFloat = 272
     static let appFontControlWidth: CGFloat = 180
     static let terminalFontControlWidth: CGFloat = 82
-    static let repositoryPathControlWidth: CGFloat = 300
+    static let repositoryPathControlWidth: CGFloat = rightColumnWidth
     static let choiceHorizontalPadding: CGFloat = 18
     static let accentCheckmarkSize: CGFloat = 15
+
+    static var minimumTwoColumnContentWidth: CGFloat {
+        repositoryPathControlWidth + rowColumnGap + twoColumnLabelMinimumWidth
+    }
+
+    static var minimumPageWidth: CGFloat {
+        minimumTwoColumnContentWidth + pageHorizontalPadding * 2
+    }
 
     static var valueFont: NSFont {
         .monospacedSystemFont(
@@ -87,6 +95,17 @@ enum SettingsLayout {
         )
     }
 
+    static func applyGroupTitleStyle(_ label: NSTextField) {
+        label.attributedStringValue = NSAttributedString(
+            string: label.stringValue,
+            attributes: [
+                .font: AppTheme.font(ofSize: AppTheme.typography.label + 0.5, weight: 600),
+                .foregroundColor: AppTheme.tertiaryText.withAlphaComponent(0.6),
+                .kern: 0.6,
+            ]
+        )
+    }
+
     static func applyTitleStyle(_ label: NSTextField) {
         label.textColor = AppTheme.primaryText
         label.font = AppTheme.font(ofSize: AppTheme.typography.settingsHeading, weight: 650)
@@ -106,14 +125,16 @@ final class SettingsDocumentView: NSView {
 final class SettingsSplitPageView: NSView, SettingsThemeApplying {
     private let scrollView = NSScrollView()
     private let document = SettingsDocumentView()
-    private let leftStack = NSStackView()
-    private let rightStack = NSStackView()
-    private var sectionCount = 0
-    private var previousSummary: NSView?
-    private var previousContent: NSView?
-    private var isSizingDocument = false
+    private let sectionStack = NSStackView()
+    private let topPadding: CGFloat
 
-    override init(frame frameRect: NSRect) {
+    var contentLeadingAnchor: NSLayoutXAxisAnchor { sectionStack.leadingAnchor }
+
+    init(
+        frame frameRect: NSRect = .zero,
+        topPadding: CGFloat = SettingsLayout.pageVerticalPadding
+    ) {
+        self.topPadding = topPadding
         super.init(frame: frameRect)
         translatesAutoresizingMaskIntoConstraints = false
         installLayout()
@@ -124,42 +145,21 @@ final class SettingsSplitPageView: NSView, SettingsThemeApplying {
         fatalError("init(coder:) is unavailable")
     }
 
-    override func layout() {
-        super.layout()
-        sizeDocumentToViewport()
-    }
-
-    func addSection(title: String, detail: String, content: NSView) {
-        if sectionCount > 0 {
-            let divider = SettingsSplitDivider()
-            document.addSubview(divider)
-            if let previousSummary, let previousContent {
-                let nextSectionGap = SettingsLayout.sectionGap * 2
-                    - SettingsLayout.blockVerticalPadding / 2
-                    + SettingsLayout.dividerThickness
-                leftStack.setCustomSpacing(nextSectionGap, after: previousSummary)
-                rightStack.setCustomSpacing(nextSectionGap, after: previousContent)
-                NSLayoutConstraint.activate([
-                    divider.leadingAnchor.constraint(equalTo: leftStack.leadingAnchor),
-                    divider.trailingAnchor.constraint(equalTo: rightStack.trailingAnchor),
-                    divider.topAnchor.constraint(
-                        equalTo: previousSummary.bottomAnchor,
-                        constant: SettingsLayout.sectionGap
-                    ),
-                ])
-            }
-        }
-        let summary = SettingsSplitSummary(title: title, detail: detail)
-        summary.translatesAutoresizingMaskIntoConstraints = false
-        content.translatesAutoresizingMaskIntoConstraints = false
-        leftStack.addArrangedSubview(summary)
-        rightStack.addArrangedSubview(content)
-        summary.widthAnchor.constraint(equalTo: leftStack.widthAnchor).isActive = true
-        content.widthAnchor.constraint(equalTo: rightStack.widthAnchor).isActive = true
-        summary.heightAnchor.constraint(equalTo: content.heightAnchor).isActive = true
-        previousSummary = summary
-        previousContent = content
-        sectionCount += 1
+    func addSection(
+        title: String,
+        detail: String,
+        content: NSView,
+        isDestructive: Bool = false
+    ) {
+        let header = SettingsSectionHeader(
+            title: title,
+            detail: detail,
+            isDestructive: isDestructive
+        )
+        let section = SettingsSectionView(header: header, content: content)
+        sectionStack.addArrangedSubview(section)
+        section.widthAnchor.constraint(equalTo: sectionStack.widthAnchor).isActive = true
+        needsLayout = true
     }
 
     func scrollToTop() {
@@ -168,12 +168,14 @@ final class SettingsSplitPageView: NSView, SettingsThemeApplying {
         scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 
+    func showVerticalScroller() {
+        scrollView.autohidesScrollers = false
+    }
+
     func applyTheme() {
         scrollView.drawsBackground = false
         document.layer?.backgroundColor = AppTheme.background.cgColor
-        leftStack.arrangedSubviews.compactMap { $0 as? SettingsThemeApplying }.forEach { $0.applyTheme() }
-        rightStack.arrangedSubviews.compactMap { $0 as? SettingsThemeApplying }.forEach { $0.applyTheme() }
-        document.subviews.compactMap { $0 as? SettingsSplitDivider }.forEach { $0.applyTheme() }
+        sectionStack.arrangedSubviews.compactMap { $0 as? SettingsThemeApplying }.forEach { $0.applyTheme() }
     }
 
     private func installLayout() {
@@ -186,87 +188,107 @@ final class SettingsSplitPageView: NSView, SettingsThemeApplying {
         scrollView.verticalScrollElasticity = .none
         scrollView.horizontalScrollElasticity = .none
         scrollView.documentView = document
-        document.translatesAutoresizingMaskIntoConstraints = true
+        document.translatesAutoresizingMaskIntoConstraints = false
         document.wantsLayer = true
-        [leftStack, rightStack].forEach {
-            $0.translatesAutoresizingMaskIntoConstraints = false
-            $0.orientation = .vertical
-            $0.alignment = .leading
-            $0.spacing = 0
-            document.addSubview($0)
-        }
+        sectionStack.translatesAutoresizingMaskIntoConstraints = false
+        sectionStack.orientation = .vertical
+        sectionStack.alignment = .leading
+        sectionStack.spacing = SettingsLayout.sectionGap
+        document.addSubview(sectionStack)
         addSubview(scrollView)
-        let preferredSummaryWidth = leftStack.widthAnchor.constraint(
-            equalTo: document.widthAnchor,
-            multiplier: 0.25
-        )
-        preferredSummaryWidth.priority = .defaultHigh
         NSLayoutConstraint.activate([
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollView.topAnchor.constraint(equalTo: topAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
-            leftStack.leadingAnchor.constraint(
-                equalTo: document.leadingAnchor,
+            document.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            document.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            document.widthAnchor.constraint(greaterThanOrEqualTo: scrollView.contentView.widthAnchor),
+            document.widthAnchor.constraint(greaterThanOrEqualToConstant: SettingsLayout.minimumPageWidth),
+            document.heightAnchor.constraint(greaterThanOrEqualTo: scrollView.contentView.heightAnchor),
+            sectionStack.leadingAnchor.constraint(
+                greaterThanOrEqualTo: document.leadingAnchor,
                 constant: SettingsLayout.pageHorizontalPadding
             ),
-            leftStack.topAnchor.constraint(
-                equalTo: document.topAnchor,
-                constant: SettingsLayout.pageVerticalPadding
-            ),
-            leftStack.widthAnchor.constraint(greaterThanOrEqualToConstant: SettingsLayout.summaryMinimumWidth),
-            leftStack.widthAnchor.constraint(lessThanOrEqualToConstant: SettingsLayout.summaryMaximumWidth),
-            preferredSummaryWidth,
-            rightStack.leadingAnchor.constraint(
-                equalTo: leftStack.trailingAnchor,
-                constant: SettingsLayout.splitColumnGap
-            ),
-            rightStack.trailingAnchor.constraint(
-                equalTo: document.trailingAnchor,
+            sectionStack.trailingAnchor.constraint(
+                lessThanOrEqualTo: document.trailingAnchor,
                 constant: -SettingsLayout.pageHorizontalPadding
             ),
-            rightStack.widthAnchor.constraint(greaterThanOrEqualToConstant: SettingsLayout.rowLabelMinimumWidth + SettingsLayout.rowColumnGap + SettingsLayout.rowControlMinimumWidth),
-            rightStack.topAnchor.constraint(equalTo: leftStack.topAnchor),
-            document.bottomAnchor.constraint(
-                greaterThanOrEqualTo: leftStack.bottomAnchor,
-                constant: SettingsLayout.pageVerticalPadding
+            sectionStack.centerXAnchor.constraint(equalTo: document.centerXAnchor),
+            sectionStack.topAnchor.constraint(
+                equalTo: document.topAnchor,
+                constant: topPadding
             ),
             document.bottomAnchor.constraint(
-                greaterThanOrEqualTo: rightStack.bottomAnchor,
-                constant: SettingsLayout.pageVerticalPadding
+                greaterThanOrEqualTo: sectionStack.bottomAnchor,
+                constant: SettingsLayout.pageBottomPadding
             ),
         ])
+        let fillsAvailableWidth = sectionStack.widthAnchor.constraint(
+            equalTo: document.widthAnchor,
+            constant: -SettingsLayout.pageHorizontalPadding * 2
+        )
+        fillsAvailableWidth.priority = .defaultHigh
+        fillsAvailableWidth.isActive = true
+        let viewportWidth = document.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor)
+        viewportWidth.priority = .init(rawValue: 999)
+        viewportWidth.isActive = true
         applyTheme()
-    }
-
-    private func sizeDocumentToViewport() {
-        guard !isSizingDocument else { return }
-        let viewport = scrollView.contentView.bounds.size
-        guard viewport.width > 0, viewport.height > 0 else { return }
-
-        isSizingDocument = true
-        defer { isSizingDocument = false }
-
-        let width = max(viewport.width, SettingsLayout.contentMinimumWidth)
-        document.setFrameSize(NSSize(width: width, height: max(viewport.height, document.frame.height)))
-        document.layoutSubtreeIfNeeded()
-        let contentHeight = max(leftStack.frame.maxY, rightStack.frame.maxY)
-            + SettingsLayout.pageVerticalPadding
-        document.setFrameSize(NSSize(width: width, height: max(viewport.height, contentHeight)))
     }
 }
 
 @MainActor
-private final class SettingsSplitSummary: NSView, SettingsThemeApplying {
-    private let titleLabel: NSTextField
-    private let detailLabel: NSTextField
+private final class SettingsSectionView: NSView, SettingsThemeApplying {
+    private let header: SettingsSectionHeader
+    private let content: NSView
 
-    init(title: String, detail: String) {
-        titleLabel = NSTextField(labelWithString: title)
-        detailLabel = NSTextField(wrappingLabelWithString: detail)
+    init(header: SettingsSectionHeader, content: NSView) {
+        self.header = header
+        self.content = content
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-        [titleLabel, detailLabel].forEach {
+        header.translatesAutoresizingMaskIntoConstraints = false
+        content.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(header)
+        addSubview(content)
+        NSLayoutConstraint.activate([
+            header.leadingAnchor.constraint(equalTo: leadingAnchor),
+            header.trailingAnchor.constraint(equalTo: trailingAnchor),
+            header.topAnchor.constraint(equalTo: topAnchor),
+            content.leadingAnchor.constraint(equalTo: leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: trailingAnchor),
+            content.topAnchor.constraint(
+                equalTo: header.bottomAnchor,
+                constant: SettingsLayout.sectionHeaderContentGap
+            ),
+            content.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init(coder: NSCoder) {
+        fatalError("init(coder:) is unavailable")
+    }
+
+    func applyTheme() {
+        header.applyTheme()
+        (content as? SettingsThemeApplying)?.applyTheme()
+    }
+}
+
+@MainActor
+private final class SettingsSectionHeader: NSView, SettingsThemeApplying {
+    private let titleLabel: NSTextField
+    private let rule: SettingsDivider
+    private let isDestructive: Bool
+
+    init(title: String, detail _: String, isDestructive: Bool = false) {
+        titleLabel = NSTextField(labelWithString: title.uppercased())
+        rule = SettingsDivider()
+        self.isDestructive = isDestructive
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        [titleLabel, rule].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             addSubview($0)
         }
@@ -274,18 +296,18 @@ private final class SettingsSplitSummary: NSView, SettingsThemeApplying {
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
             titleLabel.topAnchor.constraint(
                 equalTo: topAnchor,
-                constant: SettingsLayout.blockVerticalPadding / 2
+                constant: SettingsLayout.sectionHeaderTopPadding
             ),
-            detailLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
-            detailLabel.trailingAnchor.constraint(equalTo: trailingAnchor),
-            detailLabel.topAnchor.constraint(
-                equalTo: titleLabel.bottomAnchor,
-                constant: SettingsLayout.titleToDetailGap
+            titleLabel.bottomAnchor.constraint(
+                equalTo: bottomAnchor,
+                constant: -SettingsLayout.sectionHeaderBottomPadding
             ),
-            detailLabel.bottomAnchor.constraint(
-                lessThanOrEqualTo: bottomAnchor,
-                constant: -(SettingsLayout.blockVerticalPadding / 2)
+            rule.leadingAnchor.constraint(
+                equalTo: titleLabel.trailingAnchor,
+                constant: SettingsLayout.navigationLabelGap
             ),
+            rule.trailingAnchor.constraint(equalTo: trailingAnchor),
+            rule.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
         ])
         applyTheme()
     }
@@ -296,13 +318,24 @@ private final class SettingsSplitSummary: NSView, SettingsThemeApplying {
     }
 
     func applyTheme() {
-        SettingsLayout.applyTitleStyle(titleLabel)
-        SettingsLayout.applyDetailStyle(detailLabel)
+        if isDestructive {
+            titleLabel.attributedStringValue = NSAttributedString(
+                string: titleLabel.stringValue,
+                attributes: [
+                    .font: AppTheme.font(ofSize: AppTheme.typography.label + 0.5, weight: 600),
+                    .foregroundColor: AppTheme.error.withAlphaComponent(0.8),
+                    .kern: 0.6,
+                ]
+            )
+        } else {
+            SettingsLayout.applyGroupTitleStyle(titleLabel)
+        }
+        rule.applyTheme()
     }
 }
 
 @MainActor
-private final class SettingsSplitDivider: NSView, SettingsThemeApplying {
+private final class SettingsDivider: NSView, SettingsThemeApplying {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         translatesAutoresizingMaskIntoConstraints = false
@@ -348,10 +381,10 @@ private final class SettingsRowStack: NSStackView, SettingsThemeApplying {
         super.init(frame: .zero)
         orientation = .vertical
         alignment = .leading
-        spacing = 0
-        rows.forEach {
-            addArrangedSubview($0)
-            $0.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
+        spacing = SettingsLayout.rowGap
+        for row in rows {
+            addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
         }
     }
 
@@ -446,62 +479,58 @@ final class SettingsRowView: NSView, SettingsThemeApplying {
         helperLabel.setContentCompressionResistancePriority(.required, for: .vertical)
         let preferredHeight = heightAnchor.constraint(equalToConstant: minimumHeight)
         preferredHeight.priority = .init(rawValue: 999)
-        var constraints = [
+        var sharedConstraints = [
             heightAnchor.constraint(greaterThanOrEqualToConstant: minimumHeight),
             preferredHeight,
+        ]
+        if let controlHeight {
+            sharedConstraints.append(control.heightAnchor.constraint(equalToConstant: controlHeight))
+        }
+        let maximumControlWidth = controlWidth ?? SettingsLayout.rowControlMaximumWidth
+        let preferredControlWidth = control.widthAnchor.constraint(
+            equalToConstant: maximumControlWidth
+        )
+        preferredControlWidth.priority = .defaultHigh
+        sharedConstraints += [
+            preferredControlWidth,
+            control.widthAnchor.constraint(lessThanOrEqualToConstant: maximumControlWidth),
+        ]
+        control.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let rowConstraints = [
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
             titleLabel.topAnchor.constraint(
                 equalTo: topAnchor,
-                constant: SettingsLayout.blockVerticalPadding / 2
+                constant: SettingsLayout.rowVerticalPadding
             ),
             titleLabel.trailingAnchor.constraint(
                 equalTo: control.leadingAnchor,
                 constant: -SettingsLayout.rowColumnGap
             ),
-            titleLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: SettingsLayout.rowLabelMinimumWidth),
             helperLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
             helperLabel.topAnchor.constraint(
                 equalTo: titleLabel.bottomAnchor,
                 constant: SettingsLayout.titleToDetailGap
             ),
-            helperLabel.bottomAnchor.constraint(
-                lessThanOrEqualTo: bottomAnchor,
-                constant: -(SettingsLayout.blockVerticalPadding / 2)
-            ),
             helperLabel.trailingAnchor.constraint(
                 equalTo: control.leadingAnchor,
                 constant: -SettingsLayout.rowColumnGap
             ),
+            helperLabel.bottomAnchor.constraint(
+                lessThanOrEqualTo: bottomAnchor,
+                constant: -SettingsLayout.rowVerticalPadding
+            ),
             control.trailingAnchor.constraint(equalTo: trailingAnchor),
+            control.centerYAnchor.constraint(equalTo: centerYAnchor),
             control.topAnchor.constraint(
-                equalTo: topAnchor,
-                constant: SettingsLayout.blockVerticalPadding / 2
+                greaterThanOrEqualTo: topAnchor,
+                constant: SettingsLayout.rowVerticalPadding
             ),
             control.bottomAnchor.constraint(
                 lessThanOrEqualTo: bottomAnchor,
-                constant: -(SettingsLayout.blockVerticalPadding / 2)
+                constant: -SettingsLayout.rowVerticalPadding
             ),
         ]
-        if let controlHeight {
-            constraints.append(control.heightAnchor.constraint(equalToConstant: controlHeight))
-        }
-        if let controlWidth {
-            constraints.append(control.widthAnchor.constraint(equalToConstant: controlWidth))
-        } else {
-            let preferredControlWidth = control.widthAnchor.constraint(
-                equalToConstant: SettingsLayout.rowControlMaximumWidth
-            )
-            preferredControlWidth.priority = .defaultHigh
-            constraints += [
-                preferredControlWidth,
-                control.widthAnchor.constraint(
-                    lessThanOrEqualToConstant: SettingsLayout.rowControlMaximumWidth
-                ),
-                control.widthAnchor.constraint(greaterThanOrEqualToConstant: SettingsLayout.rowControlMinimumWidth),
-            ]
-            control.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        }
-        NSLayoutConstraint.activate(constraints)
+        NSLayoutConstraint.activate(sharedConstraints + rowConstraints)
         applyTheme()
     }
 
@@ -515,6 +544,7 @@ final class SettingsRowView: NSView, SettingsThemeApplying {
         SettingsLayout.applyDetailStyle(helperLabel)
         (control as? SettingsThemeApplying)?.applyTheme()
     }
+
 }
 
 @MainActor
@@ -527,9 +557,9 @@ final class SettingsValueLabel: NSTextField, SettingsThemeApplying {
         isBordered = false
         drawsBackground = false
         isBezeled = false
-        lineBreakMode = .byWordWrapping
+        lineBreakMode = .byCharWrapping
         maximumNumberOfLines = 0
-        alignment = .right
+        alignment = .left
         setContentCompressionResistancePriority(.required, for: .vertical)
         applyTheme()
     }
@@ -556,10 +586,13 @@ final class SettingsMessageRow: NSView, SettingsThemeApplying {
         label.translatesAutoresizingMaskIntoConstraints = false
         label.setContentCompressionResistancePriority(.required, for: .vertical)
         addSubview(label)
+        let preferredHeight = heightAnchor.constraint(equalToConstant: SettingsLayout.rowHeight)
+        preferredHeight.priority = .init(rawValue: 999)
         NSLayoutConstraint.activate([
             heightAnchor.constraint(greaterThanOrEqualToConstant: SettingsLayout.rowHeight),
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: SettingsLayout.pageHorizontalPadding),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -SettingsLayout.pageHorizontalPadding),
+            preferredHeight,
+            label.leadingAnchor.constraint(equalTo: leadingAnchor),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor),
             label.topAnchor.constraint(
                 equalTo: topAnchor,
                 constant: SettingsLayout.blockVerticalPadding / 2

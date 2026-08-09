@@ -143,6 +143,7 @@ final class WorkspaceViewController: NSViewController {
     private var workspaceBottomConstraint: NSLayoutConstraint!
     private var workspaceTrailingConstraint: NSLayoutConstraint!
     private var workspaceHeaderHeightConstraint: NSLayoutConstraint!
+    private var workspaceMinimumWidthConstraint: NSLayoutConstraint!
 
     private var sidebarPresentation: SidebarPresentation
     private var leftPanelWidth = AppTheme.leftPanelWidth
@@ -459,6 +460,9 @@ final class WorkspaceViewController: NSViewController {
     private func configureConstraints(in rootView: NSView) {
         let leftPanel = leftPanelController.view
 
+        workspaceMinimumWidthConstraint = rootView.widthAnchor.constraint(
+            greaterThanOrEqualToConstant: AppTheme.minimumWindowWidth
+        )
         leftWidthConstraint = leftPanel.widthAnchor.constraint(equalToConstant: leftPanelWidth)
         leftPanelLeadingConstraint = leftPanel.leadingAnchor.constraint(equalTo: rootView.leadingAnchor)
         leftPanelTopConstraint = leftPanel.topAnchor.constraint(equalTo: rootView.topAnchor)
@@ -487,6 +491,7 @@ final class WorkspaceViewController: NSViewController {
             equalToConstant: AppTheme.mainHeaderHeight
         )
         NSLayoutConstraint.activate([
+            workspaceMinimumWidthConstraint,
             leftPanelLeadingConstraint,
             leftPanelTopConstraint,
             leftPanelBottomConstraint,
@@ -2168,30 +2173,33 @@ final class WorkspaceViewController: NSViewController {
 
     private func updateWindowMinimumSize() {
         guard let window = view.window else { return }
-
-        let settingsMinimumWidth = AppTheme.settingsRailWidth
+        let sidebarWidth = leftPanelWidth
+        let settingsWidth = AppTheme.settingsRailWidth
             + SettingsLayout.dividerThickness
-            + SettingsLayout.contentMinimumWidth
-        let sidebarWidth = sidebarPresentation == .docked ? leftPanelWidth : 0
-        let minimumWidth = max(
-            AppTheme.minimumWindowWidth,
-            sidebarWidth + AppTheme.workspaceInset * 2 + settingsMinimumWidth
+            + SettingsLayout.minimumPageWidth
+        let requiredWidth = sidebarWidth
+            + AppTheme.workspaceInset * 2
+            + settingsWidth
+        let minimumWidth = max(AppTheme.minimumWindowWidth, requiredWidth)
+        workspaceMinimumWidthConstraint.constant = minimumWidth
+        window.minSize = NSSize(
+            width: minimumWidth,
+            height: AppTheme.minimumWindowHeight
         )
-
-        window.minSize = NSSize(width: minimumWidth, height: 600)
-        guard window.contentView?.bounds.width ?? 0 < minimumWidth else { return }
-        window.setContentSize(
-            NSSize(width: minimumWidth, height: window.contentView?.bounds.height ?? 600)
-        )
+        if window.contentView?.bounds.width ?? 0 < minimumWidth {
+            window.setContentSize(
+                NSSize(
+                    width: minimumWidth,
+                    height: window.contentView?.bounds.height ?? AppTheme.minimumWindowHeight
+                )
+            )
+        }
     }
 
     private func resizeLeftPanel(by delta: CGFloat) {
         guard sidebarPresentation == .docked else { return }
-        let minimumCenterWidth = AppTheme.settingsRailWidth
-            + SettingsLayout.dividerThickness
-            + SettingsLayout.contentMinimumWidth
         let maximumFromWindow = (leftResizeWindowWidth ?? view.bounds.width)
-            - minimumCenterWidth
+            - AppTheme.minimumCenterWidth
             - AppTheme.workspaceInset * 2
         let maximum = max(
             AppTheme.leftPanelRange.lowerBound,

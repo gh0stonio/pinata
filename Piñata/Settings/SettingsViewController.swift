@@ -42,7 +42,7 @@ final class SettingsViewController: NSViewController {
             title: "CODING",
             pages: [
                 SettingsPageItem(
-                    title: "Git & PR",
+                    title: "Git",
                     image: GitPullRequestIcon.image,
                     content: gitContent
                 ),
@@ -275,7 +275,7 @@ private final class SettingsNavigationGroupView: NSView, SettingsThemeApplying {
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 0
+        stack.spacing = SettingsLayout.navigationRowGap
         stack.setCustomSpacing(SettingsLayout.navigationLabelGap, after: label)
         addSubview(stack)
         NSLayoutConstraint.activate([

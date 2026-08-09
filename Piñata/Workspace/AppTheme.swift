@@ -33,7 +33,7 @@ struct AppButtonAppearance {
 @MainActor
 enum AppTheme {
     static let leftPanelWidth: CGFloat = 264
-    static let settingsRailWidth: CGFloat = 210
+    static let settingsRailWidth: CGFloat = 260
     static let panelContentInset: CGFloat = 14
     static let fullScreenSidebarWidth: CGFloat = 320
     static let leftPanelRange: ClosedRange<CGFloat> = 200...440
@@ -46,7 +46,15 @@ enum AppTheme {
     static let terminalVerticalInset: CGFloat = 2
     static let workspaceCornerRadius: CGFloat = 10
     static let minimumCenterWidth: CGFloat = 480
-    static let minimumWindowWidth: CGFloat = 1_250
+    static var minimumWindowWidth: CGFloat {
+        leftPanelWidth
+            + workspaceInset * 2
+            + settingsRailWidth
+            + SettingsLayout.dividerThickness
+            + SettingsLayout.minimumPageWidth
+    }
+    static let minimumWindowHeight: CGFloat = 600
+    static let defaultWindowHeight: CGFloat = 640
     static let resizeHandleWidth: CGFloat = 10
     static let keyboardResizeStep: CGFloat = 12
     static let sidebarSectionSpacing: CGFloat = 22
@@ -74,6 +82,7 @@ enum AppTheme {
     static let taskModalCancelButtonMinimumWidth: CGFloat = 64
     static let taskModalCreateButtonMinimumWidth: CGFloat = 96
     static let taskModalButtonHorizontalPadding: CGFloat = 24
+    static let taskModalButtonImageGap: CGFloat = 6
     static let taskModalButtonSpacing: CGFloat = 12
     static let taskModalButtonCornerRadius: CGFloat = 7
     static let taskModalRowHeight: CGFloat = 35
@@ -305,9 +314,9 @@ enum AppTheme {
 
         switch role {
         case .accent:
-            let foreground = hovered ? panelAccentHoverIcon : panelAccentIcon
+            let foreground = panelAccentIcon
             return AppButtonAppearance(
-                background: hovered ? panelAccentHoverBackground : panelAccentBackground,
+                background: panelAccentBackground,
                 foreground: foreground,
                 border: foreground.withAlphaComponent(0.55),
                 borderWidth: 1
@@ -357,7 +366,7 @@ enum AppTheme {
         case .segmented:
             return AppButtonAppearance(
                 background: selected
-                    ? hovered ? interactiveHoverBackground : controlSelection
+                    ? controlSelection
                     : hovered ? interactiveHoverBackground : .clear,
                 foreground: selected || hovered ? interactiveHoverForeground : secondaryText,
                 border: .clear,
@@ -523,6 +532,7 @@ class AppHoverView: NSView {
         )
         addTrackingArea(trackingArea)
         trackingAreaReference = trackingArea
+        updateHoverStateForCurrentPointer()
     }
 
     override func mouseEntered(with event: NSEvent) {
@@ -533,10 +543,23 @@ class AppHoverView: NSView {
         setHovering(false)
     }
 
+    func refreshHoverState() {
+        updateHoverStateForCurrentPointer()
+    }
+
     private func setHovering(_ hovering: Bool) {
         guard isHovering != hovering else { return }
         isHovering = hovering
         hoverStateDidChange()
+    }
+
+    private func updateHoverStateForCurrentPointer() {
+        guard let window else {
+            setHovering(false)
+            return
+        }
+        let pointInWindow = window.convertPoint(fromScreen: NSEvent.mouseLocation)
+        setHovering(bounds.contains(convert(pointInWindow, from: nil)))
     }
 }
 

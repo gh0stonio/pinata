@@ -16,6 +16,7 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
     private var selectedRepositoryID: UUID?
     private var contextTask: Task<Void, Never>?
     private var registrationTask: Task<Void, Never>?
+    private var removalModal: DeleteTaskModalView?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -31,7 +32,12 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
     }
 
     func scrollToTop() {
-        detailView?.scrollToTop() ?? page.scrollToTop()
+        if let detailView {
+            detailView.scrollToTop()
+        } else {
+            reloadRepositories()
+            page.scrollToTop()
+        }
     }
 
     private func resetToList() {
@@ -86,9 +92,12 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
         repositoryRows.orientation = .vertical
         repositoryRows.alignment = .leading
         repositoryRows.spacing = 0
+        repositoryRows.setContentHuggingPriority(.required, for: .vertical)
+        registerAction.setContentHuggingPriority(.required, for: .vertical)
         repositoryContent.addArrangedSubview(repositoryRows)
         repositoryContent.addArrangedSubview(registerAction)
         repositoryContent.addArrangedSubview(errorLabel)
+        repositoryContent.setCustomSpacing(8, after: repositoryRows)
         errorLabel.widthAnchor.constraint(equalTo: repositoryContent.widthAnchor).isActive = true
         repositoryRows.widthAnchor.constraint(equalTo: repositoryContent.widthAnchor).isActive = true
         registerAction.widthAnchor.constraint(equalTo: repositoryContent.widthAnchor).isActive = true
@@ -261,6 +270,7 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
     private func showDetails(_ details: RepositoryDetailView) {
         detailView?.removeFromSuperview()
         details.onBack = { [weak self] in self?.closeDetails() }
+        details.onRemove = { [weak self] repository in self?.confirmRemoval(of: repository) }
         addSubview(details)
         NSLayoutConstraint.activate([
             details.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -270,6 +280,43 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
         ])
         detailView = details
         page.isHidden = true
+    }
+
+    private func confirmRemoval(of repository: RegisteredRepository) {
+        guard removalModal == nil else { return }
+        let modal = DeleteTaskModalView(
+            title: "Remove \"\(repository.name)\"?",
+            detail: "This unregisters the repository from Piñata. Its files, worktrees, and existing task attachments stay in place.",
+            actionTitle: "Remove"
+        )
+        modal.onCancel = { [weak self] in self?.dismissRemovalModal() }
+        modal.onDelete = { [weak self] in self?.remove(repository) }
+        let host = window?.contentView ?? self
+        host.addSubview(modal)
+        NSLayoutConstraint.activate([
+            modal.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            modal.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            modal.topAnchor.constraint(equalTo: host.topAnchor),
+            modal.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+        removalModal = modal
+    }
+
+    private func dismissRemovalModal() {
+        removalModal?.removeFromSuperview()
+        removalModal = nil
+    }
+
+    private func remove(_ repository: RegisteredRepository) {
+        do {
+            repositories = try store.remove(id: repository.id)
+            dismissRemovalModal()
+            closeDetails()
+        } catch {
+            dismissRemovalModal()
+            closeDetails()
+            setError("Could not remove repository: \(error.localizedDescription)")
+        }
     }
 
     private func save(_ repository: RegisteredRepository) -> Bool {
@@ -518,8 +565,8 @@ private enum RepositoryDetailText {
         title: "Worktrees",
         detail: "Overrides for this repository only."
     )
-    static let localCheckout = RepositoryDetailCopy(
-        title: "Local checkout",
+    static let checkout = RepositoryDetailCopy(
+        title: "Repository checkout",
         detail: "Where this repository lives"
     )
     static let organization = RepositoryDetailCopy(
@@ -560,12 +607,13 @@ private enum RepositoryDetailText {
 private final class RepositoryDetailView: NSView, NSTextFieldDelegate, SettingsThemeApplying {
     var onBack: (() -> Void)?
     var onSave: ((RegisteredRepository) -> Bool)?
+    var onRemove: ((RegisteredRepository) -> Void)?
 
     private var repository: RegisteredRepository
     private let context: RepositoryContext?
     private let errorMessage: String?
     private let breadcrumb: RepositoryBreadcrumbView
-    private let page = SettingsSplitPageView()
+    private let page = SettingsSplitPageView(topPadding: SettingsLayout.detailPageTopPadding)
     private let branchPopup = SettingsPopupButton()
     private let worktreeField = SettingsTextField()
 
@@ -580,6 +628,7 @@ private final class RepositoryDetailView: NSView, NSTextFieldDelegate, SettingsT
         breadcrumb = RepositoryBreadcrumbView(repositoryName: repository.name)
         super.init(frame: .zero)
         installLayout()
+        page.showVerticalScroller()
         applyTheme()
     }
 
@@ -603,12 +652,12 @@ private final class RepositoryDetailView: NSView, NSTextFieldDelegate, SettingsT
         addSubview(page)
         NSLayoutConstraint.activate([
             breadcrumb.leadingAnchor.constraint(
-                equalTo: leadingAnchor,
-                constant: SettingsLayout.pageHorizontalPadding
+                equalTo: page.contentLeadingAnchor,
+                constant: -SettingsLayout.breadcrumbBackOffset
             ),
             breadcrumb.topAnchor.constraint(
                 equalTo: topAnchor,
-                constant: SettingsLayout.blockVerticalPadding / 2
+                constant: SettingsLayout.detailHeaderTopPadding
             ),
             breadcrumb.heightAnchor.constraint(equalToConstant: SettingsLayout.breadcrumbHeight),
             page.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -627,16 +676,18 @@ private final class RepositoryDetailView: NSView, NSTextFieldDelegate, SettingsT
                 detail: "Git metadata could not be loaded.",
                 content: SettingsMessageRow(errorMessage)
             )
+            installRemovalSection()
             return
         }
 
         guard let context else {
             installSkeleton()
+            installRemovalSection()
             return
         }
 
         let sourceRows = [
-            makeValueRow(RepositoryDetailText.localCheckout, value: repository.path),
+            makeValueRow(RepositoryDetailText.checkout, value: repository.path),
             makeValueRow(
                 RepositoryDetailText.organization,
                 value: repository.organization ?? "None"
@@ -701,6 +752,28 @@ private final class RepositoryDetailView: NSView, NSTextFieldDelegate, SettingsT
             detail: RepositoryDetailText.worktrees.detail,
             content: settingsRowStack(worktreeRows)
         )
+        installRemovalSection()
+    }
+
+    private func installRemovalSection() {
+        let action = RepositoryRemoveActionView()
+        action.onAction = { [weak self] in
+            guard let self else { return }
+            self.onRemove?(self.repository)
+        }
+        let row = SettingsRowView(
+            title: "Remove repository",
+            description: "Unregister it from Piñata. Its files and worktrees stay in place.",
+            control: action,
+            controlWidth: RepositoryRemoveActionView.width,
+            controlHeight: RepositoryRemoveActionView.height
+        )
+        page.addSection(
+            title: "Danger zone",
+            detail: "",
+            content: row,
+            isDestructive: true
+        )
     }
 
     private func installSkeleton() {
@@ -708,7 +781,7 @@ private final class RepositoryDetailView: NSView, NSTextFieldDelegate, SettingsT
             title: RepositoryDetailText.source.title,
             detail: RepositoryDetailText.source.detail,
             content: settingsRowStack([
-                makeSkeletonRow(RepositoryDetailText.localCheckout),
+                makeSkeletonRow(RepositoryDetailText.checkout),
                 makeSkeletonRow(RepositoryDetailText.organization),
                 makeSkeletonRow(RepositoryDetailText.origin),
             ])
@@ -741,6 +814,7 @@ private final class RepositoryDetailView: NSView, NSTextFieldDelegate, SettingsT
             title: copy.title,
             description: copy.detail,
             control: SettingsValueLabel(value),
+            controlWidth: SettingsLayout.repositoryPathControlWidth,
             controlHeight: nil
         )
     }
@@ -753,6 +827,7 @@ private final class RepositoryDetailView: NSView, NSTextFieldDelegate, SettingsT
             title: copy.title,
             description: copy.detail,
             control: control,
+            controlWidth: SettingsLayout.repositoryPathControlWidth,
             minimumHeight: SettingsLayout.rowHeight
         )
     }
@@ -762,6 +837,7 @@ private final class RepositoryDetailView: NSView, NSTextFieldDelegate, SettingsT
             title: copy.title,
             description: copy.detail,
             control: SettingsSkeletonValueView(),
+            controlWidth: SettingsLayout.repositoryPathControlWidth,
             controlHeight: SettingsLayout.skeletonHeight,
             minimumHeight: SettingsLayout.rowHeight
         )
@@ -793,6 +869,52 @@ private final class RepositoryDetailView: NSView, NSTextFieldDelegate, SettingsT
             worktreeField.stringValue = previousPath ?? ""
         }
     }
+}
+
+@MainActor
+private final class RepositoryRemoveActionView: NSView, SettingsThemeApplying {
+    static let width: CGFloat = 100
+    static let height: CGFloat = 28
+
+    var onAction: (() -> Void)?
+
+    private let button = ModalActionButton(
+        title: "Remove",
+        primary: false,
+        destructive: true
+    )
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        translatesAutoresizingMaskIntoConstraints = false
+        button.image = NSImage(systemSymbolName: "trash", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 12, weight: .medium))
+        button.imagePosition = .imageLeading
+        button.imageHugsTitle = true
+        button.imageScaling = .scaleProportionallyDown
+        button.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(button)
+        button.target = self
+        button.action = #selector(removeRepository)
+        button.setAccessibilityLabel("Remove repository")
+        NSLayoutConstraint.activate([
+            button.leadingAnchor.constraint(equalTo: leadingAnchor),
+            button.trailingAnchor.constraint(equalTo: trailingAnchor),
+            button.topAnchor.constraint(equalTo: topAnchor),
+            button.bottomAnchor.constraint(equalTo: bottomAnchor),
+            button.heightAnchor.constraint(equalToConstant: Self.height),
+        ])
+        applyTheme()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+
+    func applyTheme() {
+        button.applyTheme()
+    }
+
+    @objc private func removeRepository() { onAction?() }
 }
 
 @MainActor
