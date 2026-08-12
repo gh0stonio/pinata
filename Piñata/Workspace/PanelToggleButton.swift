@@ -142,6 +142,7 @@ final class WorkspaceHeaderView: NSView {
 
     func setPanelVisible(_ visible: Bool) {
         panelButton.panelVisible = visible
+        panelButton.isHidden = visible
     }
 
     func applyTheme() {
@@ -466,6 +467,8 @@ final class PanelToggleButton: AppButton {
         )
         imagePosition = .imageOnly
         imageScaling = .scaleProportionallyDown
+        setAccessibilityElement(true)
+        setAccessibilityRole(.button)
         setAccessibilityLabel(accessibilityLabel)
 
         NSLayoutConstraint.activate([

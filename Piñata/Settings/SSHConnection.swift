@@ -307,6 +307,7 @@ enum SSHCommand {
             "--", connection.host,
             command.map(shellQuote).joined(separator: " "),
         ]
+        process.standardInput = FileHandle.nullDevice
         return process
     }
 
@@ -315,7 +316,7 @@ enum SSHCommand {
         if value.hasPrefix("~/") {
             return "\"$HOME\"/\(shellQuote(String(value.dropFirst(2))))"
         }
-        return "'\(value.replacingOccurrences(of: "'", with: "'\\\"'\\\"'"))'"
+        return "'\(value.replacingOccurrences(of: "'", with: "'\"'\"'"))'"
     }
 }
 
@@ -387,6 +388,309 @@ enum RemoteDirectoryInspectionError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .failed(let message): message
+        }
+    }
+}
+
+struct FileTreeEntry: Codable, Equatable, Sendable {
+    let path: String
+    let isDirectory: Bool
+    let displayName: String?
+
+    init(path: String, isDirectory: Bool, displayName: String? = nil) {
+        self.path = path
+        self.isDirectory = isDirectory
+        self.displayName = displayName
+    }
+
+    var name: String {
+        if let displayName { return displayName }
+        var end = path.endIndex
+        while end > path.startIndex, path[path.index(before: end)] == "/" {
+            end = path.index(before: end)
+        }
+        guard end > path.startIndex else { return path }
+        let trimmed = path[..<end]
+        guard let separator = trimmed.lastIndex(of: "/") else { return String(trimmed) }
+        return String(trimmed[trimmed.index(after: separator)...])
+    }
+}
+
+struct FileTreeCacheKey: Codable, Hashable, Sendable {
+    enum Target: Codable, Hashable, Sendable {
+        case local
+        case ssh(UUID, String)
+    }
+
+    let target: Target
+    let path: String
+
+    init(path: String, target: TerminalTarget) {
+        self.path = path
+        self.target = switch target {
+        case .local: .local
+        case .ssh(let connection): .ssh(connection.id, connection.host)
+        }
+    }
+}
+
+struct FileTreeCache: Codable, Equatable, Sendable {
+    let key: FileTreeCacheKey
+    let entries: [String: [FileTreeEntry]]
+    let expandedPaths: Set<String>
+    let updatedAt: Date
+}
+
+struct FileTreeCacheStore: Sendable {
+    static let maximumCacheCount = 24
+
+    private let fileURL: URL
+
+    init(fileURL: URL? = nil, fileManager: FileManager = .default) {
+        if let fileURL {
+            self.fileURL = fileURL
+        } else {
+            let isTesting = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            let directory = isTesting
+                ? fileManager.temporaryDirectory.appendingPathComponent(
+                    "dev.pinata.app-tests",
+                    isDirectory: true
+                )
+                : fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                    .appendingPathComponent(
+                        Bundle.main.bundleIdentifier ?? "dev.pinata.app",
+                        isDirectory: true
+                    )
+            self.fileURL = directory.appendingPathComponent("file-tree-cache-v1.json")
+        }
+    }
+
+    func load() throws -> [FileTreeCacheKey: FileTreeCache] {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: fileURL.path) else { return [:] }
+        let caches = try JSONDecoder().decode([FileTreeCache].self, from: Data(contentsOf: fileURL))
+        let deduplicated = caches.reduce(
+            into: [FileTreeCacheKey: FileTreeCache]()
+        ) { result, cache in
+            if result[cache.key]?.updatedAt ?? .distantPast < cache.updatedAt {
+                result[cache.key] = cache
+            }
+        }
+        let retainedKeys = Set(
+            deduplicated.values
+                .sorted { $0.updatedAt > $1.updatedAt }
+                .prefix(Self.maximumCacheCount)
+                .map(\.key)
+        )
+        return deduplicated.filter { retainedKeys.contains($0.key) }
+    }
+
+    func save(_ caches: [FileTreeCacheKey: FileTreeCache]) throws {
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(
+            at: fileURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let retained = caches.values
+            .sorted { $0.updatedAt > $1.updatedAt }
+            .prefix(Self.maximumCacheCount)
+        try JSONEncoder().encode(Array(retained)).write(to: fileURL, options: .atomic)
+    }
+}
+
+enum FileTreeInspectionError: LocalizedError {
+    case failed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .failed(let message): message
+        }
+    }
+}
+
+struct FileTreeInspector: Sendable {
+    func children(at path: String, target: TerminalTarget) throws -> [FileTreeEntry] {
+        switch target {
+        case .local:
+            return try localChildren(at: path)
+        case .ssh(let connection):
+            guard let entries = try remoteChildren(at: [path], connection: connection)[path] else {
+                throw FileTreeInspectionError.failed("Remote folder is unavailable.")
+            }
+            return entries
+        }
+    }
+
+    func children(
+        at paths: [String],
+        target: TerminalTarget
+    ) throws -> [String: [FileTreeEntry]] {
+        guard !paths.isEmpty else { return [:] }
+        switch target {
+        case .local:
+            return paths.reduce(into: [:]) { entries, path in
+                entries[path] = try? localChildren(at: path)
+            }
+        case .ssh(let connection):
+            return try remoteChildren(at: paths, connection: connection)
+        }
+    }
+
+    func directorySignatures(
+        at paths: [String],
+        connection: SSHConnection
+    ) throws -> [String: String] {
+        guard !paths.isEmpty else { return [:] }
+        let script = paths.enumerated().map { index, path in
+            let root = SSHCommand.shellQuote(path)
+            return "value=$(stat -c '%Y:%Z:%s' \(root) 2>/dev/null || stat -f '%m:%c:%z' \(root) 2>/dev/null || printf missing); printf '\(index)\\0%s\\0' \"$value\""
+        }.joined(separator: "; ")
+        let fields = try remoteOutput(script: script, connection: connection)
+            .split(separator: "\0", omittingEmptySubsequences: true)
+        var signatures: [String: String] = [:]
+        var index = fields.startIndex
+        while index < fields.endIndex {
+            let signatureIndex = fields.index(after: index)
+            guard signatureIndex < fields.endIndex,
+                  let pathIndex = Int(fields[index]),
+                  paths.indices.contains(pathIndex)
+            else { break }
+            signatures[paths[pathIndex]] = String(fields[signatureIndex])
+            index = fields.index(after: signatureIndex)
+        }
+        return signatures
+    }
+
+    private func localChildren(at path: String) throws -> [FileTreeEntry] {
+        let keys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey]
+        let urls = try FileManager.default.contentsOfDirectory(
+            at: URL(fileURLWithPath: path),
+            includingPropertiesForKeys: Array(keys),
+            options: []
+        )
+        return Self.sort(urls.map { url in
+            let values = try? url.resourceValues(forKeys: keys)
+            return FileTreeEntry(
+                path: url.path,
+                isDirectory: values?.isDirectory == true && values?.isSymbolicLink != true
+            )
+        })
+    }
+
+    private func remoteChildren(
+        at paths: [String],
+        connection: SSHConnection
+    ) throws -> [String: [FileTreeEntry]] {
+        let output = try remoteOutput(
+            script: Self.remoteListingScript(paths: paths),
+            connection: connection
+        )
+        return Self.parseBatchEntries(output, paths: paths)
+    }
+
+    private func remoteOutput(
+        script: String,
+        connection: SSHConnection
+    ) throws -> String {
+        let fileManager = FileManager.default
+        let outputURL = fileManager.temporaryDirectory
+            .appendingPathComponent("pinata-file-tree-\(UUID().uuidString).out")
+        let errorURL = fileManager.temporaryDirectory
+            .appendingPathComponent("pinata-file-tree-\(UUID().uuidString).err")
+        defer {
+            try? fileManager.removeItem(at: outputURL)
+            try? fileManager.removeItem(at: errorURL)
+        }
+
+        guard fileManager.createFile(atPath: outputURL.path, contents: nil),
+              fileManager.createFile(atPath: errorURL.path, contents: nil) else {
+            throw FileTreeInspectionError.failed("Could not prepare file browser.")
+        }
+
+        let output = try FileHandle(forWritingTo: outputURL)
+        let error = try FileHandle(forWritingTo: errorURL)
+        defer {
+            try? output.close()
+            try? error.close()
+        }
+
+        let process = SSHCommand.makeProcess(connection: connection, command: ["sh", "-lc", script])
+        process.standardOutput = output
+        process.standardError = error
+        try process.run()
+
+        let deadline = Date().addingTimeInterval(20)
+        while process.isRunning {
+            if Task.isCancelled {
+                process.terminate()
+                process.waitUntilExit()
+                throw CancellationError()
+            }
+            if Date() >= deadline {
+                process.terminate()
+                process.waitUntilExit()
+                throw FileTreeInspectionError.failed("Remote file listing timed out.")
+            }
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+
+        try output.synchronize()
+        try error.synchronize()
+        let stdout = String(decoding: try Data(contentsOf: outputURL), as: UTF8.self)
+        let stderr = String(decoding: try Data(contentsOf: errorURL), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard process.terminationStatus == 0 else {
+            throw FileTreeInspectionError.failed(stderr.isEmpty ? "Could not read remote files." : stderr)
+        }
+        return stdout
+    }
+
+    static func remoteListingScript(paths: [String]) -> String {
+        paths.enumerated().map { index, path in
+            let root = SSHCommand.shellQuote(path)
+            return "if [ -d \(root) ]; then printf 'r\\0\(index)\\0%s\\0' \(root); for entry in \(root)/* \(root)/.[!.]* \(root)/..?*; do [ -e \"$entry\" ] || [ -L \"$entry\" ] || continue; if [ -d \"$entry\" ] && [ ! -L \"$entry\" ]; then printf 'd\\0\(index)\\0%s\\0' \"$entry\"; else printf 'f\\0\(index)\\0%s\\0' \"$entry\"; fi; done; fi"
+        }.joined(separator: "; ")
+    }
+
+    static func parseBatchEntries(
+        _ output: String,
+        paths: [String]
+    ) -> [String: [FileTreeEntry]] {
+        var entries: [String: [FileTreeEntry]] = [:]
+        let fields = output.split(separator: "\0", omittingEmptySubsequences: true)
+        var fieldIndex = fields.startIndex
+        while fieldIndex < fields.endIndex {
+            let indexField = fields.index(after: fieldIndex)
+            let pathField = fields.index(indexField, offsetBy: 1, limitedBy: fields.endIndex)
+            guard indexField < fields.endIndex,
+                  let pathField,
+                  pathField < fields.endIndex,
+                  fields[fieldIndex] == "r"
+                    || fields[fieldIndex] == "d"
+                    || fields[fieldIndex] == "f",
+                  let index = Int(fields[indexField]),
+                  paths.indices.contains(index)
+            else { break }
+            let root = paths[index]
+            if fields[fieldIndex] == "r" {
+                entries[root] = []
+            } else if entries[root] != nil {
+                entries[root]?.append(
+                    FileTreeEntry(
+                        path: String(fields[pathField]),
+                        isDirectory: fields[fieldIndex] == "d"
+                    )
+                )
+            }
+            fieldIndex = fields.index(after: pathField)
+        }
+        return entries.mapValues(sort)
+    }
+
+    private static func sort(_ entries: [FileTreeEntry]) -> [FileTreeEntry] {
+        entries.sorted { lhs, rhs in
+            if lhs.isDirectory != rhs.isDirectory { return lhs.isDirectory }
+            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
         }
     }
 }

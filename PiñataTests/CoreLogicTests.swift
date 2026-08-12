@@ -188,6 +188,29 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertEqual(RemoteDirectoryInspector.parent(of: "~"), nil)
         XCTAssertEqual(RemoteDirectoryInspector.parent(of: "/"), nil)
 
+        XCTAssertEqual(
+            FileTreeEntry(path: "/tmp/task-slug", isDirectory: true, displayName: "web-ui").name,
+            "web-ui"
+        )
+        XCTAssertEqual(FileTreeEntry(path: "/srv/Sources/", isDirectory: true).name, "Sources")
+        XCTAssertEqual(
+            FileTreeInspector.parseBatchEntries(
+                "r\u{0}0\u{0}/srv\u{0}d\u{0}0\u{0}/srv/api\u{0}f\u{0}0\u{0}/srv/README.md\u{0}r\u{0}1\u{0}/srv/api\u{0}f\u{0}1\u{0}/srv/api/main\tfile.swift\u{0}r\u{0}2\u{0}/srv/empty\u{0}",
+                paths: ["/srv", "/srv/api", "/srv/empty", "/srv/unavailable"]
+            ),
+            [
+                "/srv": [
+                    FileTreeEntry(path: "/srv/api", isDirectory: true),
+                    FileTreeEntry(path: "/srv/README.md", isDirectory: false),
+                ],
+                "/srv/api": [
+                    FileTreeEntry(path: "/srv/api/main\tfile.swift", isDirectory: false),
+                ],
+                "/srv/empty": [],
+            ]
+        )
+        XCTAssertEqual(SSHCommand.shellQuote("it's here"), "'it'\"'\"'s here'")
+
         let process = SSHCommand.makeProcess(
             connection: SSHConnection(name: "Build", host: "build"),
             command: ["pwd"]
@@ -203,6 +226,221 @@ final class CoreLogicTests: XCTestCase {
 
         let task = try XCTUnwrap(JSONDecoder().decode([WorkspaceTask].self, from: data).first)
         XCTAssertFalse(task.isPinned)
+    }
+
+    func testFileTreeCachePersistsEntriesAndExpansion() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FileTreeCacheStore(fileURL: directory.appendingPathComponent("cache.json"))
+        let key = FileTreeCacheKey(path: "/srv/repo", target: .local)
+        let cache = FileTreeCache(
+            key: key,
+            entries: [
+                "/srv/repo": [FileTreeEntry(path: "/srv/repo/Sources", isDirectory: true)],
+                "/srv/repo/Sources": [
+                    FileTreeEntry(path: "/srv/repo/Sources/main.swift", isDirectory: false),
+                ],
+            ],
+            expandedPaths: ["/srv/repo", "/srv/repo/Sources"],
+            updatedAt: Date(timeIntervalSince1970: 1)
+        )
+
+        try store.save([key: cache])
+
+        XCTAssertEqual(try store.load(), [key: cache])
+
+        let caches = Dictionary(uniqueKeysWithValues: (0...FileTreeCacheStore.maximumCacheCount).map {
+            let key = FileTreeCacheKey(path: "/srv/repo/\($0)", target: .local)
+            return (
+                key,
+                FileTreeCache(
+                    key: key,
+                    entries: [:],
+                    expandedPaths: [],
+                    updatedAt: Date(timeIntervalSince1970: TimeInterval($0))
+                )
+            )
+        })
+        try JSONEncoder().encode(Array(caches.values)).write(
+            to: directory.appendingPathComponent("cache.json")
+        )
+        XCTAssertEqual(try store.load().count, FileTreeCacheStore.maximumCacheCount)
+    }
+
+    @MainActor
+    func testFileTreeIconsResolveNamesSuffixesFoldersAndFallbacks() {
+        defer { AppTheme.configure(.defaults) }
+        XCTAssertEqual(
+            FileTreeIconResolver.descriptor(for: "package.json", isDirectory: false).kind,
+            .package
+        )
+        XCTAssertEqual(
+            FileTreeIconResolver.descriptor(for: "View.tsx", isDirectory: false).kind,
+            .react
+        )
+        XCTAssertEqual(
+            FileTreeIconResolver.descriptor(for: ".github", isDirectory: true).kind,
+            .folder
+        )
+        XCTAssertEqual(
+            ["infrastructure", "lib", "components"].map {
+                FileTreeIconResolver.descriptor(for: $0, isDirectory: true).kind
+            },
+            [.folder, .folder, .folder]
+        )
+        XCTAssertEqual(
+            FileTreeIconResolver.descriptor(for: "unknown.zzz", isDirectory: false).kind,
+            .file
+        )
+
+        let swift = FileTreeIconResolver.descriptor(for: "main.swift", isDirectory: false)
+        var settings = UserSettings.defaults
+        settings.fileIconColor = .monochrome
+        AppTheme.configure(settings)
+        XCTAssertEqual(
+            rgbHex(FileTreeIconResolver.tintColor(for: swift)),
+            rgbHex(AppTheme.secondaryText)
+        )
+        settings.fileIconColor = .colored
+        AppTheme.configure(settings)
+        XCTAssertNotEqual(
+            rgbHex(FileTreeIconResolver.tintColor(for: swift)),
+            rgbHex(AppTheme.secondaryText)
+        )
+    }
+
+    @MainActor
+    func testFileTreeIconCoverageStaysBroad() {
+        XCTAssertGreaterThanOrEqual(FileTreeIconKind.allCases.count, 60)
+        XCTAssertGreaterThanOrEqual(FileTreeIconResolver.supportedSuffixCount, 200)
+    }
+
+    @MainActor
+    func testWorkspaceFileOutlineLoadsAndExpandsIncrementally() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let sources = directory.appendingPathComponent("Sources", isDirectory: true)
+        let nested = sources.appendingPathComponent("Nested/Deep", isDirectory: true)
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        _ = FileManager.default.createFile(
+            atPath: directory.appendingPathComponent("README.md").path,
+            contents: Data()
+        )
+        _ = FileManager.default.createFile(
+            atPath: sources.appendingPathComponent("main.swift").path,
+            contents: Data()
+        )
+        _ = FileManager.default.createFile(
+            atPath: nested.appendingPathComponent("deep.swift").path,
+            contents: Data()
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let batch = try FileTreeInspector().children(
+            at: [directory.path, directory.appendingPathComponent("missing").path],
+            target: .local
+        )
+        XCTAssertNotNil(batch[directory.path])
+        XCTAssertNil(batch[directory.appendingPathComponent("missing").path])
+
+        let controller = WorkspacePanelViewController(
+            fileCacheStore: FileTreeCacheStore(
+                fileURL: directory.appendingPathComponent("tree-cache.json")
+            )
+        )
+        _ = controller.view
+        controller.view.frame = NSRect(x: 0, y: 0, width: 240, height: 600)
+        controller.view.layoutSubtreeIfNeeded()
+        controller.setFileRoot(
+            name: "repo",
+            workingDirectory: directory.path,
+            target: .local
+        )
+        let outline = try XCTUnwrap(
+            descendants(of: controller.view).compactMap { $0 as? NSOutlineView }.first
+        )
+        let scrollView = try XCTUnwrap(outline.enclosingScrollView)
+        XCTAssertEqual(
+            outline.tableColumns[0].width,
+            scrollView.contentView.bounds.width,
+            accuracy: 0.5
+        )
+        scrollView.contentView.scroll(to: NSPoint(x: 40, y: 0))
+        XCTAssertEqual(scrollView.contentView.bounds.origin.x, 0, accuracy: 0.5)
+
+        for _ in 0..<100 where outline.numberOfRows < 3 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(outline.numberOfRows, 3)
+        let rootItem = try XCTUnwrap(outline.item(atRow: 0))
+        outline.collapseItem(rootItem)
+        XCTAssertFalse(outline.isItemExpanded(rootItem))
+        controller.panelDidShow()
+        XCTAssertTrue(outline.isItemExpanded(rootItem))
+        let sourcesRow = try XCTUnwrap((0..<outline.numberOfRows).first { row in
+            descendants(of: outline.view(atColumn: 0, row: row, makeIfNecessary: true) ?? NSView())
+                .compactMap { $0 as? NSTextField }
+                .contains { $0.stringValue == "Sources" }
+        })
+
+        outline.expandItem(outline.item(atRow: sourcesRow))
+        XCTAssertTrue(outline.isItemExpanded(outline.item(atRow: sourcesRow)))
+        for _ in 0..<100 where outline.numberOfRows < 5 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(outline.numberOfRows, 5)
+
+        let rowNamed: (String) -> Int? = { name in
+            (0..<outline.numberOfRows).first { row in
+                descendants(
+                    of: outline.view(atColumn: 0, row: row, makeIfNecessary: true) ?? NSView()
+                )
+                .compactMap { $0 as? NSTextField }
+                .contains { $0.stringValue == name }
+            }
+        }
+        let nestedRow = try XCTUnwrap(rowNamed("Nested"))
+        outline.expandItem(outline.item(atRow: nestedRow))
+        for _ in 0..<100 where rowNamed("Deep") == nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let deepRow = try XCTUnwrap(rowNamed("Deep"))
+        outline.expandItem(outline.item(atRow: deepRow))
+        for _ in 0..<100 where outline.numberOfRows < 7 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        let sourcesCell = try XCTUnwrap(
+            outline.view(atColumn: 0, row: sourcesRow, makeIfNecessary: true)
+        )
+        let commandClick = try XCTUnwrap(
+            NSEvent.mouseEvent(
+                with: .leftMouseDown,
+                location: .zero,
+                modifierFlags: .command,
+                timestamp: 0,
+                windowNumber: 0,
+                context: nil,
+                eventNumber: 0,
+                clickCount: 1,
+                pressure: 1
+            )
+        )
+        sourcesCell.mouseDown(with: commandClick)
+        XCTAssertFalse(outline.isItemExpanded(outline.item(atRow: sourcesRow)))
+
+        outline.expandItem(outline.item(atRow: sourcesRow))
+        XCTAssertEqual(outline.numberOfRows, 5)
+        XCTAssertFalse(outline.isItemExpanded(outline.item(atRow: try XCTUnwrap(rowNamed("Nested")))))
+
+        _ = FileManager.default.createFile(
+            atPath: directory.appendingPathComponent("created.txt").path,
+            contents: Data()
+        )
+        for _ in 0..<200 where rowNamed("created.txt") == nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertNotNil(rowNamed("created.txt"))
     }
 
     func testTaskReorderingMovesWithinAndAcrossSections() {
@@ -358,6 +596,7 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertEqual(settings.accentIntensity, UserSettings.defaults.accentIntensity)
         XCTAssertEqual(settings.appFontSize, UserSettings.defaults.appFontSize)
         XCTAssertEqual(settings.terminalFontSize, UserSettings.defaults.terminalFontSize)
+        XCTAssertEqual(settings.fileIconColor, .colored)
     }
 
     func testSettingsStoresRoundTripAndRecoverFromInvalidData() throws {
@@ -371,7 +610,8 @@ final class CoreLogicTests: XCTestCase {
             accent: .azure,
             accentIntensity: .vibrant,
             appFontSize: .large,
-            terminalFontSize: .extraLarge
+            terminalFontSize: .extraLarge,
+            fileIconColor: .monochrome
         )
 
         XCTAssertEqual(settingsStore.load(), .defaults)
@@ -443,6 +683,13 @@ final class CoreLogicTests: XCTestCase {
                 accuracy: 0.001
             )
         }
+
+        let accent = AppTheme.buttonAppearance(role: .accent, hovered: false)
+        let hoveredAccent = AppTheme.buttonAppearance(role: .accent, hovered: true)
+        XCTAssertGreaterThan(
+            hoveredAccent.background.alphaComponent,
+            accent.background.alphaComponent
+        )
 
         XCTAssertEqual(TerminalFontSize.allCases.map(\.points), [10, 11, 12, 13, 14, 15])
     }
@@ -942,6 +1189,15 @@ final class CoreLogicTests: XCTestCase {
         let scrollView = try XCTUnwrap(header.subviews.compactMap { $0 as? NSScrollView }.first)
         let stack = try XCTUnwrap(scrollView.documentView as? NSStackView)
         XCTAssertTrue(stack.arrangedSubviews.last is PanelToggleButton)
+        let workspacePanelToggle = try XCTUnwrap(
+            header.subviews
+                .compactMap { $0 as? PanelToggleButton }
+                .first
+        )
+        header.setPanelVisible(true)
+        XCTAssertTrue(workspacePanelToggle.isHidden)
+        header.setPanelVisible(false)
+        XCTAssertFalse(workspacePanelToggle.isHidden)
         let secondTab = try XCTUnwrap(stack.arrangedSubviews.dropLast().last)
 
         let tabButton = try XCTUnwrap(secondTab as? TabButton)
@@ -994,8 +1250,9 @@ final class CoreLogicTests: XCTestCase {
             repositories: [
                 TaskRepositoryAttachment(repositoryID: repositoryID, name: "clickable-repo"),
             ],
-            isPinned: true
+            isPinned: false
         )
+        let secondTask = WorkspaceTask(title: "Second task")
         let controller = PanelViewController()
         controller.view.frame = NSRect(x: 0, y: 0, width: 264, height: 700)
         var selectedTaskID: UUID?
@@ -1003,8 +1260,8 @@ final class CoreLogicTests: XCTestCase {
         controller.onSelectTask = { selectedTaskID = $0 }
         controller.onSelectRepository = { selectedRepository = $0 }
         controller.updateTasks(
-            [task],
-            selection: nil,
+            [task, secondTask],
+            selection: .repository(TaskRepositoryScope(taskID: task.id, repositoryID: repositoryID)),
             expandedTaskIDs: [task.id],
             taskErrors: [:],
             repositoryErrors: [:],
@@ -1031,6 +1288,31 @@ final class CoreLogicTests: XCTestCase {
             .map(\.stringValue)
         XCTAssertTrue(labels.contains("PINNED"))
         XCTAssertTrue(labels.contains("TASKS"))
+        let taskLabelOrigins = [task.title, secondTask.title].map { title in
+            descendants(of: controller.view)
+                .compactMap { $0 as? NSTextField }
+                .first { $0.stringValue == title }!
+                .convert(.zero, to: controller.view).y
+        }
+        XCTAssertLessThan(
+            abs(taskLabelOrigins[0] - taskLabelOrigins[1]),
+            120,
+            "task origins: \(taskLabelOrigins)"
+        )
+        let repositoryLabel = try XCTUnwrap(
+            descendants(of: controller.view)
+                .compactMap { $0 as? NSTextField }
+                .first { $0.stringValue == "clickable-repo" }
+        )
+        let repositoryFrame = repositoryLabel.superview!.convert(
+            repositoryLabel.superview!.bounds,
+            to: controller.view
+        )
+        XCTAssertEqual(repositoryFrame.minX, AppTheme.sidebarItemInset)
+        XCTAssertEqual(
+            controller.view.bounds.width - repositoryFrame.maxX,
+            AppTheme.sidebarItemInset
+        )
 
         try clickLabel(task.title)
         XCTAssertEqual(selectedTaskID, task.id)
@@ -1038,6 +1320,35 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertEqual(
             selectedRepository,
             TaskRepositoryScope(taskID: task.id, repositoryID: repositoryID)
+        )
+    }
+
+    @MainActor
+    func testWorkspacePanelLayoutKeepsCenterWidthWhenLeftPanelCollapses() {
+        let windowWidth: CGFloat = 1_200
+        let dockedCenter = WorkspacePanelLayout.centerWidth(
+            windowWidth: windowWidth,
+            leftPanelVisible: true,
+            rightPanelVisible: true
+        )
+        let collapsedCenter = WorkspacePanelLayout.centerWidth(
+            windowWidth: windowWidth,
+            leftPanelVisible: false,
+            rightPanelVisible: true
+        )
+
+        XCTAssertEqual(collapsedCenter - dockedCenter, AppTheme.leftPanelWidth)
+        XCTAssertGreaterThanOrEqual(dockedCenter, AppTheme.minimumCenterWidth)
+        XCTAssertEqual(
+            WorkspacePanelLayout.minimumWindowWidth(
+                leftPanelVisible: true,
+                rightPanelVisible: true
+            )
+                - WorkspacePanelLayout.minimumWindowWidth(
+                    leftPanelVisible: false,
+                    rightPanelVisible: true
+                ),
+            AppTheme.leftPanelWidth
         )
     }
 }

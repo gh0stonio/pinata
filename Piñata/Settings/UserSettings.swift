@@ -79,6 +79,11 @@ enum AppFontSize: String, Codable, CaseIterable {
     case large
 }
 
+enum FileIconColorPreference: String, Codable, CaseIterable {
+    case colored
+    case monochrome
+}
+
 enum TerminalFontSize: String, Codable, CaseIterable {
     case tiny
     case extraSmall
@@ -108,6 +113,7 @@ struct UserSettings: Codable, Equatable {
     var accentIntensity: AccentIntensity
     var appFontSize: AppFontSize
     var terminalFontSize: TerminalFontSize
+    var fileIconColor: FileIconColorPreference
 
     static let defaults = UserSettings(
         theme: .dark,
@@ -115,6 +121,7 @@ struct UserSettings: Codable, Equatable {
         accentIntensity: .balanced,
         appFontSize: .regular,
         terminalFontSize: .regular,
+        fileIconColor: .colored,
     )
 }
 
@@ -125,6 +132,7 @@ extension UserSettings {
         case accentIntensity
         case appFontSize
         case terminalFontSize
+        case fileIconColor
     }
 
     init(from decoder: Decoder) throws {
@@ -138,6 +146,8 @@ extension UserSettings {
             ?? defaults.appFontSize
         terminalFontSize = (try? values.decode(TerminalFontSize.self, forKey: .terminalFontSize))
             ?? defaults.terminalFontSize
+        fileIconColor = (try? values.decode(FileIconColorPreference.self, forKey: .fileIconColor))
+            ?? defaults.fileIconColor
     }
 }
 

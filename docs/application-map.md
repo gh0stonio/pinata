@@ -11,6 +11,8 @@ flowchart LR
     Sidebar --> Attachment[Repository workspace]
     Task --> Terminal[Terminal tabs and splits]
     Attachment --> Terminal
+    Task --> Files[Right Files panel]
+    Attachment --> Files
     App --> Settings[Settings]
     Settings --> Appearance[Appearance]
     Settings --> Git[Git and repositories]
@@ -21,6 +23,7 @@ flowchart LR
 | Surface | Purpose | Primary action |
 | --- | --- | --- |
 | Sidebar | Browse pinned and unpinned tasks, then their attachments. | Select, reorder, open task actions. |
+| Right workspace panel | Browse files for the selected task or attachment. | Open Files, expand folders, or resize the panel. |
 | Task workspace | Owns a task's terminal layout. | Open a task terminal or select an attachment. |
 | Repository workspace | Shows one attachment's provisioning state or terminal layout. | Retry a failed worktree or open its terminal. |
 | New task sheet | Creates a task with zero or more repository attachments. | Choose local or enabled SSH repositories. |
@@ -34,7 +37,7 @@ flowchart LR
 | Area | Source | Responsibility |
 | --- | --- | --- |
 | App lifecycle | `PinataApp.swift` | Creates the workspace, menus, and settings window. |
-| Workspace | `Workspace/` | Sidebar, task and attachment selection, task sheets, session snapshot, and shared theme. |
+| Workspace | `Workspace/` | Independent left and right panels, task and attachment selection, file browser, task sheets, session snapshot, and shared theme. |
 | Settings | `Settings/` | Appearance, shared settings layout, repositories, worktree provisioning, and SSH connections. |
 | Terminal | `Terminal/` | Ghostty integration, terminal tabs and splits, and zmx attachment. |
 
@@ -74,6 +77,8 @@ stateDiagram-v2
 
 Closing the app detaches from zmx and preserves the terminal layout. Closing a terminal tab or pane kills its zmx session. A local terminal attaches to bundled zmx. A remote terminal starts `ssh -tt <alias> zmx attach <pane-id>` and offers to install pinned zmx in `~/.local/bin` when absent.
 
+The Files tab remains rooted at the selected workspace's initial working directory. Terminal `cd` commands do not move it. Repository attachments display the repository name even when the worktree folder uses a task slug.
+
 ## Settings hierarchy
 
 ```mermaid
@@ -98,6 +103,9 @@ The settings shell uses the same content gutter, section rhythm, and label/contr
 | Registered repositories | `repositories.json` | Includes local or SSH target and worktree override. |
 | SSH connections | `ssh-connections.json` | Stores display name, OpenSSH alias, and enabled state only. |
 | Workspace and terminal layout | `app-session.json` | Restores valid task, attachment, tab, and split references. |
-| Appearance and sidebar preferences | `UserDefaults` | Theme, accent, typography, panel state, and global worktree base. |
+| File-tree cache | `file-tree-cache-v1.json` | Bounded local and SSH listings plus expanded paths, keyed by root and target. |
+| Appearance and panel preferences | `UserDefaults` | Theme, accent, typography, icon color, sidebar presentation, panel widths, and global worktree base. |
 
 All files are per-user under Application Support, except `UserDefaults`. zmx owns live terminal state and scrollback outside Piñata's stores.
+
+See [File browser architecture](file-browser-architecture.md) for cache, refresh, and performance behavior.

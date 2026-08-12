@@ -52,6 +52,7 @@ enum SettingsLayout {
     static let breadcrumbToContentGap: CGFloat = 2
     static let themeControlWidth: CGFloat = 122
     static let intensityControlWidth: CGFloat = 272
+    static let fileIconColorControlWidth: CGFloat = 210
     static let appFontControlWidth: CGFloat = 180
     static let terminalFontControlWidth: CGFloat = 82
     static let repositoryPathControlWidth: CGFloat = rightColumnWidth

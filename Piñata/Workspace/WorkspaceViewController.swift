@@ -101,6 +101,7 @@ final class WorkspaceViewController: NSViewController {
 
     private static let sidebarDefaultsKey = "pinata.sidebar.presentation.v1"
     private static let leftPanelWidthDefaultsKey = "pinata.panel.left.width.v1"
+    private static let rightPanelWidthDefaultsKey = "pinata.panel.right.width.v1"
     private static let dismissDelay: TimeInterval = 0.30
     private static let exitRevealGracePeriod: TimeInterval = 0.75
     private static let revealAnimationDuration: TimeInterval = 0.12
@@ -113,7 +114,10 @@ final class WorkspaceViewController: NSViewController {
     private let workspaceHeader = WorkspaceHeaderView()
     private let leftPanelController = PanelViewController()
     private let rightPanelController = WorkspacePanelViewController()
-    private let leftResizeHandle = PanelResizeHandle()
+    private let leftResizeHandle = PanelResizeHandle(
+        indicatorOffset: AppTheme.workspaceInset
+    )
+    private let rightResizeHandle = PanelResizeHandle()
     private let taskStore: TaskRegistryStore
     private let sessionStore = AppSessionStore()
     private let repositoryStore = RepositoryRegistryStore()
@@ -139,8 +143,10 @@ final class WorkspaceViewController: NSViewController {
     private var repositoryActionMenu: SidebarActionMenuView?
     private var repositoryActionMenuMouseMonitor: Any?
     private var leftResizeWindowWidth: CGFloat?
+    private var rightResizeWorkspaceWidth: CGFloat?
 
     private var leftWidthConstraint: NSLayoutConstraint!
+    private var rightWidthConstraint: NSLayoutConstraint!
     private var leftPanelLeadingConstraint: NSLayoutConstraint!
     private var leftPanelTopConstraint: NSLayoutConstraint!
     private var leftPanelBottomConstraint: NSLayoutConstraint!
@@ -149,12 +155,15 @@ final class WorkspaceViewController: NSViewController {
     private var workspaceTopConstraint: NSLayoutConstraint!
     private var workspaceBottomConstraint: NSLayoutConstraint!
     private var workspaceTrailingConstraint: NSLayoutConstraint!
+    private var mainColumnTrailingToCard: NSLayoutConstraint!
+    private var mainColumnTrailingToPanel: NSLayoutConstraint!
     private var workspaceHeaderHeightConstraint: NSLayoutConstraint!
     private var workspaceMinimumWidthConstraint: NSLayoutConstraint!
 
     private var sidebarPresentation: SidebarPresentation
     private var rightPanelVisible = false
     private var leftPanelWidth = AppTheme.leftPanelWidth
+    private var rightPanelWidth = AppTheme.rightPanelWidth
     private var fullScreen = false
     private var menuTracking = false
     private var keyEventMonitor: Any?
@@ -210,6 +219,12 @@ final class WorkspaceViewController: NSViewController {
             leftPanelWidth = min(
                 max(CGFloat(defaults.double(forKey: Self.leftPanelWidthDefaultsKey)), AppTheme.leftPanelRange.lowerBound),
                 AppTheme.leftPanelRange.upperBound
+            )
+        }
+        if defaults.object(forKey: Self.rightPanelWidthDefaultsKey) != nil {
+            rightPanelWidth = min(
+                max(CGFloat(defaults.double(forKey: Self.rightPanelWidthDefaultsKey)), AppTheme.rightPanelRange.lowerBound),
+                AppTheme.rightPanelRange.upperBound
             )
         }
         super.init(nibName: nil, bundle: nil)
@@ -439,6 +454,7 @@ final class WorkspaceViewController: NSViewController {
             workspace.tabs.forEach { $0.controller.applyTheme() }
         }
         leftResizeHandle.applyTheme()
+        rightResizeHandle.applyTheme()
         settingsController?.applyTheme()
         newTaskModal?.applyTheme()
         deleteTaskModal?.applyTheme()
@@ -479,6 +495,7 @@ final class WorkspaceViewController: NSViewController {
         rootView.addSubview(leftPanel)
         rootView.addSubview(leftResizeHandle)
         workspaceCard.addSubview(rightPanel)
+        workspaceCard.addSubview(rightResizeHandle)
         updateTaskSidebar()
     }
 
@@ -490,6 +507,7 @@ final class WorkspaceViewController: NSViewController {
             greaterThanOrEqualToConstant: AppTheme.minimumWindowWidth
         )
         leftWidthConstraint = leftPanel.widthAnchor.constraint(equalToConstant: leftPanelWidth)
+        rightWidthConstraint = rightPanel.widthAnchor.constraint(equalToConstant: rightPanelWidth)
         leftPanelLeadingConstraint = leftPanel.leadingAnchor.constraint(equalTo: rootView.leadingAnchor)
         leftPanelTopConstraint = leftPanel.topAnchor.constraint(equalTo: rootView.topAnchor)
         leftPanelBottomConstraint = leftPanel.bottomAnchor.constraint(equalTo: rootView.bottomAnchor)
@@ -516,20 +534,26 @@ final class WorkspaceViewController: NSViewController {
         workspaceHeaderHeightConstraint = workspaceHeader.heightAnchor.constraint(
             equalToConstant: AppTheme.mainHeaderHeight
         )
+        mainColumnTrailingToCard = mainColumn.trailingAnchor.constraint(
+            equalTo: workspaceCard.trailingAnchor
+        )
+        mainColumnTrailingToPanel = mainColumn.trailingAnchor.constraint(
+            equalTo: rightPanel.leadingAnchor
+        )
         NSLayoutConstraint.activate([
             workspaceMinimumWidthConstraint,
             leftPanelLeadingConstraint,
             leftPanelTopConstraint,
             leftPanelBottomConstraint,
             leftWidthConstraint,
-            rightPanel.widthAnchor.constraint(equalToConstant: AppTheme.rightPanelWidth),
+            rightWidthConstraint,
 
             workspaceTopConstraint,
             workspaceBottomConstraint,
             workspaceTrailingConstraint,
 
             mainColumn.leadingAnchor.constraint(equalTo: workspaceCard.leadingAnchor),
-            mainColumn.trailingAnchor.constraint(equalTo: workspaceCard.trailingAnchor),
+            mainColumnTrailingToCard,
             mainColumn.topAnchor.constraint(equalTo: workspaceCard.topAnchor),
             mainColumn.bottomAnchor.constraint(equalTo: workspaceCard.bottomAnchor),
 
@@ -551,6 +575,11 @@ final class WorkspaceViewController: NSViewController {
             leftResizeHandle.topAnchor.constraint(equalTo: rootView.topAnchor),
             leftResizeHandle.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
             leftResizeHandle.widthAnchor.constraint(equalToConstant: AppTheme.resizeHandleWidth),
+
+            rightResizeHandle.centerXAnchor.constraint(equalTo: rightPanel.leadingAnchor),
+            rightResizeHandle.topAnchor.constraint(equalTo: workspaceCard.topAnchor),
+            rightResizeHandle.bottomAnchor.constraint(equalTo: workspaceCard.bottomAnchor),
+            rightResizeHandle.widthAnchor.constraint(equalToConstant: AppTheme.resizeHandleWidth),
 
         ])
     }
@@ -620,6 +649,18 @@ final class WorkspaceViewController: NSViewController {
         leftResizeHandle.onKeyboardResize = { [weak self] command in
             self?.resizeLeftPanel(with: command)
         }
+        rightResizeHandle.onDrag = { [weak self] delta in
+            self?.resizeRightPanel(by: -delta)
+        }
+        rightResizeHandle.onDragBegan = { [weak self] in
+            self?.rightResizeWorkspaceWidth = self?.workspaceCard.bounds.width
+        }
+        rightResizeHandle.onDragEnded = { [weak self] in
+            self?.rightResizeWorkspaceWidth = nil
+        }
+        rightResizeHandle.onKeyboardResize = { [weak self] command in
+            self?.resizeRightPanel(with: command)
+        }
     }
 
     private var activeTerminalWorkspace: TerminalWorkspace? {
@@ -678,6 +719,18 @@ final class WorkspaceViewController: NSViewController {
 
     private func installActiveWorkspace() {
         terminalHost.subviews.forEach { $0.removeFromSuperview() }
+        let workspace = activeTerminalWorkspace
+        let repositoryName: String? = if case .repository(let scope) = activeScope {
+            tasks.first(where: { $0.id == scope.taskID })?
+                .repositories.first(where: { $0.repositoryID == scope.repositoryID })?.name
+        } else {
+            workspace?.title.replacingOccurrences(of: "~/", with: "")
+        }
+        rightPanelController.setFileRoot(
+            name: repositoryName,
+            workingDirectory: workspace?.workingDirectory,
+            target: workspace?.target
+        )
         if activeTaskDeletionState != nil || activeRepositoryRemovalState != nil {
             setWorkspaceHeaderVisible(false)
             installScopeMessage()
@@ -696,7 +749,7 @@ final class WorkspaceViewController: NSViewController {
             )
             return
         }
-        guard let workspace = activeTerminalWorkspace else {
+        guard let workspace else {
             setWorkspaceHeaderVisible(false)
             installScopeMessage()
             return
@@ -1357,6 +1410,14 @@ final class WorkspaceViewController: NSViewController {
 
     private func deleteTask(_ task: WorkspaceTask) {
         guard tasks.contains(where: { $0.id == task.id }) else { return }
+        var fileCachePaths = Set(repositoryWorkspaces.compactMap { scope, workspace in
+            scope.taskID == task.id ? workspace.workingDirectory : nil
+        }).union(task.repositories.compactMap {
+            $0.worktreePath ?? $0.worktreeProvisioning?.path
+        })
+        if let path = taskWorkspaces[task.id]?.workingDirectory {
+            fileCachePaths.insert(path)
+        }
         activeScope = .task(task.id)
         expandedTaskIDs.insert(task.id)
         taskErrors.removeValue(forKey: task.id)
@@ -1434,6 +1495,7 @@ final class WorkspaceViewController: NSViewController {
                 failTaskDeletion(task.id, message: error.localizedDescription)
                 return
             }
+            rightPanelController.invalidateFileCaches(at: fileCachePaths)
             tasks = remainingTasks
             taskDeletionStates.removeValue(forKey: task.id)
             taskWorkspaces.removeValue(forKey: task.id)
@@ -1464,6 +1526,9 @@ final class WorkspaceViewController: NSViewController {
               let attachment = task.repositories.first(where: {
                   $0.repositoryID == scope.repositoryID
               }) else { return }
+        let fileCachePath = repositoryWorkspaces[scope]?.workingDirectory
+            ?? attachment.worktreePath
+            ?? attachment.worktreeProvisioning?.path
         activeScope = .repository(scope)
         repositoryErrors.removeValue(forKey: scope)
         repositoryRemovalStates[scope] = .removing("Closing terminals")
@@ -1534,6 +1599,9 @@ final class WorkspaceViewController: NSViewController {
             } catch {
                 failRepositoryRemoval(scope, message: error.localizedDescription)
                 return
+            }
+            if let fileCachePath {
+                rightPanelController.invalidateFileCaches(at: [fileCachePath])
             }
             tasks = updatedTasks
             repositoryRemovalStates.removeValue(forKey: scope)
@@ -1946,12 +2014,19 @@ final class WorkspaceViewController: NSViewController {
         leftPanel.layer?.masksToBounds = sidebarPresentation == .transient
 
         rightPanel.isHidden = !rightPanelVisible
+        if rightPanelVisible {
+            rightPanelController.panelDidShow()
+        } else {
+            rightPanelController.panelDidHide()
+        }
+        mainColumnTrailingToCard.isActive = !rightPanelVisible
+        mainColumnTrailingToPanel.isActive = rightPanelVisible
         workspaceHeader.setPanelVisible(rightPanelVisible)
 
         leftResizeHandle.setEnabled(docked)
+        rightResizeHandle.setEnabled(rightPanelVisible)
         leftPanelController.setToggleActive(docked)
         leftPanelController.setFullScreen(fullScreen)
-        leftPanelController.setResizable(docked)
         updateTrafficLights()
         view.layoutSubtreeIfNeeded()
         updateWindowMinimumSize()
@@ -2295,14 +2370,15 @@ final class WorkspaceViewController: NSViewController {
 
     private func updateWindowMinimumSize() {
         guard let window = view.window else { return }
-        let sidebarWidth = leftPanelWidth
-        let settingsWidth = AppTheme.settingsRailWidth
-            + SettingsLayout.dividerThickness
-            + SettingsLayout.minimumPageWidth
-        let requiredWidth = sidebarWidth
-            + AppTheme.workspaceInset * 2
-            + settingsWidth
-        let minimumWidth = max(AppTheme.minimumWindowWidth, requiredWidth)
+        let minimumWidth = max(
+            AppTheme.minimumWindowWidth,
+            WorkspacePanelLayout.minimumWindowWidth(
+                leftPanelVisible: sidebarPresentation == .docked,
+                rightPanelVisible: rightPanelVisible,
+                leftPanelWidth: leftPanelWidth,
+                rightPanelWidth: rightPanelWidth
+            )
+        )
         workspaceMinimumWidthConstraint.constant = minimumWidth
         window.minSize = NSSize(
             width: minimumWidth,
@@ -2347,6 +2423,37 @@ final class WorkspaceViewController: NSViewController {
             resizeLeftPanel(by: -AppTheme.leftPanelRange.upperBound)
         case .maximum:
             resizeLeftPanel(by: AppTheme.leftPanelRange.upperBound)
+        }
+    }
+
+    private func resizeRightPanel(by delta: CGFloat) {
+        guard rightPanelVisible else { return }
+        let maximumFromWorkspace = (rightResizeWorkspaceWidth ?? workspaceCard.bounds.width)
+            - AppTheme.minimumCenterWidth
+        let maximum = max(
+            AppTheme.rightPanelRange.lowerBound,
+            min(AppTheme.rightPanelRange.upperBound, maximumFromWorkspace)
+        )
+        rightPanelWidth = min(
+            max(rightWidthConstraint.constant + delta, AppTheme.rightPanelRange.lowerBound),
+            maximum
+        )
+        rightWidthConstraint.constant = rightPanelWidth
+        UserDefaults.standard.set(Double(rightPanelWidth), forKey: Self.rightPanelWidthDefaultsKey)
+        view.layoutSubtreeIfNeeded()
+        updateWindowMinimumSize()
+    }
+
+    private func resizeRightPanel(with command: PanelResizeHandle.KeyboardCommand) {
+        switch command {
+        case .decrease:
+            resizeRightPanel(by: -AppTheme.keyboardResizeStep)
+        case .increase:
+            resizeRightPanel(by: AppTheme.keyboardResizeStep)
+        case .minimum:
+            resizeRightPanel(by: -AppTheme.rightPanelRange.upperBound)
+        case .maximum:
+            resizeRightPanel(by: AppTheme.rightPanelRange.upperBound)
         }
     }
 
@@ -3014,14 +3121,16 @@ private final class PanelResizeHandle: NSView {
     var onKeyboardResize: ((KeyboardCommand) -> Void)?
 
     private let line = NSView()
+    private let indicatorOffset: CGFloat
     private var enabled = true
     private var trackingArea: NSTrackingArea?
     private var isHovering = false
 
     override var acceptsFirstResponder: Bool { enabled }
 
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
+    init(indicatorOffset: CGFloat = 0) {
+        self.indicatorOffset = indicatorOffset
+        super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         setAccessibilityRole(.splitter)
         setAccessibilityLabel("Resize panel")
@@ -3031,7 +3140,10 @@ private final class PanelResizeHandle: NSView {
         line.layer?.cornerRadius = AppTheme.resizeIndicatorCornerRadius
         addSubview(line)
         NSLayoutConstraint.activate([
-            line.centerXAnchor.constraint(equalTo: centerXAnchor),
+            line.centerXAnchor.constraint(
+                equalTo: centerXAnchor,
+                constant: indicatorOffset
+            ),
             line.centerYAnchor.constraint(equalTo: centerYAnchor),
             line.heightAnchor.constraint(
                 equalTo: heightAnchor,

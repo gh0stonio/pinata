@@ -8,7 +8,8 @@ Piñata is a Swift 6 AppKit application for macOS 14 or later. AppKit owns the w
 flowchart TB
     App[PinataApp] --> Workspace[WorkspaceViewController]
     App --> Settings[Settings window]
-    Workspace --> Panel[PanelViewController]
+    Workspace --> LeftPanel[PanelViewController]
+    Workspace --> RightPanel[WorkspacePanelViewController]
     Workspace --> TaskModal[NewTaskModalView]
     Workspace --> Terminals[Terminal workspaces]
     Workspace --> TaskStore[TaskRegistryStore]
@@ -29,7 +30,8 @@ flowchart TB
 | --- | --- | --- |
 | `PinataApp` | App lifecycle, menu installation, root workspace. | Task persistence or terminal pane layout. |
 | `WorkspaceViewController` | Selected scope, task actions, provisioning coordination, terminal workspaces, app-session persistence. | Ghostty rendering or PTY I/O. |
-| `PanelViewController` | Sidebar presentation and user gestures. | Registry data source of truth. |
+| `PanelViewController` | Left task sidebar presentation and user gestures. | Right workspace-panel layout or file browsing. |
+| `WorkspacePanelViewController` | Right panel tabs, file-tree loading, caching, and refresh. | Left sidebar presentation or registry data source of truth. |
 | `TerminalViewController` | Terminal tab's split tree, panes, active pane, and pane actions. | Durable PTY process. |
 | `GhosttySurfaceView` | Terminal rendering, keyboard encoding, terminal scrolling. | Shell process or output history. |
 | `ZmxTerminalClient` | Attaches one pane to its named zmx session. | AppKit views, layout, or terminal persistence. |
@@ -101,8 +103,9 @@ flowchart LR
     AppSupport --> Repos[repositories.json]
     AppSupport --> Connections[ssh-connections.json]
     AppSupport --> Session[app-session.json]
+    AppSupport --> FileTree[file-tree-cache-v1.json]
     Defaults[UserDefaults] --> Appearance[appearance and typography]
-    Defaults --> Sidebar[sidebar state and width]
+    Defaults --> Panels[sidebar presentation and panel widths]
     Defaults --> WorktreeDefault[global worktree base]
 ```
 
@@ -112,7 +115,8 @@ flowchart LR
 | Registered repositories and overrides | `repositories.json` | Repository registration or settings edit. |
 | SSH connection names, aliases, and enabled state | `ssh-connections.json` | Connection edit or enable change. |
 | UI and terminal layout snapshot | `app-session.json` | Relevant workspace change, with a short coalescing delay, and app termination. |
-| Appearance and small UI preferences | `UserDefaults` | Settings or sidebar presentation change. |
+| File-tree listings and expanded paths | `file-tree-cache-v1.json` | Workspace change, right-panel close, and app termination. |
+| Appearance and small UI preferences | `UserDefaults` | Settings or panel presentation change. |
 
 JSON writes use atomic replacement. Session files use a version number. An unsupported version is ignored rather than decoded as a partially compatible layout.
 
@@ -160,6 +164,9 @@ The snapshot preserves UI topology, not process memory. See [Terminal session ar
 - AppKit views and user interaction stay on the main actor.
 - Git provisioning runs away from the UI, while each report update returns to the main UI before mutation.
 - Remote Git provisioning uses the registered OpenSSH alias with non-interactive authentication. SSH credentials remain outside Piñata.
+- Local file changes use one recursive, coalesced FSEvents stream while the Files panel is visible.
+- SSH file changes use foreground-only signature polling and only relist changed visible directories.
+- File-tree enumeration, prefetch, and cache writes run away from scrolling and remain bounded.
 - zmx owns durable PTYs outside the application process. Piñata only bridges its attached client to Ghostty.
 - Registry and session stores are synchronous local file operations invoked at clear state boundaries.
 
@@ -172,6 +179,7 @@ Piñata keeps error state with the resource that failed:
 | Fetch, branch, or worktree failure | Failed repository attachment with concise error. | Retry provisioning. |
 | Detach or task cleanup failure | Deleting or failed state remains visible. | Retry cleanup. |
 | Missing zmx session | zmx creates a fresh named shell session. | Start a new shell. |
+| Local or SSH folder load | The affected folder shows an error and retry action. | Retry the folder load. |
 | Invalid session snapshot | Ignore unsupported or stale entries. | Restore the remaining valid UI. |
 
 The app does not treat a failed attachment as a failed task. It only marks the affected attachment as failed.
@@ -185,3 +193,5 @@ Do not put the following in current production code until the feature exists:
 - A replacement terminal renderer or custom terminal scrollback.
 
 Those proposed future capabilities live under [`docs/incoming/`](incoming/). Keeping them separate prevents current local behavior from depending on future infrastructure.
+
+See [File browser architecture](file-browser-architecture.md) for the file-tree ownership and performance contract.

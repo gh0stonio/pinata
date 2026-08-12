@@ -56,8 +56,10 @@ The current `main` branch includes:
 - Worktree-aware terminals, task and repository action menus, and safe cleanup of Piñata-owned worktrees and branches.
 - App-session restoration for selected scope, expanded tasks, terminal tabs, split layout, active pane, and working directories.
 - Durable terminal sessions through bundled `zmx`, with native Ghostty scrolling and remote reattachment.
+- Independently resizable right workspace panel with a cached local and SSH file browser.
+- Incremental folder loading, bounded prefetch, live filesystem refresh, and colored or monochrome file icons.
 
-File browsing, diffs, reviews, checks, pull request workflows, and Pi discussion/daemon support are not implemented yet.
+Diffs, reviews, checks, pull request workflows, and Pi discussion/daemon support are not implemented yet.
 
 ## Project Structure
 
@@ -75,7 +77,7 @@ DerivedData/            Generated local Xcode output, ignored by Git
 
 Xcode generates the application bundle, `Info.plist`, compiled assets, and local development signature. Build settings such as the bundle identifier, version, deployment target, and Swift language mode live in `Piñata.xcodeproj/project.pbxproj`.
 
-See the [documentation map](docs/README.md) for the product workflow, current architecture, terminal sessions, and incoming Pi proposal.
+See the [documentation map](docs/README.md) for the product workflow, current architecture, file browser, terminal sessions, and incoming Pi proposal.
 
 ## Development
 
