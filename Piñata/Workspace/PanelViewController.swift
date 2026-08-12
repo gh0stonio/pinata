@@ -242,6 +242,7 @@ final class PanelViewController: NSViewController {
         expandedTaskIDs: Set<UUID>,
         taskActivities: [UUID: String] = [:],
         repositoryActivities: [TaskRepositoryScope: String] = [:],
+        repositoryTargets: [UUID: RepositoryTarget] = [:],
         taskErrors: [UUID: String],
         repositoryErrors: [TaskRepositoryScope: String],
         loadError: String?
@@ -273,7 +274,8 @@ final class PanelViewController: NSViewController {
                 taskError: taskErrors[task.id],
                 repositoryMenuScope: repositoryMenuScope,
                 repositoryActivities: repositoryActivities,
-                repositoryErrors: repositoryErrors
+                repositoryErrors: repositoryErrors,
+                repositoryTargets: repositoryTargets
             )
             group.onSelectTask = { [weak self] in self?.onSelectTask?(task.id) }
             group.onToggleExpansion = { [weak self] in
@@ -522,7 +524,8 @@ private final class SidebarTaskGroupView: NSStackView {
         taskError: String?,
         repositoryMenuScope: TaskRepositoryScope?,
         repositoryActivities: [TaskRepositoryScope: String],
-        repositoryErrors: [TaskRepositoryScope: String]
+        repositoryErrors: [TaskRepositoryScope: String],
+        repositoryTargets: [UUID: RepositoryTarget]
     ) {
         taskID = task.id
         isPinned = task.isPinned
@@ -565,7 +568,9 @@ private final class SidebarTaskGroupView: NSStackView {
                     activity: repositoryActivities[scope] ?? (repository.worktreeProvisioning.map {
                         !$0.succeeded && $0.failureMessage == nil
                     } == true ? "creating" : nil),
-                    error: repositoryErrors[scope]
+                    error: repositoryErrors[scope],
+                    target: repositoryTargets[repository.repositoryID] ?? .local,
+                    suppressActions: activity == "deleting"
                 )
                 row.onSelect = { [weak self] in
                     self?.onSelectRepository?(repository.repositoryID)
@@ -1135,10 +1140,12 @@ private final class SidebarRepositoryRow: AppHoverView {
     private var menuActive: Bool
     private let activity: String?
     private let error: String?
+    private let suppressActions: Bool
     private let button = AppButton(role: .hitTarget)
     private let menuOverlay = SidebarTrailingActionOverlay()
     private var menuButton: SidebarMenuButton { menuOverlay.button }
     private let titleLabel: NSTextField
+    private let sourceIcon = NSImageView()
     private let errorIcon = NSImageView()
     private let activityIndicator = NSProgressIndicator()
     private let statusLabel: NSTextField
@@ -1148,21 +1155,31 @@ private final class SidebarRepositoryRow: AppHoverView {
         selected: Bool,
         menuActive: Bool,
         activity: String?,
-        error: String?
+        error: String?,
+        target: RepositoryTarget,
+        suppressActions: Bool
     ) {
         repositoryID = repository.repositoryID
         self.selected = selected
         self.menuActive = menuActive
         self.activity = activity
         self.error = error
+        self.suppressActions = suppressActions
         titleLabel = NSTextField(labelWithString: repository.name)
+        let isRemote: Bool
+        if case .ssh = target { isRemote = true } else { isRemote = false }
         statusLabel = NSTextField(labelWithString: error == nil ? activity ?? "" : "failed")
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
         layer?.cornerRadius = AppTheme.workspaceControlCornerRadius
         toolTip = error ?? repository.name
-        [button, titleLabel, errorIcon, activityIndicator, statusLabel, menuOverlay].forEach {
+        sourceIcon.image = NSImage(
+            systemSymbolName: isRemote ? "globe" : "laptopcomputer",
+            accessibilityDescription: isRemote ? "Remote repository" : "Local repository"
+        )
+        sourceIcon.symbolConfiguration = .init(pointSize: 10, weight: .medium)
+        [button, sourceIcon, titleLabel, errorIcon, activityIndicator, statusLabel, menuOverlay].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             addSubview($0)
         }
@@ -1175,7 +1192,7 @@ private final class SidebarRepositoryRow: AppHoverView {
                 accessibilityDescription: "Repository actions"
             )
             : nil
-        menuButton.isEnabled = activity == nil
+        menuButton.isEnabled = activity == nil && !suppressActions
         menuButton.target = self
         menuButton.action = #selector(showMenu)
         menuButton.setAccessibilityLabel("Repository actions")
@@ -1198,15 +1215,19 @@ private final class SidebarRepositoryRow: AppHoverView {
             button.trailingAnchor.constraint(equalTo: trailingAnchor),
             button.topAnchor.constraint(equalTo: topAnchor),
             button.bottomAnchor.constraint(equalTo: bottomAnchor),
-            titleLabel.leadingAnchor.constraint(
+            sourceIcon.leadingAnchor.constraint(
                 equalTo: leadingAnchor,
-                constant: AppTheme.sidebarRepositoryTitleInset
+                constant: AppTheme.sidebarTaskTitleDisclosureInset
+            ),
+            sourceIcon.centerYAnchor.constraint(equalTo: centerYAnchor),
+            sourceIcon.widthAnchor.constraint(equalToConstant: 12),
+            sourceIcon.heightAnchor.constraint(equalToConstant: 12),
+            titleLabel.leadingAnchor.constraint(
+                equalTo: sourceIcon.trailingAnchor,
+                constant: 6
             ),
             titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            titleLabel.trailingAnchor.constraint(
-                lessThanOrEqualTo: errorIcon.leadingAnchor,
-                constant: -6
-            ),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: errorIcon.leadingAnchor, constant: -6),
             menuOverlay.trailingAnchor.constraint(equalTo: trailingAnchor),
             menuOverlay.topAnchor.constraint(equalTo: topAnchor),
             menuOverlay.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -1248,6 +1269,7 @@ private final class SidebarRepositoryRow: AppHoverView {
             weight: selected ? .semibold : .regular
         )
         titleLabel.textColor = textColor
+        sourceIcon.contentTintColor = textColor
         menuButton.applyTheme()
         menuOverlay.apply(
             backgroundColor: AppTheme.renderedBackground(appearance.background)
@@ -1277,7 +1299,7 @@ private final class SidebarRepositoryRow: AppHoverView {
     }
 
     private func updateTrailingVisibility() {
-        let showsMenu = activity == nil && (isHovering || menuActive)
+        let showsMenu = !suppressActions && activity == nil && (isHovering || menuActive)
         menuOverlay.isHidden = !showsMenu
         errorIcon.isHidden = error == nil
         activityIndicator.isHidden = activity == nil || error != nil

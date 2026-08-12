@@ -2,7 +2,7 @@
 
 ## What Piñata is
 
-Piñata is a task-first macOS workspace for coding work. The user starts with a task title, then optionally attaches local Git repositories. Each attachment gets an isolated worktree and a terminal, so one task can safely involve several repositories.
+Piñata is a task-first macOS workspace for coding work. The user starts with a task title, then optionally attaches local or SSH-backed Git repositories. Each attachment gets an isolated worktree and a terminal, so one task can safely involve several repositories.
 
 The task is the product's durable unit. A repository is attached to a task, rather than owning it.
 
@@ -11,12 +11,12 @@ The task is the product's durable unit. A repository is attached to a task, rath
 | Concept | Meaning | Can exist without its parent? |
 | --- | --- | --- |
 | Task | A piece of work, such as a bug, idea, or feature. | Yes |
-| Repository | A registered local Git repository. | Yes |
+| Repository | A registered local or SSH-backed Git repository. | Yes |
 | Attachment | A repository assigned to a task. | No, it belongs to one task and repository pair. |
 | Worktree | An isolated checkout created for an attachment. | No, it is created from the attachment. |
-| Piñata branch | A local branch named `pinata/<task-slug>-<id>`. | No, Piñata creates and removes it with the worktree. |
+| Piñata branch | A Piñata-owned branch named `pinata/<task-slug>-<id>`. | No, Piñata creates and removes it with the worktree. |
 | Terminal workspace | Tabs and split panes for a selected task or attachment. | Yes, for a task with no repository it uses the task workspace. |
-| Terminal pane | One Ghostty surface backed by one durable local PTY service. | No, it belongs to a terminal tab. |
+| Terminal pane | One Ghostty surface attached to one durable zmx session. | No, it belongs to a terminal tab. |
 
 ```mermaid
 flowchart TB
@@ -68,7 +68,7 @@ Creating a task does not change the source repository's checked-out branch. It o
 
 ## Worktree provisioning
 
-Each repository attachment follows this sequence. Attachments run in parallel, while the steps inside one attachment run in order.
+Each repository attachment follows this sequence. Attachments run in parallel, while the steps inside one attachment run in order. For an SSH-backed repository, each Git operation runs through its saved OpenSSH alias on the remote host.
 
 ```mermaid
 sequenceDiagram
@@ -151,14 +151,13 @@ If cleanup fails, the task stays visible in a deleting or failed state. This kee
 
 ## Settings and appearance
 
-Piñata persists application settings locally: system, light, or dark theme, accent color and intensity, application font size, terminal font size, and worktree defaults. Colors and typography are supplied through the shared AppKit theme system so light and dark appearances use the same semantic roles.
+Piñata persists application settings locally: dark or light theme, accent color and intensity, application font size, terminal font size, and worktree defaults. Colors and typography are supplied through the shared AppKit theme system so light and dark appearances use the same semantic roles.
 
 ## Current product limits
 
-- Local repositories and local Git only.
-- No SSH connection manager or remote repository registry.
+- SSH uses an existing OpenSSH alias and non-interactive key authentication. Piñata does not manage keys, passwords, host verification, tunnels, or port forwarding.
 - No file tree, diff, review, checks, or pull request workflow.
 - No Pi discussion UI, Pi daemon, or agent-specific persistence.
-- No recovery of a shell or agent after macOS, the process host, or a remote host restarts.
+- No recovery of a local shell after macOS restarts, or a remote process after its host restarts.
 
 For terminal persistence and its exact limits, see [Terminal session architecture](terminal-session-architecture.md).
