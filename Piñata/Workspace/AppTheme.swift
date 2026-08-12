@@ -20,6 +20,7 @@ enum AppButtonRole {
     case hitTarget
     case link
     case segmented
+    case workspacePanelTab
     case swatch(NSColor)
 }
 
@@ -33,6 +34,7 @@ struct AppButtonAppearance {
 @MainActor
 enum AppTheme {
     static let leftPanelWidth: CGFloat = 264
+    static let rightPanelWidth: CGFloat = 304
     static let settingsRailWidth: CGFloat = 260
     static let panelContentInset: CGFloat = 14
     static let fullScreenSidebarWidth: CGFloat = 320
@@ -126,6 +128,7 @@ enum AppTheme {
     static let workspaceNewTabSymbolSize: CGFloat = 12
     static let workspaceTabCloseSymbolSize: CGFloat = 10
     static let panelToggleControlSize: CGFloat = 28
+    static let workspacePanelHeaderInset: CGFloat = 14
     static let symbolVerticalAdjustment: CGFloat = 2
     static let paneMinimumSize: CGFloat = 80
     static let paneHeaderIconWidth: CGFloat = 18
@@ -371,6 +374,13 @@ enum AppTheme {
                 foreground: selected || hovered ? interactiveHoverForeground : secondaryText,
                 border: .clear,
                 borderWidth: 0
+            )
+        case .workspacePanelTab:
+            return AppButtonAppearance(
+                background: selected ? controlSelection : .clear,
+                foreground: selected || hovered ? primaryText : secondaryText,
+                border: selected ? border : .clear,
+                borderWidth: selected ? 1 : 0
             )
         case let .swatch(color):
             return AppButtonAppearance(

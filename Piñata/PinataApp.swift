@@ -83,6 +83,10 @@ final class PinataApp: NSObject, NSApplicationDelegate {
         workspaceViewController?.toggleLeftPanel(sender)
     }
 
+    @objc private func toggleRightPanel(_ sender: Any?) {
+        workspaceViewController?.toggleRightPanel(sender)
+    }
+
     @objc private func createTask(_ sender: Any?) {
         workspaceViewController?.presentNewTask(sender)
     }
@@ -183,6 +187,12 @@ final class PinataApp: NSObject, NSApplicationDelegate {
             keyEquivalent: "b"
         )
         leftPanelItem.target = self
+        let rightPanelItem = viewMenu.addItem(
+            withTitle: "Toggle Workspace Panel",
+            action: #selector(toggleRightPanel(_:)),
+            keyEquivalent: "l"
+        )
+        rightPanelItem.target = self
         let fullScreenItem = viewMenu.addItem(
             withTitle: "Toggle Full Screen",
             action: #selector(NSWindow.toggleFullScreen(_:)),

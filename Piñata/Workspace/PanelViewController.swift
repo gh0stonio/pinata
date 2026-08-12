@@ -4,10 +4,6 @@ private extension NSPasteboard.PasteboardType {
     static let sidebarTaskID = Self("io.pinata.sidebar-task-id")
 }
 
-private final class SidebarTaskDocumentView: NSView {
-    override var isFlipped: Bool { true }
-}
-
 @MainActor
 private final class SidebarTaskStackView: NSStackView {
     var onMoveTask: ((UUID, UUID?, Bool, Bool) -> Void)?
@@ -21,6 +17,8 @@ private final class SidebarTaskStackView: NSStackView {
     }
 
     private let insertionLayer = CALayer()
+
+    override var isFlipped: Bool { true }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -174,7 +172,6 @@ final class PanelViewController: NSViewController {
     private weak var brandView: SidebarBrandView?
     private let newTaskButton = SidebarNewTaskButton(frame: .zero)
     private let taskScrollView = NSScrollView()
-    private let taskDocument = SidebarTaskDocumentView()
     private let taskStack = SidebarTaskStackView()
     private var newTaskTrailingConstraint: NSLayoutConstraint!
     private var taskStackTrailingConstraint: NSLayoutConstraint!
@@ -361,7 +358,6 @@ final class PanelViewController: NSViewController {
         scrollView.autohidesScrollers = true
         scrollView.scrollerStyle = .overlay
         scrollView.horizontalScrollElasticity = .none
-        taskDocument.translatesAutoresizingMaskIntoConstraints = false
         taskStack.translatesAutoresizingMaskIntoConstraints = false
         taskStack.orientation = .vertical
         taskStack.alignment = .leading
@@ -369,8 +365,7 @@ final class PanelViewController: NSViewController {
         taskStack.onMoveTask = { [weak self] sourceID, targetID, after, pinned in
             self?.onMoveTask?(sourceID, targetID, after, pinned)
         }
-        taskDocument.addSubview(taskStack)
-        scrollView.documentView = taskDocument
+        scrollView.documentView = taskStack
         view.addSubview(topHeader)
         view.addSubview(brand)
         view.addSubview(newTaskButton)
@@ -383,7 +378,7 @@ final class PanelViewController: NSViewController {
             constant: -AppTheme.sidebarItemInset
         )
         taskStackTrailingConstraint = taskStack.trailingAnchor.constraint(
-            equalTo: taskDocument.trailingAnchor,
+            equalTo: scrollView.contentView.trailingAnchor,
             constant: -AppTheme.sidebarItemInset
         )
 
@@ -418,17 +413,15 @@ final class PanelViewController: NSViewController {
                 constant: AppTheme.sidebarNewTaskBottomSpacing
             ),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            taskDocument.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
-            taskDocument.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
-            taskDocument.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
-            taskDocument.heightAnchor.constraint(greaterThanOrEqualTo: scrollView.contentView.heightAnchor),
             taskStack.leadingAnchor.constraint(
-                equalTo: taskDocument.leadingAnchor,
+                equalTo: scrollView.contentView.leadingAnchor,
                 constant: AppTheme.sidebarItemInset
             ),
             taskStackTrailingConstraint,
-            taskStack.topAnchor.constraint(equalTo: taskDocument.topAnchor),
-            taskDocument.bottomAnchor.constraint(greaterThanOrEqualTo: taskStack.bottomAnchor),
+            taskStack.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            taskStack.bottomAnchor.constraint(
+                greaterThanOrEqualTo: scrollView.contentView.bottomAnchor
+            ),
         ])
     }
 }
@@ -1362,6 +1355,133 @@ private final class PanelTrackingView: AppHoverView {
 
     override func hoverStateDidChange() {
         onHoverChanged?(isHovering)
+    }
+}
+
+@MainActor
+final class WorkspacePanelViewController: NSViewController {
+    var onTogglePanel: (() -> Void)?
+
+    private let divider = NSView()
+    private let sections = NSStackView()
+    private let emptyState = NSTextField(labelWithString: "Nothing here yet.")
+    private let toggleButton = PanelToggleButton(
+        symbolName: "sidebar.right",
+        accessibilityLabel: "Toggle workspace panel"
+    )
+    private var sectionButtons: [WorkspacePanelTabButton] = []
+
+    override func loadView() {
+        let rootView = NSView()
+        rootView.wantsLayer = true
+        rootView.setAccessibilityRole(.group)
+        rootView.setAccessibilityLabel("Workspace panel")
+        view = rootView
+
+        divider.translatesAutoresizingMaskIntoConstraints = false
+        divider.wantsLayer = true
+        toggleButton.panelVisible = true
+        toggleButton.target = self
+        toggleButton.action = #selector(togglePanel)
+        toggleButton.toolTip = "Toggle workspace panel (⌘L)"
+        sections.translatesAutoresizingMaskIntoConstraints = false
+        sections.orientation = .horizontal
+        sections.alignment = .centerY
+        sections.spacing = 4
+        let titles: [String] = ["Files", "Review", "PR"]
+        for (index, title) in titles.enumerated() {
+            let button = WorkspacePanelTabButton(title: title, index: index)
+            button.target = self
+            button.action = #selector(selectSection(_:))
+            sections.addArrangedSubview(button)
+            sectionButtons.append(button)
+        }
+        sectionButtons.first?.isVisuallySelected = true
+        emptyState.translatesAutoresizingMaskIntoConstraints = false
+
+        rootView.addSubview(divider)
+        rootView.addSubview(sections)
+        rootView.addSubview(emptyState)
+        rootView.addSubview(toggleButton)
+        NSLayoutConstraint.activate([
+            divider.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
+            divider.topAnchor.constraint(equalTo: rootView.topAnchor),
+            divider.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
+            divider.widthAnchor.constraint(equalToConstant: AppTheme.workspaceDividerThickness),
+
+            sections.leadingAnchor.constraint(
+                equalTo: rootView.leadingAnchor,
+                constant: AppTheme.workspacePanelHeaderInset
+            ),
+            sections.centerYAnchor.constraint(
+                equalTo: rootView.topAnchor,
+                constant: AppTheme.mainHeaderHeight / 2
+            ),
+            sections.heightAnchor.constraint(equalToConstant: AppTheme.workspaceTabHeight),
+            sections.trailingAnchor.constraint(lessThanOrEqualTo: toggleButton.leadingAnchor),
+
+            emptyState.leadingAnchor.constraint(
+                equalTo: rootView.leadingAnchor,
+                constant: AppTheme.workspacePanelHeaderInset
+            ),
+            emptyState.topAnchor.constraint(
+                equalTo: rootView.topAnchor,
+                constant: AppTheme.mainHeaderHeight + AppTheme.workspacePanelHeaderInset
+            ),
+
+            toggleButton.centerYAnchor.constraint(
+                equalTo: rootView.topAnchor,
+                constant: AppTheme.mainHeaderHeight / 2
+            ),
+            toggleButton.trailingAnchor.constraint(
+                equalTo: rootView.trailingAnchor,
+                constant: -AppTheme.workspacePanelHeaderInset
+            ),
+        ])
+        applyTheme()
+    }
+
+    func applyTheme() {
+        view.layer?.backgroundColor = AppTheme.chromeBackground.cgColor
+        divider.layer?.backgroundColor = AppTheme.border.cgColor
+        toggleButton.applyTheme()
+        emptyState.font = AppTheme.font(ofSize: AppTheme.typography.body)
+        emptyState.textColor = AppTheme.tertiaryText
+        sectionButtons.forEach {
+            $0.font = AppTheme.font(ofSize: AppTheme.typography.label, weight: 600)
+            $0.applyTheme()
+        }
+    }
+
+    @objc private func selectSection(_ sender: NSButton) {
+        sectionButtons.forEach { $0.isVisuallySelected = $0 === sender }
+    }
+
+    @objc private func togglePanel() {
+        onTogglePanel?()
+    }
+}
+
+@MainActor
+private final class WorkspacePanelTabButton: AppButton {
+    init(title: String, index: Int) {
+        super.init(role: .workspacePanelTab)
+        self.title = title
+        tag = index
+        translatesAutoresizingMaskIntoConstraints = false
+        layer?.cornerRadius = AppTheme.workspaceControlCornerRadius
+        setAccessibilityLabel(title)
+        heightAnchor.constraint(equalToConstant: AppTheme.workspaceTabHeight).isActive = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is unavailable")
+    }
+
+    override var intrinsicContentSize: NSSize {
+        let size = super.intrinsicContentSize
+        return NSSize(width: size.width + 16, height: size.height)
     }
 }
 

@@ -112,6 +112,7 @@ final class WorkspaceViewController: NSViewController {
     private let terminalHost = NSView()
     private let workspaceHeader = WorkspaceHeaderView()
     private let leftPanelController = PanelViewController()
+    private let rightPanelController = WorkspacePanelViewController()
     private let leftResizeHandle = PanelResizeHandle()
     private let taskStore: TaskRegistryStore
     private let sessionStore = AppSessionStore()
@@ -152,6 +153,7 @@ final class WorkspaceViewController: NSViewController {
     private var workspaceMinimumWidthConstraint: NSLayoutConstraint!
 
     private var sidebarPresentation: SidebarPresentation
+    private var rightPanelVisible = false
     private var leftPanelWidth = AppTheme.leftPanelWidth
     private var fullScreen = false
     private var menuTracking = false
@@ -266,6 +268,11 @@ final class WorkspaceViewController: NSViewController {
         cancelScheduledTransitions()
         sidebarPresentation = sidebarPresentation == .docked ? .hidden : .docked
         persistSidebarPresentation()
+        applySidebarPresentation()
+    }
+
+    @objc func toggleRightPanel(_ sender: Any?) {
+        rightPanelVisible.toggle()
         applySidebarPresentation()
     }
 
@@ -427,6 +434,7 @@ final class WorkspaceViewController: NSViewController {
         terminalHost.layer?.backgroundColor = AppTheme.background.cgColor
         workspaceHeader.applyTheme()
         leftPanelController.applyTheme()
+        rightPanelController.applyTheme()
         allTerminalWorkspaces.forEach { workspace in
             workspace.tabs.forEach { $0.controller.applyTheme() }
         }
@@ -454,9 +462,12 @@ final class WorkspaceViewController: NSViewController {
 
     private func configureControllers(in rootView: NSView) {
         addChild(leftPanelController)
+        addChild(rightPanelController)
 
         let leftPanel = leftPanelController.view
+        let rightPanel = rightPanelController.view
         leftPanel.translatesAutoresizingMaskIntoConstraints = false
+        rightPanel.translatesAutoresizingMaskIntoConstraints = false
         terminalHost.translatesAutoresizingMaskIntoConstraints = false
         terminalHost.wantsLayer = true
         terminalHost.layer?.backgroundColor = AppTheme.background.cgColor
@@ -467,11 +478,13 @@ final class WorkspaceViewController: NSViewController {
         mainColumn.addSubview(terminalHost)
         rootView.addSubview(leftPanel)
         rootView.addSubview(leftResizeHandle)
+        workspaceCard.addSubview(rightPanel)
         updateTaskSidebar()
     }
 
     private func configureConstraints(in rootView: NSView) {
         let leftPanel = leftPanelController.view
+        let rightPanel = rightPanelController.view
 
         workspaceMinimumWidthConstraint = rootView.widthAnchor.constraint(
             greaterThanOrEqualToConstant: AppTheme.minimumWindowWidth
@@ -509,6 +522,7 @@ final class WorkspaceViewController: NSViewController {
             leftPanelTopConstraint,
             leftPanelBottomConstraint,
             leftWidthConstraint,
+            rightPanel.widthAnchor.constraint(equalToConstant: AppTheme.rightPanelWidth),
 
             workspaceTopConstraint,
             workspaceBottomConstraint,
@@ -518,6 +532,10 @@ final class WorkspaceViewController: NSViewController {
             mainColumn.trailingAnchor.constraint(equalTo: workspaceCard.trailingAnchor),
             mainColumn.topAnchor.constraint(equalTo: workspaceCard.topAnchor),
             mainColumn.bottomAnchor.constraint(equalTo: workspaceCard.bottomAnchor),
+
+            rightPanel.trailingAnchor.constraint(equalTo: workspaceCard.trailingAnchor),
+            rightPanel.topAnchor.constraint(equalTo: workspaceCard.topAnchor),
+            rightPanel.bottomAnchor.constraint(equalTo: workspaceCard.bottomAnchor),
 
             workspaceHeader.leadingAnchor.constraint(equalTo: mainColumn.leadingAnchor),
             workspaceHeader.trailingAnchor.constraint(equalTo: mainColumn.trailingAnchor),
@@ -546,6 +564,12 @@ final class WorkspaceViewController: NSViewController {
         }
         workspaceHeader.onCloseTab = { [weak self] id in
             self?.closeTerminalTab(id)
+        }
+        workspaceHeader.onTogglePanel = { [weak self] in
+            self?.toggleRightPanel(nil)
+        }
+        rightPanelController.onTogglePanel = { [weak self] in
+            self?.toggleRightPanel(nil)
         }
         leftPanelController.onTogglePanel = { [weak self] in
             self?.toggleLeftPanel(nil)
@@ -1879,6 +1903,7 @@ final class WorkspaceViewController: NSViewController {
     private func applySidebarPresentation() {
         guard isViewLoaded else { return }
         let leftPanel = leftPanelController.view
+        let rightPanel = rightPanelController.view
         let docked = sidebarPresentation == .docked
         let immersive = fullScreen && !docked
         let inset = immersive ? 0 : AppTheme.workspaceInset
@@ -1919,6 +1944,9 @@ final class WorkspaceViewController: NSViewController {
         leftPanel.layer?.borderColor = AppTheme.border.cgColor
         leftPanel.layer?.cornerCurve = .continuous
         leftPanel.layer?.masksToBounds = sidebarPresentation == .transient
+
+        rightPanel.isHidden = !rightPanelVisible
+        workspaceHeader.setPanelVisible(rightPanelVisible)
 
         leftResizeHandle.setEnabled(docked)
         leftPanelController.setToggleActive(docked)
