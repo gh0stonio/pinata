@@ -27,10 +27,10 @@ Removing an attached remote repository removes its verified `pinata/` worktree a
 
 ## Durable terminals
 
-An SSH terminal is a normal Piñata terminal session whose child process is `ssh -tt <alias>`. The local Piñata terminal service remains alive when the app closes, so reopening Piñata reconnects Ghostty to the same SSH client and remote shell while the Mac and connection remain alive.
+An SSH terminal attaches directly to `zmx` on the remote host: `ssh -tt <alias> zmx attach <pane-id>`. Closing Piñata disconnects the SSH client, while zmx retains the remote shell and terminal state. Reopening Piñata attaches to the same session.
 
-If the Mac, local service, or remote host restarts, no terminal process can be recovered exactly. Piñata restores the pane and remote directory, then starts a fresh SSH shell. The saved terminal transcript remains available through Ghostty scrollback.
+If the Mac restarts, remote zmx sessions remain available. If the remote host restarts, no terminal process can be recovered exactly. Piñata restores the pane and starts a fresh remote session.
 
 ## Limits
 
-This first version does not install software on remote hosts and does not use tmux. It supports existing SSH aliases, remote Git inspection, worktree provisioning and cleanup, and durable SSH terminal panes. Connection editing, interactive SSH authentication, port forwarding, and remote process recovery are intentionally out of scope.
+Piñata bundles zmx locally. Before opening a remote terminal, it checks the host for zmx and offers to install pinned zmx `0.7.0` in `~/.local/bin`. The installer supports macOS and Linux on arm64 and x86_64, requires `curl`, and verifies the archive checksum. It supports existing SSH aliases, remote Git inspection, worktree provisioning and cleanup, and durable SSH terminal panes. Connection editing, interactive SSH authentication, port forwarding, and remote-host process recovery are intentionally out of scope.

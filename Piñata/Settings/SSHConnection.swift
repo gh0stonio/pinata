@@ -294,27 +294,6 @@ enum TerminalTarget: Codable, Equatable, Sendable {
     }
 }
 
-struct TerminalLaunchConfiguration: Codable, Equatable, Sendable {
-    var workingDirectory: String
-    var target: TerminalTarget
-
-    init(workingDirectory: String, target: TerminalTarget = .local) {
-        self.workingDirectory = workingDirectory
-        self.target = target
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case workingDirectory
-        case target
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        workingDirectory = try container.decode(String.self, forKey: .workingDirectory)
-        target = try container.decodeIfPresent(TerminalTarget.self, forKey: .target) ?? .local
-    }
-}
-
 enum SSHCommand {
     static func makeProcess(connection: SSHConnection, command: [String]) -> Process {
         let process = Process()
@@ -337,6 +316,68 @@ enum SSHCommand {
             return "\"$HOME\"/\(shellQuote(String(value.dropFirst(2))))"
         }
         return "'\(value.replacingOccurrences(of: "'", with: "'\\\"'\\\"'"))'"
+    }
+}
+
+enum RemoteZmxInstallerError: LocalizedError {
+    case failed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .failed(let message): message
+        }
+    }
+}
+
+struct RemoteZmxInstaller: Sendable {
+    func isInstalled(on connection: SSHConnection) -> Bool {
+        (try? run(
+            connection: connection,
+            script: "command -v zmx >/dev/null 2>&1 || [ -x \"$HOME/.local/bin/zmx\" ]"
+        )) ?? false
+    }
+
+    func install(on connection: SSHConnection) throws {
+        _ = try run(connection: connection, script: Self.installScript())
+    }
+
+    static func installScript() -> String {
+        """
+        set -eu
+        case "$(uname -s)-$(uname -m)" in
+          Darwin-arm64) asset=macos-aarch64; checksum=a63d6f3edd6d4b38240f8f81513e60e35a898ca520211112d7bc67f610f1f3eb ;;
+          Darwin-x86_64) asset=macos-x86_64; checksum=66c57e7963c84881266f9f3acfdb36945c340c016a57061948517f3b303ca7d3 ;;
+          Linux-aarch64|Linux-arm64) asset=linux-aarch64; checksum=77599f66124694fae80bbb1d2fa0eafdb8c648b427a048cad90513ecf6136fc9 ;;
+          Linux-x86_64|Linux-amd64) asset=linux-x86_64; checksum=8b8783d7b120c9ffd0acf4aee37969054dc0dfef3c4f3a4728d2efd35f2e97a0 ;;
+          *) echo "Unsupported remote platform: $(uname -s) $(uname -m)" >&2; exit 1 ;;
+        esac
+        command -v curl >/dev/null || { echo "curl is required to install zmx." >&2; exit 1; }
+        temp="$(mktemp -d)"
+        trap "rm -rf \"$temp\"" EXIT
+        curl --fail --location --silent --show-error "https://zmx.sh/a/zmx-0.7.0-$asset.tar.gz" -o "$temp/zmx.tar.gz"
+        if command -v shasum >/dev/null; then set -- $(shasum -a 256 "$temp/zmx.tar.gz"); else set -- $(sha256sum "$temp/zmx.tar.gz"); fi
+        actual="$1"
+        [ "$actual" = "$checksum" ] || { echo "zmx checksum verification failed." >&2; exit 1; }
+        tar -xzf "$temp/zmx.tar.gz" -C "$temp"
+        mkdir -p "$HOME/.local/bin"
+        install -m 755 "$temp/zmx" "$HOME/.local/bin/zmx"
+        "$HOME/.local/bin/zmx" version
+        """
+    }
+
+    private func run(connection: SSHConnection, script: String) throws -> Bool {
+        let process = SSHCommand.makeProcess(connection: connection, command: ["sh", "-lc", script])
+        let error = Pipe()
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = error
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            let message = String(decoding: error.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            throw RemoteZmxInstallerError.failed(message.isEmpty ? "Could not reach \(connection.name)." : message)
+        }
+        return true
     }
 }
 

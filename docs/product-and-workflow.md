@@ -16,7 +16,7 @@ The task is the product's durable unit. A repository is attached to a task, rath
 | Worktree | An isolated checkout created for an attachment. | No, it is created from the attachment. |
 | Piñata branch | A Piñata-owned branch named `pinata/<task-slug>-<id>`. | No, Piñata creates and removes it with the worktree. |
 | Terminal workspace | Tabs and split panes for a selected task or attachment. | Yes, for a task with no repository it uses the task workspace. |
-| Terminal pane | One Ghostty surface backed by one durable local PTY service. | No, it belongs to a terminal tab. |
+| Terminal pane | One Ghostty surface attached to one durable zmx session. | No, it belongs to a terminal tab. |
 
 ```mermaid
 flowchart TB
@@ -158,6 +158,6 @@ Piñata persists application settings locally: dark or light theme, accent color
 - SSH uses an existing OpenSSH alias and non-interactive key authentication. Piñata does not manage keys, passwords, host verification, tunnels, or port forwarding.
 - No file tree, diff, review, checks, or pull request workflow.
 - No Pi discussion UI, Pi daemon, or agent-specific persistence.
-- No recovery of a shell, agent, or remote process after macOS, the terminal service, or a remote host restarts.
+- No recovery of a local shell after macOS restarts, or a remote process after its host restarts.
 
 For terminal persistence and its exact limits, see [Terminal session architecture](terminal-session-architecture.md).

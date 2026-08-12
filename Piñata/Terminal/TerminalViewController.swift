@@ -402,7 +402,9 @@ private final class TerminalPaneViewController: NSViewController {
             target: target,
             sessionID: paneID
         )
-        header = PaneHeaderView(title: PaneHeaderView.displayTitle(terminalView.defaultTitle))
+        let defaultTitle = PaneHeaderView.displayTitle(terminalView.defaultTitle)
+        let headerTitle = if case .ssh = target { "Connecting…" } else { defaultTitle }
+        header = PaneHeaderView(title: headerTitle)
         super.init(nibName: nil, bundle: nil)
 
         terminalView.didFocus = { [weak self] in
@@ -411,6 +413,9 @@ private final class TerminalPaneViewController: NSViewController {
         }
         terminalView.didChangeTitle = { [weak header] title in
             header?.setTitle(title)
+        }
+        terminalView.didConnect = { [weak header] in
+            header?.setTitle(defaultTitle)
         }
         header.didActivate = { [weak self] in
             guard let self else { return }

@@ -50,7 +50,7 @@ The following decisions are normative unless a later ADR replaces them.
 9. **Every editable discussion gets its own worktree.** Two agents must not mutate one checkout concurrently.
 10. **Cross-discussion references are read-only by default.** Referencing another discussion never starts work or modifies its repository implicitly.
 11. **Context references are immutable snapshots.** A prompt records the exact source discussion sequence and repository revision used.
-12. **Terminal layout persistence reconnects native shells.** App session restore preserves layout and working directories, while the Piñata terminal service owns each live PTY. See [terminal session architecture](../terminal-session-architecture.md).
+12. **Terminal layout persistence reconnects native shells.** App session restore preserves layout and working directories, while zmx owns each live PTY. See [terminal session architecture](../terminal-session-architecture.md).
 
 ## 3. Current baseline
 
@@ -62,7 +62,7 @@ The current native branch already provides:
 - Multiple terminal tabs.
 - AppKit-managed terminal splits.
 - Durable local app-session snapshots for selected scope, expanded tasks, terminal tabs, split layout, and active pane.
-- Restored terminal panes reconnect to their existing Piñata-owned local PTY when the host is still running.
+- Restored terminal panes reconnect to their existing local or remote zmx session while its host is still running.
 - A durable local task store with pinned-task ordering.
 - Task creation, rename, pinning, repository attachment, detachment, and deletion.
 - A repository registry with branch, remote, tag, and worktree metadata.
@@ -76,11 +76,11 @@ The main current constraints are:
 - `PinataApp` eagerly creates `GhosttyRuntime`.
 - `WorkspaceViewController` owns `TerminalTab` values directly.
 - `WorkspaceViewController` persists terminal workspace snapshots, while `TerminalViewController` owns the live AppKit pane tree.
-- Ghostty owns terminal emulation and rendering. The Piñata terminal service owns each PTY, so native scrolling and terminal behavior are preserved across GUI detachment.
+- Ghostty owns terminal emulation and rendering. zmx owns each PTY, so native scrolling and terminal behavior are preserved across GUI detachment.
 - Repository inspection invokes local `git` and `FileManager` directly.
 - Stale app-session references are ignored when their task or repository attachment no longer exists.
 - Tabs represent terminal controllers instead of durable discussions.
-- There is no discussion store or Pi RPC transport. A small local terminal service already owns durable PTYs, but there is no general Pi coordinator daemon yet.
+- There is no discussion store or Pi RPC transport. zmx owns durable PTYs, but there is no general Pi coordinator daemon yet.
 
 ### 3.1 Implementation status
 
@@ -1050,9 +1050,9 @@ Ghostty runtime initialization becomes lazy and occurs only when a terminal tab 
 
 ### 13.1 Native shell design
 
-Piñata uses Ghostty's supported manual I/O mode. A Piñata-owned local service owns each PTY while Ghostty remains responsible for terminal emulation, scrolling, and rendering. App restore reconnects to the existing shell when its host remains up. See [terminal session architecture](../terminal-session-architecture.md).
+Piñata uses Ghostty's supported manual I/O mode. zmx owns each PTY while Ghostty remains responsible for terminal emulation, scrolling, and rendering. App restore reconnects to the existing shell when its host remains up. See [terminal session architecture](../terminal-session-architecture.md).
 
-Remote terminal durability will use the same service protocol over SSH. Pi RPC SSH channels must never allocate a PTY.
+Remote terminal durability attaches directly to zmx over SSH. Pi RPC SSH channels must never allocate a PTY.
 
 ### 13.2 Split panes
 
@@ -1067,10 +1067,10 @@ This preserves the native Ghostty layout.
 
 ### 13.3 Terminal lifecycle
 
-- Closing the app detaches the UI and leaves Piñata-owned terminal services running.
+- Closing the app detaches the UI and leaves zmx sessions running.
 - Closing a pane ends its shell.
 - Closing a terminal tab handles every pane shell in that terminal workspace.
-- Reopening the app reconnects to the existing shell and its output journal when the host remains up.
+- Reopening the app reconnects to the existing shell and zmx terminal state when the host remains up.
 
 ### 13.4 Host restart recovery
 

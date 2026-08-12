@@ -3,14 +3,60 @@ import Darwin
 import GhosttyKit
 
 @MainActor
+private final class RemoteZmxInstallCoordinator {
+    static let shared = RemoteZmxInstallCoordinator()
+
+    private var installedConnectionIDs: Set<UUID> = []
+    private var requests: [UUID: Task<Bool, Never>] = [:]
+
+    func ensureInstalled(on connection: SSHConnection) async -> Bool {
+        // ponytail: cache per app run; recheck after relaunch.
+        if installedConnectionIDs.contains(connection.id) { return true }
+        if let request = requests[connection.id] { return await request.value }
+
+        let request = Task { [weak self] in
+            guard self != nil else { return false }
+            let installer = RemoteZmxInstaller()
+            let installed = await Task.detached {
+                installer.isInstalled(on: connection)
+            }.value
+            guard !installed else { return true }
+
+            let alert = NSAlert()
+            alert.messageText = "zmx is required on \(connection.name)"
+            alert.informativeText = "Install zmx 0.7.0 in ~/.local/bin?"
+            alert.addButton(withTitle: "Install")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return false }
+
+            do {
+                try await Task.detached {
+                    try installer.install(on: connection)
+                }.value
+                return true
+            } catch {
+                NSAlert(error: error).runModal()
+                return false
+            }
+        }
+        requests[connection.id] = request
+        let installed = await request.value
+        requests.removeValue(forKey: connection.id)
+        if installed { installedConnectionIDs.insert(connection.id) }
+        return installed
+    }
+}
+
+@MainActor
 final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
     private let runtime: GhosttyRuntime
-    private let terminalSession: TerminalSessionClient
+    private let terminalSession: ZmxTerminalClient
     private let ioBridge: GhosttyIOBridge
     private var markedTextStorage = NSMutableAttributedString()
     private var suppressFocusMouseUp = false
     private var trackingAreaToken: NSTrackingArea?
     private var surfaceCreationScheduled = false
+    private var receivedTerminalOutput = false
     private var lastPixelWidth: UInt32 = 0
     private var lastPixelHeight: UInt32 = 0
 
@@ -18,6 +64,7 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
     var workingDirectory: String
     let target: TerminalTarget
     var didFocus: (() -> Void)?
+    var didConnect: (() -> Void)?
     var didChangeTitle: ((String) -> Void)?
     var defaultTitle: String { URL(fileURLWithPath: UserShell.loginPath).lastPathComponent }
 
@@ -33,18 +80,21 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
         self.runtime = runtime
         self.workingDirectory = workingDirectory
         self.target = target
-        terminalSession = TerminalSessionClient(
+        terminalSession = ZmxTerminalClient(
             id: sessionID,
-            launchConfiguration: TerminalLaunchConfiguration(
-                workingDirectory: workingDirectory,
-                target: target
-            )
+            workingDirectory: workingDirectory,
+            target: target
         )
         ioBridge = GhosttyIOBridge()
         super.init(frame: .zero)
         ioBridge.session = terminalSession
         terminalSession.onOutput = { [weak self] data in
-            self?.processTerminalOutput(data)
+            guard let self else { return }
+            if !receivedTerminalOutput {
+                receivedTerminalOutput = true
+                didConnect?()
+            }
+            processTerminalOutput(data)
         }
         wantsLayer = true
         layerContentsRedrawPolicy = .duringViewResize
@@ -157,8 +207,21 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
         surface = created
         ghostty_surface_set_focus(created, window?.firstResponder === self)
         updateSurfaceGeometry()
-        terminalSession.start()
+        startTerminalSession()
         runtime.tick()
+    }
+
+    private func startTerminalSession() {
+        guard case .ssh(let connection) = target else {
+            terminalSession.start()
+            return
+        }
+        Task { [weak self] in
+            guard let self else { return }
+            if await RemoteZmxInstallCoordinator.shared.ensureInstalled(on: connection) {
+                terminalSession.start()
+            }
+        }
     }
 
     private var currentDisplayID: UInt32? {
@@ -179,7 +242,7 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
         }
         ghostty_surface_set_size(surface, width, height)
         let size = ghostty_surface_size(surface)
-        terminalSession.send(.resize(columns: size.columns, rows: size.rows))
+        terminalSession.resize(columns: size.columns, rows: size.rows)
         ghostty_surface_refresh(surface)
         layer?.setNeedsDisplay()
     }
@@ -540,7 +603,7 @@ enum UserShell {
 }
 
 private final class GhosttyIOBridge: @unchecked Sendable {
-    weak var session: TerminalSessionClient?
+    weak var session: ZmxTerminalClient?
 }
 
 private func ghosttyManualIOWrite(
@@ -550,5 +613,5 @@ private func ghosttyManualIOWrite(
 ) {
     guard let userdata, let bytes else { return }
     let bridge = Unmanaged<GhosttyIOBridge>.fromOpaque(userdata).takeUnretainedValue()
-    bridge.session?.send(.input(Data(bytes: bytes, count: Int(length))))
+    bridge.session?.send(Data(bytes: bytes, count: Int(length)))
 }

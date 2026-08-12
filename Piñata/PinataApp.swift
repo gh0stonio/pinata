@@ -10,7 +10,6 @@ final class PinataApp: NSObject, NSApplicationDelegate {
     private var settings = UserSettings.defaults
 
     static func main() {
-        if TerminalServiceEntryPoint.runIfRequested() { return }
         let application = NSApplication.shared
         let delegate = PinataApp()
         application.delegate = delegate

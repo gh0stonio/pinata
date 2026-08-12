@@ -55,7 +55,7 @@ The current `main` branch includes:
 - Theme, accent, font-size, terminal-size, and light/dark appearance settings.
 - Worktree-aware terminals, task and repository action menus, and safe cleanup of Piñata-owned worktrees and branches.
 - App-session restoration for selected scope, expanded tasks, terminal tabs, split layout, active pane, and working directories.
-- Durable local terminal sessions: restored Ghostty panes reconnect to their existing shell or agent process after an app quit, with native Ghostty scrolling and no tmux dependency.
+- Durable terminal sessions through bundled `zmx`, with native Ghostty scrolling and remote reattachment.
 
 File browsing, diffs, reviews, checks, pull request workflows, and Pi discussion/daemon support are not implemented yet.
 
@@ -107,7 +107,7 @@ sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
 
 ### Bootstrap terminal dependencies
 
-Download the pinned Ghostty artifact:
+Download the pinned Ghostty and zmx artifacts:
 
 ```bash
 ./Scripts/bootstrap-ghostty.sh

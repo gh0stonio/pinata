@@ -36,7 +36,7 @@ flowchart LR
 | App lifecycle | `PinataApp.swift` | Creates the workspace, menus, and settings window. |
 | Workspace | `Workspace/` | Sidebar, task and attachment selection, task sheets, session snapshot, and shared theme. |
 | Settings | `Settings/` | Appearance, shared settings layout, repositories, worktree provisioning, and SSH connections. |
-| Terminal | `Terminal/` | Ghostty integration, terminal tabs and splits, and the durable terminal service. |
+| Terminal | `Terminal/` | Ghostty integration, terminal tabs and splits, and zmx attachment. |
 
 ## Repository targets
 
@@ -72,7 +72,7 @@ stateDiagram-v2
     Terminal --> Attachment: close terminal tab
 ```
 
-Closing the app preserves the terminal layout and leaves terminal services running. Closing a terminal tab or pane explicitly stops that session. A local terminal starts a local login shell. A remote terminal starts `ssh -tt <alias>` through the local terminal service.
+Closing the app detaches from zmx and preserves the terminal layout. Closing a terminal tab or pane kills its zmx session. A local terminal attaches to bundled zmx. A remote terminal starts `ssh -tt <alias> zmx attach <pane-id>` and offers to install pinned zmx in `~/.local/bin` when absent.
 
 ## Settings hierarchy
 
@@ -100,4 +100,4 @@ The settings shell uses the same content gutter, section rhythm, and label/contr
 | Workspace and terminal layout | `app-session.json` | Restores valid task, attachment, tab, and split references. |
 | Appearance and sidebar preferences | `UserDefaults` | Theme, accent, typography, panel state, and global worktree base. |
 
-All files are per-user under Application Support, except `UserDefaults`. Terminal output journals are separate per-pane files and are removed when the pane is explicitly closed.
+All files are per-user under Application Support, except `UserDefaults`. zmx owns live terminal state and scrollback outside Piñata's stores.

@@ -31,9 +31,10 @@
 		000000000000000000000072 /* TaskRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000073 /* TaskRegistry.swift */; };
 		000000000000000000000074 /* NewTaskModalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000075 /* NewTaskModalView.swift */; };
 		000000000000000000000076 /* AppSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000077 /* AppSession.swift */; };
-		000000000000000000000082 /* TerminalSessionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000083 /* TerminalSessionService.swift */; };
+		000000000000000000000082 /* ZmxTerminalClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000083 /* ZmxTerminalClient.swift */; };
 		000000000000000000000084 /* SSHConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000085 /* SSHConnection.swift */; };
 		000000000000000000000086 /* ConnectionsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000087 /* ConnectionsSettingsView.swift */; };
+		000000000000000000000088 /* ZmxResources/zmx in Resources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000089 /* ZmxResources/zmx */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -73,9 +74,10 @@
 		000000000000000000000073 /* TaskRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskRegistry.swift; sourceTree = "<group>"; };
 		000000000000000000000075 /* NewTaskModalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewTaskModalView.swift; sourceTree = "<group>"; };
 		000000000000000000000077 /* AppSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSession.swift; sourceTree = "<group>"; };
-		000000000000000000000083 /* TerminalSessionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSessionService.swift; sourceTree = "<group>"; };
+		000000000000000000000083 /* ZmxTerminalClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZmxTerminalClient.swift; sourceTree = "<group>"; };
 		000000000000000000000085 /* SSHConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHConnection.swift; sourceTree = "<group>"; };
 		000000000000000000000087 /* ConnectionsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionsSettingsView.swift; sourceTree = "<group>"; };
+		000000000000000000000089 /* ZmxResources/zmx */ = {isa = PBXFileReference; lastKnownFileType = file; path = ZmxResources/zmx; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -116,6 +118,7 @@
 				000000000000000000000029 /* Terminal */,
 				000000000000000000000038 /* GhosttyResources/ghostty */,
 				000000000000000000000039 /* GhosttyResources/terminfo */,
+				000000000000000000000089 /* ZmxResources/zmx */,
 				000000000000000000000049 /* SpaceGrotesk-VariableFont_wght.ttf */,
 				000000000000000000000050 /* SpaceGrotesk-OFL.txt */,
 				000000000000000000000056 /* git-pull-request.png */,
@@ -153,7 +156,7 @@
 				000000000000000000000034 /* GhosttyRuntime.swift */,
 				000000000000000000000035 /* GhosttySurfaceView.swift */,
 				000000000000000000000037 /* TerminalViewController.swift */,
-				000000000000000000000083 /* TerminalSessionService.swift */,
+				000000000000000000000083 /* ZmxTerminalClient.swift */,
 			);
 			path = Terminal;
 			sourceTree = "<group>";
@@ -267,6 +270,7 @@
 				000000000000000000000047 /* SpaceGrotesk-VariableFont_wght.ttf in Resources */,
 				000000000000000000000048 /* SpaceGrotesk-OFL.txt in Resources */,
 				000000000000000000000055 /* git-pull-request.png in Resources */,
+				000000000000000000000088 /* ZmxResources/zmx in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -300,7 +304,7 @@
 				000000000000000000000072 /* TaskRegistry.swift in Sources */,
 				000000000000000000000074 /* NewTaskModalView.swift in Sources */,
 				000000000000000000000076 /* AppSession.swift in Sources */,
-				000000000000000000000082 /* TerminalSessionService.swift in Sources */,
+				000000000000000000000082 /* ZmxTerminalClient.swift in Sources */,
 				000000000000000000000084 /* SSHConnection.swift in Sources */,
 				000000000000000000000086 /* ConnectionsSettingsView.swift in Sources */,
 			);

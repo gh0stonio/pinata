@@ -328,30 +328,23 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertFalse(snapshot.isValid)
     }
 
-    func testTerminalServiceProtocolRoundTripsEveryMessage() throws {
-        let messages: [TerminalServiceMessage] = [
-            .attach,
-            .input(Data("echo Piñata\n".utf8)),
-            .resize(columns: 120, rows: 40),
-            .output(Data("output\n".utf8)),
-            .close,
-        ]
-
-        for message in messages {
-            XCTAssertEqual(try JSONDecoder().decode(
-                TerminalServiceMessage.self,
-                from: JSONEncoder().encode(message)
-            ), message)
-        }
-    }
-
-    func testTerminalServicePathsArePerSessionAndSocketSafe() {
+    func testZmxSessionsAreStableAndUniquePerPane() {
         let first = UUID(uuidString: "AAB1E84C-4BAE-4A15-82F1-775571891A81")!
         let second = UUID(uuidString: "3C7E4BFD-5A8B-49E5-8D8A-719EF01EB0CE")!
 
-        XCTAssertNotEqual(TerminalSessionPaths.logURL(for: first), TerminalSessionPaths.logURL(for: second))
-        XCTAssertNotEqual(TerminalSessionPaths.socketPath(for: first), TerminalSessionPaths.socketPath(for: second))
-        XCTAssertLessThan(TerminalSessionPaths.socketPath(for: first).utf8.count, 104)
+        XCTAssertEqual(
+            ZmxSession.name(for: first),
+            "pinata-aab1e84c-4bae-4a15-82f1-775571891a81"
+        )
+        XCTAssertNotEqual(ZmxSession.name(for: first), ZmxSession.name(for: second))
+    }
+
+    func testRemoteZmxInstallUsesPinnedArchives() {
+        let script = RemoteZmxInstaller.installScript()
+
+        XCTAssertTrue(script.contains("macos-aarch64"))
+        XCTAssertTrue(script.contains("linux-x86_64"))
+        XCTAssertTrue(script.contains("checksum verification failed"))
     }
 
     func testOlderSettingsKeepNewFieldDefaults() throws {
