@@ -1463,22 +1463,30 @@ private final class FileTreeRootWatcher: @unchecked Sendable {
 }
 
 private final class FileTreeClipView: NSClipView {
+    private var maximumX: CGFloat {
+        max(0, (documentView?.frame.width ?? bounds.width) - bounds.width)
+    }
+
     override func scroll(to newOrigin: NSPoint) {
-        super.scroll(to: NSPoint(x: 0, y: newOrigin.y))
+        super.scroll(to: NSPoint(x: min(max(0, newOrigin.x), maximumX), y: newOrigin.y))
     }
 
     override func constrainBoundsRect(_ proposedBounds: NSRect) -> NSRect {
         var bounds = super.constrainBoundsRect(proposedBounds)
-        bounds.origin.x = 0
+        bounds.origin.x = min(max(0, bounds.origin.x), maximumX)
         return bounds
     }
 }
 
 private final class FileTreeScrollView: NSScrollView {
+    var requiredDocumentWidth: CGFloat = 0 {
+        didSet { needsLayout = true }
+    }
+
     override func layout() {
         super.layout()
         guard let documentView else { return }
-        let width = contentView.bounds.width
+        let width = max(contentView.bounds.width, requiredDocumentWidth)
         guard width > 0 else { return }
         if let tableView = documentView as? NSTableView {
             tableView.tableColumns.first?.width = width
@@ -1487,6 +1495,34 @@ private final class FileTreeScrollView: NSScrollView {
         var frame = documentView.frame
         frame.size.width = width
         documentView.frame = frame
+    }
+}
+
+private final class FileTreeOutlineView: NSOutlineView {
+    override func makeView(
+        withIdentifier identifier: NSUserInterfaceItemIdentifier,
+        owner: Any?
+    ) -> NSView? {
+        let view = super.makeView(withIdentifier: identifier, owner: owner)
+        guard identifier == NSOutlineView.disclosureButtonIdentifier,
+              let button = view as? NSButton
+        else { return view }
+
+        let configuration = NSImage.SymbolConfiguration(
+            pointSize: AppTheme.sidebarDisclosureSymbolSize,
+            weight: .regular
+        )
+        button.image = NSImage(
+            systemSymbolName: "chevron.right",
+            accessibilityDescription: "Expand"
+        )?.withSymbolConfiguration(configuration)
+        button.alternateImage = NSImage(
+            systemSymbolName: "chevron.down",
+            accessibilityDescription: "Collapse"
+        )?.withSymbolConfiguration(configuration)
+        button.contentTintColor = AppTheme.tertiaryText
+        button.isBordered = false
+        return button
     }
 }
 
@@ -1500,6 +1536,7 @@ private final class FileTreeCellView: NSTableCellView {
     private let icon = NSImageView()
     private let title = NSTextField(labelWithString: "")
     private let retry = NSButton(title: "Retry", target: nil, action: nil)
+    private static let loadingPulseKey = "loadingPulse"
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -1526,7 +1563,9 @@ private final class FileTreeCellView: NSTableCellView {
         let contentInset: CGFloat = 2
         let iconSize: CGFloat = 14
         let iconGap: CGFloat = 3
-        let retryWidth: CGFloat = retry.isHidden ? 0 : 42
+        let retryWidth: CGFloat = retry.isHidden
+            ? 0
+            : ceil(retry.intrinsicContentSize.width) + 4
         let titleX: CGFloat = icon.isHidden ? contentInset : contentInset + iconSize + iconGap
         let titleHeight = min(bounds.height, ceil(title.intrinsicContentSize.height))
         let retryHeight = min(bounds.height, ceil(retry.intrinsicContentSize.height))
@@ -1544,7 +1583,7 @@ private final class FileTreeCellView: NSTableCellView {
         )
         title.frame = NSRect(
             x: titleX,
-            y: floor((bounds.height - titleHeight) / 2),
+            y: floor((bounds.height - titleHeight) / 2) + 1,
             width: max(0, bounds.width - titleX - retryWidth - (retryWidth > 0 ? 8 : 0)),
             height: titleHeight
         )
@@ -1563,6 +1602,8 @@ private final class FileTreeCellView: NSTableCellView {
         onRetry = nil
         retry.isHidden = true
         icon.isHidden = false
+        title.layer?.removeAnimation(forKey: Self.loadingPulseKey)
+        title.alphaValue = 1
         title.font = font
         title.textColor = AppTheme.secondaryText
         retry.font = retryFont
@@ -1582,6 +1623,14 @@ private final class FileTreeCellView: NSTableCellView {
             title.stringValue = "Loading…"
             title.textColor = AppTheme.tertiaryText
             icon.isHidden = true
+            title.wantsLayer = true
+            let pulse = CABasicAnimation(keyPath: "opacity")
+            pulse.fromValue = 0.4
+            pulse.toValue = 1
+            pulse.duration = 0.8
+            pulse.autoreverses = true
+            pulse.repeatCount = .infinity
+            title.layer?.add(pulse, forKey: Self.loadingPulseKey)
         case .error(let message):
             title.stringValue = message
             title.textColor = AppTheme.error
@@ -1628,7 +1677,7 @@ final class WorkspacePanelViewController: NSViewController, NSOutlineViewDataSou
     private let sections = NSStackView()
     private let emptyState = NSTextField(labelWithString: "Nothing here yet.")
     private let fileScrollView = FileTreeScrollView()
-    private let fileOutline = NSOutlineView()
+    private let fileOutline = FileTreeOutlineView()
     private let fileColumn = NSTableColumn(identifier: .init("FileTreeColumn"))
     private var fileTreeFont = AppTheme.font(ofSize: AppTheme.typography.body)
     private var fileTreeRetryFont = AppTheme.font(
@@ -1713,10 +1762,12 @@ final class WorkspacePanelViewController: NSViewController, NSOutlineViewDataSou
         emptyState.translatesAutoresizingMaskIntoConstraints = false
         fileScrollView.translatesAutoresizingMaskIntoConstraints = false
         fileScrollView.hasVerticalScroller = true
-        fileScrollView.hasHorizontalScroller = false
+        fileScrollView.hasHorizontalScroller = true
+        fileScrollView.autohidesScrollers = true
         fileScrollView.horizontalScrollElasticity = .none
         fileScrollView.drawsBackground = false
         fileScrollView.contentView = FileTreeClipView()
+        fileScrollView.contentView.drawsBackground = false
         fileOutline.addTableColumn(fileColumn)
         fileOutline.outlineTableColumn = fileColumn
         fileOutline.headerView = nil
@@ -1728,12 +1779,12 @@ final class WorkspacePanelViewController: NSViewController, NSOutlineViewDataSou
         fileOutline.focusRingType = .none
         fileOutline.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         fileOutline.autoresizesOutlineColumn = false
-        fileOutline.autoresizingMask = [.width]
+        fileOutline.autoresizingMask = []
         fileOutline.dataSource = self
         fileOutline.delegate = self
         fileColumn.minWidth = 120
         fileColumn.width = AppTheme.rightPanelWidth
-        fileColumn.resizingMask = .autoresizingMask
+        fileColumn.resizingMask = []
         fileScrollView.documentView = fileOutline
         NotificationCenter.default.addObserver(
             self,
@@ -1858,6 +1909,7 @@ final class WorkspacePanelViewController: NSViewController, NSOutlineViewDataSou
         if isViewLoaded {
             fileOutline.reloadData()
             restoreExpandedPaths()
+            updateFileTreeWidth()
             updateContent()
         }
         if let root {
@@ -1895,7 +1947,10 @@ final class WorkspacePanelViewController: NSViewController, NSOutlineViewDataSou
         isFileTreeLiveScrolling = false
         fileNodes = [:]
         fileEntryAccessOrder = [:]
-        if isViewLoaded { fileOutline.reloadData() }
+        if isViewLoaded {
+            fileOutline.reloadData()
+            updateFileTreeWidth()
+        }
         persistFileCaches(captureCurrent: false)
     }
 
@@ -1928,7 +1983,10 @@ final class WorkspacePanelViewController: NSViewController, NSOutlineViewDataSou
             $0.font = AppTheme.font(ofSize: AppTheme.typography.label, weight: 600)
             $0.applyTheme()
         }
-        if isViewLoaded { fileOutline.reloadData() }
+        if isViewLoaded {
+            fileOutline.reloadData()
+            updateFileTreeWidth()
+        }
         updateContent()
     }
 
@@ -2057,7 +2115,10 @@ final class WorkspacePanelViewController: NSViewController, NSOutlineViewDataSou
         guard let entry = (item as? FileTreeNode)?.entry, entry.isDirectory else { return false }
         expandedPaths.insert(entry.path)
         touchFileEntries([entry.path])
-        DispatchQueue.main.async { [weak self] in self?.updateFileMonitoring() }
+        DispatchQueue.main.async { [weak self] in
+            self?.updateFileTreeWidth()
+            self?.updateFileMonitoring()
+        }
         if isRestoringExpandedPaths {
             if fileEntries[entry.path] == nil { prioritizeLoad(of: entry.path) }
             return true
@@ -2079,7 +2140,10 @@ final class WorkspacePanelViewController: NSViewController, NSOutlineViewDataSou
         if isCollapsingFileBranch { return true }
         expandedPaths.remove(entry.path)
         saveCurrentFileCache()
-        DispatchQueue.main.async { [weak self] in self?.updateFileMonitoring() }
+        DispatchQueue.main.async { [weak self] in
+            self?.updateFileTreeWidth()
+            self?.updateFileMonitoring()
+        }
         if NSApp.currentEvent?.modifierFlags.contains(.command) == true {
             DispatchQueue.main.async { [weak self, weak node] in
                 guard let node else { return }
@@ -2153,6 +2217,34 @@ final class WorkspacePanelViewController: NSViewController, NSOutlineViewDataSou
             didReload = true
         }
         if didReload { restoreExpandedPaths(pathsToRestore) }
+        if didReload { updateFileTreeWidth() }
+    }
+
+    private func updateFileTreeWidth() {
+        guard let root = fileRoot else {
+            fileScrollView.requiredDocumentWidth = 0
+            fileScrollView.layoutSubtreeIfNeeded()
+            return
+        }
+        var requiredWidth: CGFloat = 0
+        var entries = [(FileTreeEntry(path: root.path, isDirectory: true, displayName: root.name), 0)]
+        while let (entry, level) = entries.popLast() {
+            let name = entry.name.isEmpty ? entry.path : entry.name
+            let labelWidth = ceil(
+                (name as NSString).size(withAttributes: [.font: fileTreeFont]).width
+            )
+            requiredWidth = max(
+                requiredWidth,
+                CGFloat(level + 1) * fileOutline.indentationPerLevel + 17 + labelWidth + 12
+            )
+            guard entry.isDirectory,
+                  expandedPaths.contains(entry.path),
+                  let children = fileEntries[entry.path]
+            else { continue }
+            entries.append(contentsOf: children.map { ($0, level + 1) })
+        }
+        fileScrollView.requiredDocumentWidth = requiredWidth
+        fileScrollView.layoutSubtreeIfNeeded()
     }
 
     private func contains(_ path: String, in branch: String) -> Bool {
@@ -2240,7 +2332,7 @@ final class WorkspacePanelViewController: NSViewController, NSOutlineViewDataSou
             }
             self?.fileLoadTasks[path] = nil
             self?.reloadDirectory(path)
-            self?.restoreExpandedPaths()
+            if path == root.path { self?.restoreExpandedPaths() }
             self?.saveCurrentFileCache()
             self?.updateFileMonitoring()
             if let loadedEntries {

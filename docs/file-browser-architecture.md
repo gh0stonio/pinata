@@ -80,7 +80,7 @@ Appearance settings expose colored and monochrome file icons. This preference is
 - No SSH listing loop while the app is inactive, minimized, or occluded.
 - No complete repository enumeration for initial display or refresh.
 - No outline reload during live scrolling.
-- The tree column tracks the visible viewport and the clip view rejects horizontal scrolling.
+- The tree column tracks the visible viewport and grows to enable horizontal scrolling only when visible content needs it.
 - Cancel load, prefetch, refresh, and monitor work when the root changes.
 - Prune removed directory branches from entries, expanded paths, node identity, and access tracking.
 - Bound both persisted roots and inactive in-memory directory listings.

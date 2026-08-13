@@ -66,12 +66,12 @@ enum WorkspacePanelLayout {
 @MainActor
 enum AppTheme {
     static let leftPanelWidth: CGFloat = 264
-    static let rightPanelWidth: CGFloat = 304
+    static let rightPanelWidth: CGFloat = 350
     static let settingsRailWidth: CGFloat = 260
     static let panelContentInset: CGFloat = 14
     static let fullScreenSidebarWidth: CGFloat = 320
     static let leftPanelRange: ClosedRange<CGFloat> = 200...440
-    static let rightPanelRange: ClosedRange<CGFloat> = 220...560
+    static let rightPanelRange: ClosedRange<CGFloat> = 350...550
     static let workspaceHeaderHeight: CGFloat = 36
     static let mainHeaderHeight: CGFloat = 44
     static let workspaceContentInset: CGFloat = 10

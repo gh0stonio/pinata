@@ -143,7 +143,6 @@ final class WorkspaceViewController: NSViewController {
     private var repositoryActionMenu: SidebarActionMenuView?
     private var repositoryActionMenuMouseMonitor: Any?
     private var leftResizeWindowWidth: CGFloat?
-    private var rightResizeWorkspaceWidth: CGFloat?
 
     private var leftWidthConstraint: NSLayoutConstraint!
     private var rightWidthConstraint: NSLayoutConstraint!
@@ -651,12 +650,6 @@ final class WorkspaceViewController: NSViewController {
         }
         rightResizeHandle.onDrag = { [weak self] delta in
             self?.resizeRightPanel(by: -delta)
-        }
-        rightResizeHandle.onDragBegan = { [weak self] in
-            self?.rightResizeWorkspaceWidth = self?.workspaceCard.bounds.width
-        }
-        rightResizeHandle.onDragEnded = { [weak self] in
-            self?.rightResizeWorkspaceWidth = nil
         }
         rightResizeHandle.onKeyboardResize = { [weak self] command in
             self?.resizeRightPanel(with: command)
@@ -2428,15 +2421,9 @@ final class WorkspaceViewController: NSViewController {
 
     private func resizeRightPanel(by delta: CGFloat) {
         guard rightPanelVisible else { return }
-        let maximumFromWorkspace = (rightResizeWorkspaceWidth ?? workspaceCard.bounds.width)
-            - AppTheme.minimumCenterWidth
-        let maximum = max(
-            AppTheme.rightPanelRange.lowerBound,
-            min(AppTheme.rightPanelRange.upperBound, maximumFromWorkspace)
-        )
         rightPanelWidth = min(
             max(rightWidthConstraint.constant + delta, AppTheme.rightPanelRange.lowerBound),
-            maximum
+            AppTheme.rightPanelRange.upperBound
         )
         rightWidthConstraint.constant = rightPanelWidth
         UserDefaults.standard.set(Double(rightPanelWidth), forKey: Self.rightPanelWidthDefaultsKey)
@@ -3127,6 +3114,7 @@ private final class PanelResizeHandle: NSView {
     private var isHovering = false
 
     override var acceptsFirstResponder: Bool { enabled }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { enabled }
 
     init(indicatorOffset: CGFloat = 0) {
         self.indicatorOffset = indicatorOffset
@@ -3193,13 +3181,15 @@ private final class PanelResizeHandle: NSView {
         addCursorRect(bounds, cursor: .resizeLeftRight)
     }
 
-    override func mouseDragged(with event: NSEvent) {
-        onDrag?(event.deltaX)
-    }
-
     override func mouseDown(with event: NSEvent) {
+        guard enabled else { return }
         onDragBegan?()
         super.mouseDown(with: event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard enabled else { return }
+        onDrag?(event.deltaX)
     }
 
     override func mouseUp(with event: NSEvent) {

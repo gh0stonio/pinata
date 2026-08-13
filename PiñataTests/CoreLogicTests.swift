@@ -444,14 +444,18 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertEqual(outline.numberOfRows, 5)
         XCTAssertFalse(outline.isItemExpanded(outline.item(atRow: try XCTUnwrap(rowNamed("Nested")))))
 
+        let createdName = String(repeating: "wide-file-", count: 20) + ".txt"
         _ = FileManager.default.createFile(
-            atPath: directory.appendingPathComponent("created.txt").path,
+            atPath: directory.appendingPathComponent(createdName).path,
             contents: Data()
         )
-        for _ in 0..<200 where rowNamed("created.txt") == nil {
+        for _ in 0..<200 where rowNamed(createdName) == nil {
             try await Task.sleep(for: .milliseconds(10))
         }
-        XCTAssertNotNil(rowNamed("created.txt"))
+        XCTAssertNotNil(rowNamed(createdName))
+        XCTAssertGreaterThan(outline.tableColumns[0].width, scrollView.contentView.bounds.width)
+        scrollView.contentView.scroll(to: NSPoint(x: 40, y: 0))
+        XCTAssertGreaterThan(scrollView.contentView.bounds.origin.x, 0)
     }
 
     func testTaskReorderingMovesWithinAndAcrossSections() {
