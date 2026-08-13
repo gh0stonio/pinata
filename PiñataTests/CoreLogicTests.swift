@@ -210,12 +210,23 @@ final class CoreLogicTests: XCTestCase {
             ]
         )
         XCTAssertEqual(SSHCommand.shellQuote("it's here"), "'it'\"'\"'s here'")
+        XCTAssertTrue(
+            FileTreeInspector.remoteListingScript(paths: ["/srv"])
+                .contains("printf 'r\\0%s\\0%s\\0' 0")
+        )
 
         let process = SSHCommand.makeProcess(
             connection: SSHConnection(name: "Build", host: "build"),
             command: ["pwd"]
         )
         XCTAssertTrue(process.arguments?.contains("ClearAllForwardings=yes") == true)
+        XCTAssertTrue(process.arguments?.contains("BatchMode=yes") == true)
+        XCTAssertTrue(process.arguments?.contains("ConnectTimeout=10") == true)
+        XCTAssertNotEqual(process.arguments?.first, "ssh")
+        XCTAssertEqual(
+            SSHCommand.message(for: "Permission denied (publickey).", connection: .init(name: "Build", host: "build")),
+            "Authentication failed for Build."
+        )
     }
 
     func testOlderTasksDefaultToUnpinned() throws {

@@ -179,6 +179,7 @@ Piñata keeps error state with the resource that failed:
 | Fetch, branch, or worktree failure | Failed repository attachment with concise error. | Retry provisioning. |
 | Detach or task cleanup failure | Deleting or failed state remains visible. | Retry cleanup. |
 | Missing zmx session | zmx creates a fresh named shell session. | Start a new shell. |
+| SSH terminal connection | The pane stays open with the SSH failure and a disconnected header. | Reconnect. |
 | Local or SSH folder load | The affected folder shows an error and retry action. | Retry the folder load. |
 | Invalid session snapshot | Ignore unsupported or stale entries. | Restore the remaining valid UI. |
 

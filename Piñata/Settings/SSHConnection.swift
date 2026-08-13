@@ -295,20 +295,67 @@ enum TerminalTarget: Codable, Equatable, Sendable {
 }
 
 enum SSHCommand {
+    static let connectionTimeout = 10
+
     static func makeProcess(connection: SSHConnection, command: [String]) -> Process {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-        process.arguments = [
+        process.arguments = arguments(
+            connection: connection,
+            command: command.map(shellQuote).joined(separator: " ")
+        )
+        process.standardInput = FileHandle.nullDevice
+        return process
+    }
+
+    static func arguments(
+        connection: SSHConnection,
+        command: String,
+        allocateTTY: Bool = false,
+        includeExecutableName: Bool = false
+    ) -> [String] {
+        (includeExecutableName ? ["ssh"] : []) + [
             "-A",
             "-S", "none",
             "-o", "BatchMode=yes",
+            "-o", "ConnectTimeout=\(connectionTimeout)",
+            "-o", "ConnectionAttempts=1",
             "-o", "ClearAllForwardings=yes",
             "-o", "ControlMaster=no",
-            "--", connection.host,
-            command.map(shellQuote).joined(separator: " "),
-        ]
-        process.standardInput = FileHandle.nullDevice
-        return process
+        ] + (allocateTTY ? ["-tt"] : []) + ["--", connection.host, command]
+    }
+
+    static func test(connection: SSHConnection) throws {
+        let process = makeProcess(connection: connection, command: ["exit"])
+        let error = Pipe()
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = error
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            let output = String(
+                decoding: error.fileHandleForReading.readDataToEndOfFile(),
+                as: UTF8.self
+            )
+            throw SSHConnectionError.failed(message(for: output, connection: connection))
+        }
+    }
+
+    static func message(for output: String, connection: SSHConnection) -> String {
+        let output = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        if output.localizedCaseInsensitiveContains("permission denied") {
+            return "Authentication failed for \(connection.name)."
+        }
+        if output.localizedCaseInsensitiveContains("host key verification") {
+            return "Host key verification failed for \(connection.name)."
+        }
+        if output.localizedCaseInsensitiveContains("could not resolve hostname") {
+            return "Could not resolve \(connection.host)."
+        }
+        if output.localizedCaseInsensitiveContains("connection timed out") {
+            return "Connection to \(connection.name) timed out."
+        }
+        return output.isEmpty ? "Could not connect to \(connection.name)." : output
     }
 
     static func shellQuote(_ value: String) -> String {
@@ -317,6 +364,16 @@ enum SSHCommand {
             return "\"$HOME\"/\(shellQuote(String(value.dropFirst(2))))"
         }
         return "'\(value.replacingOccurrences(of: "'", with: "'\"'\"'"))'"
+    }
+}
+
+enum SSHConnectionError: LocalizedError {
+    case failed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .failed(let message): message
+        }
     }
 }
 
@@ -648,7 +705,7 @@ struct FileTreeInspector: Sendable {
     static func remoteListingScript(paths: [String]) -> String {
         paths.enumerated().map { index, path in
             let root = SSHCommand.shellQuote(path)
-            return "if [ -d \(root) ]; then printf 'r\\0\(index)\\0%s\\0' \(root); for entry in \(root)/* \(root)/.[!.]* \(root)/..?*; do [ -e \"$entry\" ] || [ -L \"$entry\" ] || continue; if [ -d \"$entry\" ] && [ ! -L \"$entry\" ]; then printf 'd\\0\(index)\\0%s\\0' \"$entry\"; else printf 'f\\0\(index)\\0%s\\0' \"$entry\"; fi; done; fi"
+            return "root=\(root); if [ -d \"$root\" ]; then printf 'r\\0%s\\0%s\\0' \(index) \"$root\"; for entry in \"$root\"/* \"$root\"/.[!.]* \"$root\"/..?*; do [ -e \"$entry\" ] || [ -L \"$entry\" ] || continue; if [ -d \"$entry\" ] && [ ! -L \"$entry\" ]; then printf 'd\\0%s\\0%s\\0' \(index) \"$entry\"; else printf 'f\\0%s\\0%s\\0' \(index) \"$entry\"; fi; done; fi"
         }.joined(separator: "; ")
     }
 
