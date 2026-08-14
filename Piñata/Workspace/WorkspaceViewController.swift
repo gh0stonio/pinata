@@ -288,6 +288,8 @@ final class WorkspaceViewController: NSViewController {
     override func viewDidLayout() {
         super.viewDidLayout()
         updateTrafficLights()
+        leftResizeHandle.refreshInteraction()
+        rightResizeHandle.refreshInteraction()
     }
 
     @objc func toggleLeftPanel(_ sender: Any?) {
@@ -434,22 +436,14 @@ final class WorkspaceViewController: NSViewController {
         controller.onChange = onChange
         addChild(controller)
         controller.view.translatesAutoresizingMaskIntoConstraints = false
-        mainColumn.addSubview(controller.view)
+        workspaceCard.addSubview(controller.view)
         NSLayoutConstraint.activate([
-            controller.view.leadingAnchor.constraint(equalTo: mainColumn.leadingAnchor),
-            controller.view.trailingAnchor.constraint(equalTo: mainColumn.trailingAnchor),
-            controller.view.topAnchor.constraint(equalTo: mainColumn.topAnchor),
-            controller.view.bottomAnchor.constraint(equalTo: mainColumn.bottomAnchor),
+            controller.view.leadingAnchor.constraint(equalTo: workspaceCard.leadingAnchor),
+            controller.view.trailingAnchor.constraint(equalTo: workspaceCard.trailingAnchor),
+            controller.view.topAnchor.constraint(equalTo: workspaceCard.topAnchor),
+            controller.view.bottomAnchor.constraint(equalTo: workspaceCard.bottomAnchor),
         ])
         settingsController = controller
-        if let workspace = activeTerminalWorkspace {
-            workspaceHeader.setTabs(
-                workspace.tabs.map { (id: $0.id, title: $0.title) },
-                activeID: nil
-            )
-        } else {
-            workspaceHeader.setEmptyScope("no tabs in this scope", allowsCreateTab: false)
-        }
         applySidebarPresentation()
         DispatchQueue.main.async {
             controller.focusInitialSection()
@@ -779,6 +773,7 @@ final class WorkspaceViewController: NSViewController {
         }
         setWorkspaceHeaderVisible(true)
         workspaceHeader.setPreviewTabIDs(Set(workspace.fileTabs.filter(\.isPreview).map(\.id)))
+        workspaceHeader.setFileTabIDs(Set(workspace.fileTabs.map(\.id)))
         workspaceHeader.setTabs(
             workspace.tabs.map { (id: $0.id, title: $0.title) }
                 + workspace.fileTabs.map { (id: $0.id, title: $0.title) },
@@ -2093,22 +2088,25 @@ final class WorkspaceViewController: NSViewController {
         leftPanel.layer?.cornerCurve = .continuous
         leftPanel.layer?.masksToBounds = sidebarPresentation == .transient
 
-        rightPanel.isHidden = !rightPanelVisible
-        if rightPanelVisible {
+        let panelPresented = rightPanelVisible && settingsController == nil
+        rightPanel.isHidden = !panelPresented
+        if panelPresented {
             rightPanelController.panelDidShow()
         } else {
             rightPanelController.panelDidHide()
         }
-        mainColumnTrailingToCard.isActive = !rightPanelVisible
-        mainColumnTrailingToPanel.isActive = rightPanelVisible
-        workspaceHeader.setPanelVisible(rightPanelVisible)
+        mainColumnTrailingToCard.isActive = !panelPresented
+        mainColumnTrailingToPanel.isActive = panelPresented
+        workspaceHeader.setPanelVisible(panelPresented)
 
         leftResizeHandle.setEnabled(docked)
-        rightResizeHandle.setEnabled(rightPanelVisible)
+        rightResizeHandle.setEnabled(panelPresented)
         leftPanelController.setToggleActive(docked)
         leftPanelController.setFullScreen(fullScreen)
         updateTrafficLights()
         view.layoutSubtreeIfNeeded()
+        leftResizeHandle.refreshInteraction()
+        rightResizeHandle.refreshInteraction()
         updateWindowMinimumSize()
     }
 
@@ -2454,7 +2452,7 @@ final class WorkspaceViewController: NSViewController {
             AppTheme.minimumWindowWidth,
             WorkspacePanelLayout.minimumWindowWidth(
                 leftPanelVisible: sidebarPresentation == .docked,
-                rightPanelVisible: rightPanelVisible,
+                rightPanelVisible: rightPanelVisible && settingsController == nil,
                 leftPanelWidth: leftPanelWidth,
                 rightPanelWidth: rightPanelWidth
             )
@@ -2507,7 +2505,7 @@ final class WorkspaceViewController: NSViewController {
     }
 
     private func resizeRightPanel(by delta: CGFloat) {
-        guard rightPanelVisible else { return }
+        guard rightPanelVisible, settingsController == nil else { return }
         rightPanelWidth = min(
             max(rightWidthConstraint.constant + delta, AppTheme.rightPanelRange.lowerBound),
             AppTheme.rightPanelRange.upperBound
@@ -2541,6 +2539,10 @@ private final class FileEditorViewController: NSViewController, NSTextViewDelega
     private let target: TerminalTarget
     private let scrollView = NSScrollView()
     private let textView = FileTextView()
+    private let loadingView = NSStackView()
+    private let loadingIndicator = NSProgressIndicator()
+    private let loadingLabel = NSTextField(labelWithString: "")
+    private lazy var syntaxHighlighter = SyntaxHighlighter(path: path)
     private var isLoading = true
     private var isDirty = false
     var hasUnsavedChanges: Bool { isDirty }
@@ -2558,7 +2560,8 @@ private final class FileEditorViewController: NSViewController, NSTextViewDelega
         root.wantsLayer = true
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.horizontalScrollElasticity = .none
         scrollView.borderType = .noBorder
         textView.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
         textView.minSize = NSSize(width: 0, height: 0)
@@ -2580,16 +2583,32 @@ private final class FileEditorViewController: NSViewController, NSTextViewDelega
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
-        textView.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
+        textView.font = .monospacedSystemFont(
+            ofSize: CGFloat(UserSettingsStore().load().editorFontSize.points),
+            weight: .regular
+        )
         textView.delegate = self
         textView.onSave = { [weak self] in self?.save() }
         scrollView.documentView = textView
         root.addSubview(scrollView)
+        loadingView.translatesAutoresizingMaskIntoConstraints = false
+        loadingView.orientation = .vertical
+        loadingView.alignment = .centerX
+        loadingView.spacing = 8
+        loadingIndicator.style = .spinning
+        loadingIndicator.controlSize = .small
+        loadingIndicator.startAnimation(nil)
+        loadingLabel.stringValue = "Loading \(URL(fileURLWithPath: path).lastPathComponent)…"
+        loadingView.addArrangedSubview(loadingIndicator)
+        loadingView.addArrangedSubview(loadingLabel)
+        root.addSubview(loadingView)
         NSLayoutConstraint.activate([
             scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
             scrollView.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
             scrollView.topAnchor.constraint(equalTo: root.topAnchor, constant: 12),
             scrollView.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -12),
+            loadingView.centerXAnchor.constraint(equalTo: root.centerXAnchor),
+            loadingView.centerYAnchor.constraint(equalTo: root.centerYAnchor),
         ])
         view = root
         applyTheme()
@@ -2597,27 +2616,47 @@ private final class FileEditorViewController: NSViewController, NSTextViewDelega
             do {
                 let content = try await Task.detached { try FileEditorStore.read(path: path, target: target) }.value
                 textView.string = content
+                syntaxHighlighter.apply(to: textView)
                 textView.isEditable = true
             } catch {
                 textView.string = "Could not open file:\n\n\(error.localizedDescription)"
                 textView.isEditable = false
             }
             isLoading = false
+            loadingIndicator.stopAnimation(nil)
+            loadingView.isHidden = true
         }
     }
 
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        let width = scrollView.contentView.bounds.width
+        guard width > 0, textView.frame.width != width else { return }
+        textView.setFrameSize(NSSize(width: width, height: textView.frame.height))
+    }
+
     func textDidChange(_ notification: Notification) {
+        syntaxHighlighter.schedule(in: textView)
         guard !isLoading, !isDirty else { return }
         isDirty = true
         onStateChange?()
     }
 
     func applyTheme() {
+        let settings = UserSettingsStore().load()
+        let palette = EditorSyntaxPalette.pinata(appTheme: settings.theme)
+        textView.font = .monospacedSystemFont(
+            ofSize: CGFloat(settings.editorFontSize.points),
+            weight: .regular
+        )
         view.layer?.backgroundColor = AppTheme.background.cgColor
-        scrollView.backgroundColor = AppTheme.background
-        textView.backgroundColor = AppTheme.background
-        textView.textColor = AppTheme.primaryText
-        textView.insertionPointColor = AppTheme.primaryText
+        scrollView.backgroundColor = palette.backgroundColor
+        textView.backgroundColor = palette.backgroundColor
+        textView.textColor = palette.foregroundColor
+        textView.insertionPointColor = palette.foregroundColor
+        loadingLabel.font = AppTheme.font(ofSize: AppTheme.typography.body, weight: 500)
+        loadingLabel.textColor = AppTheme.tertiaryText
+        syntaxHighlighter.apply(to: textView)
     }
 
     private func save() {
@@ -3492,6 +3531,10 @@ private final class PanelResizeHandle: NSView {
     func setEnabled(_ enabled: Bool) {
         self.enabled = enabled
         isHidden = !enabled
+        refreshInteraction()
+    }
+
+    func refreshInteraction() {
         updateTrackingAreas()
         updateLineVisibility()
         window?.invalidateCursorRects(for: self)

@@ -3,6 +3,64 @@ import AppKit
 @testable import Pinata
 
 final class CoreLogicTests: XCTestCase {
+    func testEditorLanguageUsesFileExtension() {
+        XCTAssertEqual(EditorLanguage(path: "/tmp/app.swift"), .swift)
+        XCTAssertEqual(EditorLanguage(path: "/tmp/README.md"), .markdown)
+        XCTAssertEqual(EditorLanguage(path: "/tmp/Dockerfile"), .dockerfile)
+        XCTAssertEqual(EditorLanguage(path: "/tmp/config.toml"), .toml)
+        XCTAssertEqual(EditorLanguage(path: "/tmp/schema.graphql"), .graphql)
+        XCTAssertEqual(EditorLanguage(path: "/tmp/.env.local"), .ini)
+        XCTAssertEqual(EditorLanguage(path: "/tmp/data.unknown"), .plain)
+    }
+
+    func testSyntaxTokenizerProtectsSwiftStringsAndComments() {
+        let source = "let value = \"let\" // let"
+        let tokens = SyntaxTokenizer.tokens(in: source, language: .swift)
+
+        XCTAssertTrue(tokens.contains { $0.kind == .keyword && (source as NSString).substring(with: $0.range) == "let" })
+        XCTAssertTrue(tokens.contains { $0.kind == .string && (source as NSString).substring(with: $0.range) == "\"let\"" })
+        XCTAssertTrue(tokens.contains { $0.kind == .comment && (source as NSString).substring(with: $0.range) == "// let" })
+        XCTAssertTrue(SyntaxTokenizer.tokens(in: "render(value)", language: .swift).contains { $0.kind == .function })
+
+        let richerSource = "@MainActor\nlet enabled = true\nlet count = 0xFF + 1\nlet text = \"if (value) // not code\""
+        let richerTokens = SyntaxTokenizer.tokens(in: richerSource, language: .swift)
+        XCTAssertTrue(richerTokens.contains { $0.kind == .decorator })
+        XCTAssertTrue(richerTokens.contains { $0.kind == .constant })
+        XCTAssertTrue(richerTokens.contains { $0.kind == .number })
+        XCTAssertTrue(richerTokens.contains { $0.kind == .operator })
+        XCTAssertFalse(richerTokens.contains { token in
+            token.kind == .keyword && (richerSource as NSString).substring(with: token.range) == "if"
+        })
+    }
+
+    func testSyntaxTokenizerHighlightsMarkdownFencesAndInlineSyntax() {
+        let markdown = "# Heading\n\n**bold** [link](https://example.com)\n\n```swift\nlet value = 1\n```"
+        let tokens = SyntaxTokenizer.tokens(in: markdown, language: .markdown)
+
+        XCTAssertTrue(tokens.contains { $0.kind == .heading })
+        XCTAssertTrue(tokens.contains { $0.kind == .emphasis })
+        XCTAssertTrue(tokens.contains { $0.kind == .link })
+        XCTAssertTrue(tokens.contains { $0.kind == .keyword && (markdown as NSString).substring(with: $0.range) == "let" })
+        XCTAssertTrue(tokens.contains { $0.kind == .code })
+        XCTAssertTrue(SyntaxTokenizer.tokens(in: "- [x] shipped\n\n---\n", language: .markdown).contains { $0.kind == .markup })
+    }
+
+    func testSyntaxTokenizerHighlightsEmbeddedMarkupAndConfigFiles() {
+        let document = "<script>const value = 42</script><style>.card { color: #fff }</style><!-- <fake> -->"
+        let tokens = SyntaxTokenizer.tokens(in: document, language: .html)
+
+        XCTAssertTrue(tokens.contains { $0.kind == .keyword && (document as NSString).substring(with: $0.range) == "const" }, "embedded JavaScript keyword")
+        XCTAssertTrue(tokens.contains { $0.kind == .number && (document as NSString).substring(with: $0.range) == "42" }, "embedded JavaScript number")
+        XCTAssertTrue(tokens.contains { $0.kind == .property && (document as NSString).substring(with: $0.range) == "color" }, "embedded CSS property")
+        XCTAssertTrue(tokens.contains { $0.kind == .constant && (document as NSString).substring(with: $0.range) == "#fff" }, "embedded CSS color")
+        XCTAssertTrue(tokens.contains { $0.kind == .comment }, "HTML comment")
+
+        let toml = SyntaxTokenizer.tokens(in: "[server]\nport = 8080\nenabled = true", language: .toml)
+        XCTAssertTrue(toml.contains { $0.kind == .attribute }, "TOML table")
+        XCTAssertTrue(toml.contains { $0.kind == .property }, "TOML property")
+        XCTAssertTrue(toml.contains { $0.kind == .constant }, "TOML constant")
+    }
+
     func testRegistryStoresRoundTripAndCorruption() throws {
         let directoryURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -611,6 +669,7 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertEqual(settings.accentIntensity, UserSettings.defaults.accentIntensity)
         XCTAssertEqual(settings.appFontSize, UserSettings.defaults.appFontSize)
         XCTAssertEqual(settings.terminalFontSize, UserSettings.defaults.terminalFontSize)
+        XCTAssertEqual(settings.editorFontSize, UserSettings.defaults.editorFontSize)
         XCTAssertEqual(settings.fileIconColor, .colored)
         XCTAssertTrue(settings.filePreviewsEnabled)
     }
@@ -627,6 +686,7 @@ final class CoreLogicTests: XCTestCase {
             accentIntensity: .vibrant,
             appFontSize: .large,
             terminalFontSize: .extraLarge,
+            editorFontSize: .small,
             fileIconColor: .monochrome,
             filePreviewsEnabled: true
         )

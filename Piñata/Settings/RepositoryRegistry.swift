@@ -701,6 +701,7 @@ struct WorktreeProvisioner {
                     onOutput: { _ in }
                 )
                 finishProgressSteps()
+                update(2, status: .completed, detail: "")
             } catch {
                 update(2, status: .failed, detail: error.localizedDescription)
             }

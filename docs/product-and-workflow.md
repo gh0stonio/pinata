@@ -67,6 +67,10 @@ The independently resizable right panel contains Files, Review, and PR tabs. Fil
 - Local filesystem changes update loaded folders while the panel is visible. SSH workspaces use foreground-only change polling.
 - Cached listings and expanded paths survive app restarts and are removed with the owning task or attachment.
 - Appearance settings choose colored or monochrome file icons.
+- Single-clicking a file opens or reuses an italic preview tab. Double-clicking opens a permanent tab. Preview behavior is enabled by default and can be disabled under Settings → Editor.
+- File tabs are fully editable for local and SSH targets. `Cmd+S` writes the current UTF-8 text, and a `*` in the tab title marks unsaved changes.
+- The editor uses the Pinata syntax palette, detects common language and configuration formats from the file name, and supports Markdown headings, emphasis, links, fenced code, and inline code.
+- File loading shows an activity state. Files larger than 4 MB or files that are not UTF-8 text are rejected with an editor error.
 
 The left task sidebar and right workspace panel have separate controllers, visibility state, constraints, resize handles, and persisted widths. Changes to one side must not alter the other side's spacing or behavior.
 
@@ -165,7 +169,7 @@ If cleanup fails, the task stays visible in a deleting or failed state. This kee
 
 ## Settings and appearance
 
-Piñata persists application settings locally: dark or light theme, accent color and intensity, application font size, terminal font size, file-icon color, panel widths, and worktree defaults. Colors and typography are supplied through the shared AppKit theme system so light and dark appearances use the same semantic roles.
+Piñata persists application settings locally: dark or light theme, accent color and intensity, application font size, terminal font size, editor font size, file preview behavior, file-icon color, panel widths, and worktree defaults. Colors and typography are supplied through the shared AppKit theme system so light and dark appearances use the same semantic roles.
 
 ## Current product limits
 

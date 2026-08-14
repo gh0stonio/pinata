@@ -113,6 +113,7 @@ struct UserSettings: Codable, Equatable {
     var accentIntensity: AccentIntensity
     var appFontSize: AppFontSize
     var terminalFontSize: TerminalFontSize
+    var editorFontSize: TerminalFontSize
     var fileIconColor: FileIconColorPreference
     var filePreviewsEnabled: Bool
 
@@ -122,6 +123,7 @@ struct UserSettings: Codable, Equatable {
         accentIntensity: .balanced,
         appFontSize: .regular,
         terminalFontSize: .regular,
+        editorFontSize: .regular,
         fileIconColor: .colored,
         filePreviewsEnabled: true,
     )
@@ -134,6 +136,7 @@ extension UserSettings {
         case accentIntensity
         case appFontSize
         case terminalFontSize
+        case editorFontSize
         case fileIconColor
         case filePreviewsEnabled
     }
@@ -149,6 +152,8 @@ extension UserSettings {
             ?? defaults.appFontSize
         terminalFontSize = (try? values.decode(TerminalFontSize.self, forKey: .terminalFontSize))
             ?? defaults.terminalFontSize
+        editorFontSize = (try? values.decode(TerminalFontSize.self, forKey: .editorFontSize))
+            ?? defaults.editorFontSize
         fileIconColor = (try? values.decode(FileIconColorPreference.self, forKey: .fileIconColor))
             ?? defaults.fileIconColor
         filePreviewsEnabled = (try? values.decode(Bool.self, forKey: .filePreviewsEnabled))

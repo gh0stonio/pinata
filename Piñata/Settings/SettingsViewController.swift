@@ -15,7 +15,8 @@ final class SettingsViewController: NSViewController {
     private let accentControl = AccentChoiceControl()
     private let intensityControl = FlatChoiceControl(labels: ["transparent", "balanced", "vibrant"])
     private let appFontControl = FlatChoiceControl(labels: ["small", "default", "large"])
-    private let terminalFontControl = FontStepperControl()
+    private let terminalFontControl = FontStepperControl(fontName: "Terminal font size")
+    private let editorFontControl = FontStepperControl(fontName: "Editor font size")
     private let fileIconColorControl = FlatChoiceControl(labels: ["colored", "monochrome"])
     private let filePreviewControl = FlatChoiceControl(labels: ["on", "off"])
     private lazy var appearanceContent = AppearanceSettingsContentView(
@@ -28,7 +29,10 @@ final class SettingsViewController: NSViewController {
     )
     private let gitContent = RepositorySettingsView()
     private let connectionsContent = ConnectionsSettingsView()
-    private lazy var editorContent = EditorSettingsContentView(filePreviewControl: filePreviewControl)
+    private lazy var editorContent = EditorSettingsContentView(
+        filePreviewControl: filePreviewControl,
+        editorFontControl: editorFontControl
+    )
     private lazy var navigationGroups = [
         SettingsNavigationGroup(
             title: "PERSONAL",
@@ -196,6 +200,7 @@ final class SettingsViewController: NSViewController {
         intensityControl.onChange = { [weak self] _ in self?.settingChanged() }
         appFontControl.onChange = { [weak self] _ in self?.settingChanged() }
         terminalFontControl.onChange = { [weak self] _ in self?.settingChanged() }
+        editorFontControl.onChange = { [weak self] _ in self?.settingChanged() }
         accentControl.onChange = { [weak self] _ in self?.settingChanged() }
         fileIconColorControl.onChange = { [weak self] _ in self?.settingChanged() }
         filePreviewControl.onChange = { [weak self] _ in self?.settingChanged() }
@@ -222,6 +227,7 @@ final class SettingsViewController: NSViewController {
         intensityControl.selectedIndex = AccentIntensity.allCases.firstIndex(of: settings.accentIntensity) ?? 0
         appFontControl.selectedIndex = AppFontSize.allCases.firstIndex(of: settings.appFontSize) ?? 0
         terminalFontControl.selectedIndex = TerminalFontSize.allCases.firstIndex(of: settings.terminalFontSize) ?? 0
+        editorFontControl.selectedIndex = TerminalFontSize.allCases.firstIndex(of: settings.editorFontSize) ?? 0
         fileIconColorControl.selectedIndex = FileIconColorPreference.allCases.firstIndex(
             of: settings.fileIconColor
         ) ?? 0
@@ -260,6 +266,7 @@ final class SettingsViewController: NSViewController {
             accentIntensity: AccentIntensity.allCases[intensityControl.selectedIndex],
             appFontSize: AppFontSize.allCases[appFontControl.selectedIndex],
             terminalFontSize: TerminalFontSize.allCases[terminalFontControl.selectedIndex],
+            editorFontSize: TerminalFontSize.allCases[editorFontControl.selectedIndex],
             fileIconColor: FileIconColorPreference.allCases[fileIconColorControl.selectedIndex],
             filePreviewsEnabled: filePreviewControl.selectedIndex == 0
         )
@@ -275,7 +282,7 @@ final class SettingsViewController: NSViewController {
 private final class EditorSettingsContentView: NSView, SettingsPageContent {
     private let page = SettingsSplitPageView()
 
-    init(filePreviewControl: FlatChoiceControl) {
+    init(filePreviewControl: FlatChoiceControl, editorFontControl: FontStepperControl) {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
@@ -289,12 +296,20 @@ private final class EditorSettingsContentView: NSView, SettingsPageContent {
         page.addSection(
             title: "Files",
             detail: "Controls for workspace file editors.",
-            content: settingsRowStack([SettingsRowView(
-                title: "File previews",
-                description: "Single-click reuses an italic preview tab",
-                control: filePreviewControl,
-                controlWidth: SettingsLayout.filePreviewControlWidth
-            )])
+            content: settingsRowStack([
+                SettingsRowView(
+                    title: "Editor font size",
+                    description: "Text size in workspace file editors",
+                    control: editorFontControl,
+                    controlWidth: SettingsLayout.terminalFontControlWidth
+                ),
+                SettingsRowView(
+                    title: "File previews",
+                    description: "Single-click reuses an italic preview tab",
+                    control: filePreviewControl,
+                    controlWidth: SettingsLayout.filePreviewControlWidth
+                ),
+            ])
         )
         applyTheme()
     }
@@ -672,9 +687,11 @@ private final class FontStepperControl: NSView, SettingsThemeApplying {
     private let decreaseButton = AppButton(role: .naked)
     private let valueLabel = NSTextField(labelWithString: "")
     private let increaseButton = AppButton(role: .naked)
+    private let fontName: String
 
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
+    init(fontName: String) {
+        self.fontName = fontName
+        super.init(frame: .zero)
         SettingsLayout.applyControlSurface(self, clipsContents: true)
         decreaseButton.title = "−"
         increaseButton.title = "+"
@@ -686,9 +703,9 @@ private final class FontStepperControl: NSView, SettingsThemeApplying {
         decreaseButton.action = #selector(decrease)
         increaseButton.target = self
         increaseButton.action = #selector(increase)
-        decreaseButton.setAccessibilityLabel("Decrease terminal font size")
-        increaseButton.setAccessibilityLabel("Increase terminal font size")
-        valueLabel.setAccessibilityLabel("Terminal font size")
+        decreaseButton.setAccessibilityLabel("Decrease \(fontName.lowercased())")
+        increaseButton.setAccessibilityLabel("Increase \(fontName.lowercased())")
+        valueLabel.setAccessibilityLabel(fontName)
         NSLayoutConstraint.activate([
             decreaseButton.leadingAnchor.constraint(equalTo: leadingAnchor),
             decreaseButton.topAnchor.constraint(equalTo: topAnchor),
