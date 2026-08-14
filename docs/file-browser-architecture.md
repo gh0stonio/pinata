@@ -8,7 +8,7 @@ The Files tab in the right workspace panel browses the active workspace's initia
 - A task-only workspace uses its initial workspace directory.
 - Local and SSH-backed workspaces share the same tree behavior.
 - Expanding a folder loads its direct children. Command-clicking a folder collapses its complete expanded branch.
-- The right panel is independently resizable from `220` to `560` points and preserves its width in `UserDefaults`.
+- The right panel is independently resizable from `350` to `550` points and preserves its width in `UserDefaults`.
 
 ## Panel ownership
 
@@ -17,10 +17,16 @@ The two side panels are separate components because they have different responsi
 | Component | Responsibility |
 | --- | --- |
 | `PanelViewController` | Left task navigation, pinned sections, task rows, and transient sidebar presentation. |
-| `WorkspacePanelViewController` | Right Files, Review, and PR tabs, file-tree loading, caching, and refresh. |
+| `WorkspacePanelViewController` | Right Files, Review, and PR tabs, file-tree loading, caching, refresh, and file-open actions. |
 | `WorkspaceViewController` | Places both panels, owns their independent width constraints and resize handles, and supplies the active file root. |
 
 Panel-specific spacing, visibility, and state must remain inside the owning component. Shared theme tokens and small controls may be reused, but a change to one panel must not mutate the other's constraints or presentation state.
+
+## Opening files
+
+Selecting a text file once opens or replaces the workspace's italic preview tab. Selecting it again promotes the tab to a permanent file tab. Double-clicking opens a permanent tab immediately. Preview mode is enabled by default and can be disabled in Settings → Editor.
+
+The editor is shared by local and SSH workspaces. It reads and writes UTF-8 text files up to 4 MB, shows a loading state during reads, applies Pinata syntax highlighting, and marks unsaved edits with `*` in the tab title. The right panel owns the tree and open-file action, while `WorkspaceViewController` owns the editor tab lifecycle.
 
 ## Loading model
 

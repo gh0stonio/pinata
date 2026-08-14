@@ -13,8 +13,10 @@ flowchart LR
     Attachment --> Terminal
     Task --> Files[Right Files panel]
     Attachment --> Files
+    Files --> Editor[File editor tabs]
     App --> Settings[Settings]
     Settings --> Appearance[Appearance]
+    Settings --> EditorSettings[Editor]
     Settings --> Git[Git and repositories]
     Settings --> Connections[SSH connections]
     Git --> Repository[Repository details]
@@ -23,11 +25,13 @@ flowchart LR
 | Surface | Purpose | Primary action |
 | --- | --- | --- |
 | Sidebar | Browse pinned and unpinned tasks, then their attachments. | Select, reorder, open task actions. |
-| Right workspace panel | Browse files for the selected task or attachment. | Open Files, expand folders, or resize the panel. |
+| Right workspace panel | Browse files for the selected task or attachment. | Open Files, expand folders, open a file, or resize the panel. |
+| File editor tabs | Edit local or SSH text files in the active workspace. | Preview with a single click, open permanently with a double click, and save with `Cmd+S`. |
 | Task workspace | Owns a task's terminal layout. | Open a task terminal or select an attachment. |
 | Repository workspace | Shows one attachment's provisioning state or terminal layout. | Retry a failed worktree or open its terminal. |
 | New task sheet | Creates a task with zero or more repository attachments. | Choose local or enabled SSH repositories. |
-| Appearance | Changes theme, accent, and font preferences. | Persist `UserSettings`. |
+| Appearance | Changes theme, accent, and application and terminal font preferences. | Persist `UserSettings`. |
+| Editor | Changes file preview behavior and editor font size. | Persist `UserSettings`. |
 | Git | Sets the default worktree base and manages registered repositories. | Open repository details. |
 | Connections | Reads SSH aliases from OpenSSH configuration and enables hosts. | Browse and register remote Git folders. |
 | Repository details | Shows inspected Git metadata and repository overrides. | Change default branch or worktree base, remove registration. |
@@ -104,7 +108,7 @@ The settings shell uses the same content gutter, section rhythm, and label/contr
 | SSH connections | `ssh-connections.json` | Stores display name, OpenSSH alias, and enabled state only. |
 | Workspace and terminal layout | `app-session.json` | Restores valid task, attachment, tab, and split references. |
 | File-tree cache | `file-tree-cache-v1.json` | Bounded local and SSH listings plus expanded paths, keyed by root and target. |
-| Appearance and panel preferences | `UserDefaults` | Theme, accent, typography, icon color, sidebar presentation, panel widths, and global worktree base. |
+| Appearance and panel preferences | `UserDefaults` | Theme, accent, application, terminal, and editor typography, preview behavior, icon color, sidebar presentation, panel widths, and global worktree base. |
 
 All files are per-user under Application Support, except `UserDefaults`. zmx owns live terminal state and scrollback outside Piñata's stores.
 

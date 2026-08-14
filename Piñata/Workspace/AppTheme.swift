@@ -272,6 +272,23 @@ enum AppTheme {
             ?? .systemFont(ofSize: size, weight: systemWeight(for: weight))
     }
 
+    static func previewFont(ofSize size: CGFloat, weight: CGFloat = 400) -> NSFont {
+        let font = font(ofSize: size, weight: weight)
+        let transform = NSAffineTransform()
+        transform.transformStruct = NSAffineTransformStruct(
+            m11: 1,
+            m12: 0,
+            m21: 0.12,
+            m22: 1,
+            tX: 0,
+            tY: 0
+        )
+        return NSFont(
+            descriptor: font.fontDescriptor.addingAttributes([.matrix: transform]),
+            size: size
+        ) ?? font
+    }
+
     private static func systemWeight(for weight: CGFloat) -> NSFont.Weight {
         switch weight {
         case ..<450: .regular

@@ -1652,6 +1652,7 @@ private final class FileTreeCellView: NSTableCellView {
 @MainActor
 final class WorkspacePanelViewController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate {
     var onTogglePanel: (() -> Void)?
+    var onOpenFile: ((FileTreeEntry, Bool) -> Void)?
 
     private struct FileRoot: Equatable {
         let name: String
@@ -2094,6 +2095,10 @@ final class WorkspacePanelViewController: NSViewController, NSOutlineViewDataSou
                 } else {
                     outlineView.expandItem(node)
                 }
+            }
+        } else if let entry = node.entry {
+            cell.onActivate = { [weak self] event in
+                self?.onOpenFile?(entry, event.clickCount >= 2)
             }
         }
         if case .error = node.content {

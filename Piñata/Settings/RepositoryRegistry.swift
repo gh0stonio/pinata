@@ -157,6 +157,7 @@ struct RepositoryInspector: Sendable {
     func removeWorktree(
         at path: String,
         branchHint: String?,
+        taskID: UUID? = nil,
         from repository: RegisteredRepository,
         connection: SSHConnection? = nil
     ) throws {
@@ -168,18 +169,11 @@ struct RepositoryInspector: Sendable {
                 ? URL(fileURLWithPath: $0.path).standardizedFileURL
                     == URL(fileURLWithPath: path).standardizedFileURL
                 : $0.path == path
-            return pathMatches || (connection != nil && $0.branch == branchHint)
+            return pathMatches
         }
+            ?? ownedWorktree(in: worktrees, taskID: taskID, repository: repository, connection: connection)
         let branch = worktree?.branch ?? branchHint
         let pathExists = connection == nil && FileManager.default.fileExists(atPath: path)
-        guard let branch, branch.hasPrefix("pinata/") else {
-            if worktree != nil || pathExists {
-                throw RepositoryInspectionError.gitFailed(
-                    "Could not verify that the worktree belongs to Piñata."
-                )
-            }
-            return
-        }
         guard worktree != nil || !pathExists else {
             throw RepositoryInspectionError.gitFailed(
                 "Could not verify that the path is a Git worktree."
@@ -207,8 +201,33 @@ struct RepositoryInspector: Sendable {
             }
         }
 
-        if !(try gitOutput(["-C", repository.path, "branch", "--list", branch], connection: connection)).isEmpty {
+        if let branch, (taskID != nil || branch.hasPrefix("pinata/")), !(try gitOutput(
+            ["-C", repository.path, "branch", "--list", branch],
+            connection: connection
+        )).isEmpty {
             _ = try gitOutput(["-C", repository.path, "branch", "-D", branch], connection: connection)
+        }
+    }
+
+    private func ownedWorktree(
+        in worktrees: [RepositoryWorktree],
+        taskID: UUID?,
+        repository: RegisteredRepository,
+        connection: SSHConnection?
+    ) -> RepositoryWorktree? {
+        guard let taskID else { return nil }
+        let taskValue = taskID.uuidString.lowercased()
+        let repositoryValue = repository.id.uuidString.lowercased()
+        return worktrees.first { worktree in
+            let ownerTask = try? gitOutput(
+                ["-C", worktree.path, "config", "--worktree", "--get", "pinata.task-id"],
+                connection: connection
+            ).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let ownerRepository = try? gitOutput(
+                ["-C", worktree.path, "config", "--worktree", "--get", "pinata.repository-id"],
+                connection: connection
+            ).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return ownerTask == taskValue && ownerRepository == repositoryValue
         }
     }
 
@@ -667,7 +686,25 @@ struct WorktreeProvisioner {
         )
         update(2, status: addWorktree.status, detail: addWorktree.detail)
         if addWorktree.status == .completed {
-            finishProgressSteps()
+            do {
+                update(2, status: .running, detail: "Recording ownership…")
+                _ = try runGit(
+                    ["-C", repository.path, "config", "extensions.worktreeConfig", "true"],
+                    onOutput: { _ in }
+                )
+                _ = try runGit(
+                    ["-C", report.path, "config", "--worktree", "pinata.task-id", taskID.uuidString],
+                    onOutput: { _ in }
+                )
+                _ = try runGit(
+                    ["-C", report.path, "config", "--worktree", "pinata.repository-id", repository.id.uuidString],
+                    onOutput: { _ in }
+                )
+                finishProgressSteps()
+                update(2, status: .completed, detail: "")
+            } catch {
+                update(2, status: .failed, detail: error.localizedDescription)
+            }
         }
         return report
     }

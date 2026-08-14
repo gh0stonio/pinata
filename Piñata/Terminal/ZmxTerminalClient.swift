@@ -20,6 +20,8 @@ final class ZmxTerminalClient: @unchecked Sendable {
     private var writeOffset = 0
     private var closed = false
     private var started = false
+    private var columns: UInt16 = 0
+    private var rows: UInt16 = 0
 
     var onOutput: ((Data) -> Void)?
 
@@ -51,10 +53,10 @@ final class ZmxTerminalClient: @unchecked Sendable {
 
     func resize(columns: UInt16, rows: UInt16) {
         queue.async { [weak self] in
-            guard let self, ptyFD >= 0 else { return }
-            var size = winsize(ws_row: rows, ws_col: columns, ws_xpixel: 0, ws_ypixel: 0)
-            _ = ioctl(ptyFD, TIOCSWINSZ, &size)
-            if childPID > 0 { _ = kill(childPID, SIGWINCH) }
+            guard let self else { return }
+            self.columns = columns
+            self.rows = rows
+            self.applyTerminalSize()
         }
     }
 
@@ -109,12 +111,20 @@ final class ZmxTerminalClient: @unchecked Sendable {
 
         childPID = pid
         ptyFD = masterFD
+        applyTerminalSize()
         setNonBlocking(masterFD)
         let source = DispatchSource.makeReadSource(fileDescriptor: masterFD, queue: queue)
         source.setEventHandler { [weak self] in self?.readAvailable() }
         source.setCancelHandler { Darwin.close(masterFD) }
         readSource = source
         source.resume()
+    }
+
+    private func applyTerminalSize() {
+        guard ptyFD >= 0, columns > 0, rows > 0 else { return }
+        var size = winsize(ws_row: rows, ws_col: columns, ws_xpixel: 0, ws_ypixel: 0)
+        _ = ioctl(ptyFD, TIOCSWINSZ, &size)
+        if childPID > 0 { _ = kill(childPID, SIGWINCH) }
     }
 
     private func readAvailable() {
