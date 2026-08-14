@@ -56,6 +56,20 @@ stateDiagram-v2
 
 `Ready` shows the first-terminal action until a terminal is opened. A failed attachment shows the failure and a retry action. If a task has both successful and failed attachments, each attachment remains independently selectable.
 
+## Files panel
+
+The independently resizable right panel contains Files, Review, and PR tabs. Files is implemented; Review and PR are placeholders.
+
+- The tree root is the active workspace's initial working directory and never follows terminal `cd` commands.
+- A repository attachment shows its repository name at the root, even when its worktree directory uses the task slug.
+- Local and SSH folders load incrementally, with bounded background prefetch for the next two levels.
+- Opening a folder prioritizes that request over prefetch. Command-clicking collapses the folder and every expanded descendant.
+- Local filesystem changes update loaded folders while the panel is visible. SSH workspaces use foreground-only change polling.
+- Cached listings and expanded paths survive app restarts and are removed with the owning task or attachment.
+- Appearance settings choose colored or monochrome file icons.
+
+The left task sidebar and right workspace panel have separate controllers, visibility state, constraints, resize handles, and persisted widths. Changes to one side must not alter the other side's spacing or behavior.
+
 ## Create a task
 
 1. The user chooses **New task** and gives the work a title.
@@ -151,12 +165,12 @@ If cleanup fails, the task stays visible in a deleting or failed state. This kee
 
 ## Settings and appearance
 
-Piñata persists application settings locally: dark or light theme, accent color and intensity, application font size, terminal font size, and worktree defaults. Colors and typography are supplied through the shared AppKit theme system so light and dark appearances use the same semantic roles.
+Piñata persists application settings locally: dark or light theme, accent color and intensity, application font size, terminal font size, file-icon color, panel widths, and worktree defaults. Colors and typography are supplied through the shared AppKit theme system so light and dark appearances use the same semantic roles.
 
 ## Current product limits
 
 - SSH uses an existing OpenSSH alias and non-interactive key authentication. Piñata does not manage keys, passwords, host verification, tunnels, or port forwarding.
-- No file tree, diff, review, checks, or pull request workflow.
+- No diff, review, checks, or pull request workflow. Review and PR tabs are placeholders.
 - No Pi discussion UI, Pi daemon, or agent-specific persistence.
 - No recovery of a local shell after macOS restarts, or a remote process after its host restarts.
 

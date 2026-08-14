@@ -35,6 +35,7 @@
 		000000000000000000000084 /* SSHConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000085 /* SSHConnection.swift */; };
 		000000000000000000000086 /* ConnectionsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000087 /* ConnectionsSettingsView.swift */; };
 		000000000000000000000088 /* ZmxResources/zmx in Resources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000089 /* ZmxResources/zmx */; };
+		000000000000000000000090 /* FileTreeIconResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000091 /* FileTreeIconResolver.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -78,6 +79,7 @@
 		000000000000000000000085 /* SSHConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHConnection.swift; sourceTree = "<group>"; };
 		000000000000000000000087 /* ConnectionsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionsSettingsView.swift; sourceTree = "<group>"; };
 		000000000000000000000089 /* ZmxResources/zmx */ = {isa = PBXFileReference; lastKnownFileType = file; path = ZmxResources/zmx; sourceTree = "<group>"; };
+		000000000000000000000091 /* FileTreeIconResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileTreeIconResolver.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -140,6 +142,7 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000024 /* AppTheme.swift */,
+				000000000000000000000091 /* FileTreeIconResolver.swift */,
 				000000000000000000000025 /* PanelViewController.swift */,
 				000000000000000000000026 /* PanelToggleButton.swift */,
 				000000000000000000000027 /* WorkspaceViewController.swift */,
@@ -290,6 +293,7 @@
 			files = (
 				000000000000000000000001 /* PinataApp.swift in Sources */,
 				000000000000000000000020 /* AppTheme.swift in Sources */,
+				000000000000000000000090 /* FileTreeIconResolver.swift in Sources */,
 				000000000000000000000021 /* PanelViewController.swift in Sources */,
 				000000000000000000000022 /* PanelToggleButton.swift in Sources */,
 				000000000000000000000023 /* WorkspaceViewController.swift in Sources */,

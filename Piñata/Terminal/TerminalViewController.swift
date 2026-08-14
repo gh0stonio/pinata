@@ -417,6 +417,9 @@ private final class TerminalPaneViewController: NSViewController {
         terminalView.didConnect = { [weak header] in
             header?.setTitle(defaultTitle)
         }
+        terminalView.didFailToConnect = { [weak header] _ in
+            header?.setTitle("Disconnected")
+        }
         header.didActivate = { [weak self] in
             guard let self else { return }
             self.focus()

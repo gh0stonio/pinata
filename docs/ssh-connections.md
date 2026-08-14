@@ -31,6 +31,16 @@ An SSH terminal attaches directly to `zmx` on the remote host: `ssh -tt <alias> 
 
 If the Mac restarts, remote zmx sessions remain available. If the remote host restarts, no terminal process can be recovered exactly. Piñata restores the pane and starts a fresh remote session.
 
+## Remote file browsing
+
+The right Files panel browses an SSH-backed worktree through the same saved OpenSSH alias. It loads folders on demand and prefetches a bounded two-level neighborhood instead of enumerating the repository.
+
+When the Files panel, application, and window are visible, Piñata checks lightweight signatures for the root and visible expanded folders every two seconds. It requests a new listing only for changed directories. Closing the panel, switching tabs, minimizing the window, or changing workspace stops this work.
+
+Listings use NUL-delimited records so tabs and newlines in remote filenames remain valid. Folder type comes from the remote filesystem and does not depend on the entry name. A transient SSH failure is retried on the next polling interval.
+
+Cached descendants are exposed only after the current remote root is validated. A connection or folder-read failure hides cached children and shows an error with Retry, so stale data is never presented as current remote state.
+
 ## Limits
 
-Piñata bundles zmx locally. Before opening a remote terminal, it checks the host for zmx and offers to install pinned zmx `0.7.0` in `~/.local/bin`. The installer supports macOS and Linux on arm64 and x86_64, requires `curl`, and verifies the archive checksum. It supports existing SSH aliases, remote Git inspection, worktree provisioning and cleanup, and durable SSH terminal panes. Connection editing, interactive SSH authentication, port forwarding, and remote-host process recovery are intentionally out of scope.
+Piñata bundles zmx locally. Before opening a remote terminal, it checks the host for zmx and offers to install pinned zmx `0.7.0` in `~/.local/bin`. The installer supports macOS and Linux on arm64 and x86_64, requires `curl`, and verifies the archive checksum. Piñata supports existing SSH aliases, remote Git inspection, file browsing, worktree provisioning and cleanup, and durable SSH terminal panes. Connection editing, interactive SSH authentication, port forwarding, and remote-host process recovery are intentionally out of scope.
