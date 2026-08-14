@@ -114,6 +114,7 @@ struct UserSettings: Codable, Equatable {
     var appFontSize: AppFontSize
     var terminalFontSize: TerminalFontSize
     var fileIconColor: FileIconColorPreference
+    var filePreviewsEnabled: Bool
 
     static let defaults = UserSettings(
         theme: .dark,
@@ -122,6 +123,7 @@ struct UserSettings: Codable, Equatable {
         appFontSize: .regular,
         terminalFontSize: .regular,
         fileIconColor: .colored,
+        filePreviewsEnabled: true,
     )
 }
 
@@ -133,6 +135,7 @@ extension UserSettings {
         case appFontSize
         case terminalFontSize
         case fileIconColor
+        case filePreviewsEnabled
     }
 
     init(from decoder: Decoder) throws {
@@ -148,6 +151,8 @@ extension UserSettings {
             ?? defaults.terminalFontSize
         fileIconColor = (try? values.decode(FileIconColorPreference.self, forKey: .fileIconColor))
             ?? defaults.fileIconColor
+        filePreviewsEnabled = (try? values.decode(Bool.self, forKey: .filePreviewsEnabled))
+            ?? defaults.filePreviewsEnabled
     }
 }
 

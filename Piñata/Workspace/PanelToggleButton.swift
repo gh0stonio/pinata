@@ -12,6 +12,7 @@ final class WorkspaceHeaderView: NSView {
     private let separator = NSView()
     private let emptyLabel = NSTextField(labelWithString: "")
     private var tabTrackingArea: NSTrackingArea?
+    private var previewTabIDs = Set<UUID>()
     private let newTabButton = PanelToggleButton(
         symbolName: "plus",
         accessibilityLabel: "New terminal tab",
@@ -115,7 +116,8 @@ final class WorkspaceHeaderView: NSView {
             let item = TabButton(
                 id: tab.id,
                 title: tab.title,
-                selected: tab.id == activeID
+                selected: tab.id == activeID,
+                isPreview: previewTabIDs.contains(tab.id)
             )
             item.onSelect = { [weak self] id in
                 self?.onSelectTab?(id)
@@ -131,6 +133,8 @@ final class WorkspaceHeaderView: NSView {
             }
         }
     }
+
+    func setPreviewTabIDs(_ ids: Set<UUID>) { previewTabIDs = ids }
 
     func setEmptyScope(_ title: String, allowsCreateTab: Bool = true) {
         removeTabs()
@@ -244,6 +248,7 @@ final class TabButton: AppButton {
 
     private let tabID: UUID
     private let selected: Bool
+    private let isPreview: Bool
     private let terminalIcon = NSImageView()
     private let titleLabel: NSTextField
     private let closeIcon = NSImageView()
@@ -253,9 +258,10 @@ final class TabButton: AppButton {
 
     override var usesAutomaticHoverTracking: Bool { false }
 
-    init(id: UUID, title: String, selected: Bool) {
+    init(id: UUID, title: String, selected: Bool, isPreview: Bool = false) {
         tabID = id
         self.selected = selected
+        self.isPreview = isPreview
         titleLabel = NSTextField(labelWithString: title)
         super.init(role: selected ? .accent : .naked)
         translatesAutoresizingMaskIntoConstraints = false
@@ -343,8 +349,16 @@ final class TabButton: AppButton {
             hovered: closeHovered
         )
         terminalIcon.contentTintColor = foreground
-        titleLabel.font = AppTheme.font(ofSize: AppTheme.typography.body, weight: 600)
-        titleLabel.textColor = foreground
+        let font = isPreview
+            ? AppTheme.previewFont(ofSize: AppTheme.typography.body - 1, weight: 600)
+            : AppTheme.font(ofSize: AppTheme.typography.body, weight: 600)
+        titleLabel.attributedStringValue = NSAttributedString(
+            string: titleLabel.stringValue,
+            attributes: [
+                .font: font,
+                .foregroundColor: foreground,
+            ]
+        )
         closeIcon.contentTintColor = closeHovered ? closeAppearance.foreground : foreground
         CATransaction.begin()
         CATransaction.setDisableActions(true)

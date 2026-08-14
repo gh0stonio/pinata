@@ -119,6 +119,11 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
         super.viewDidMoveToWindow()
         scheduleSurfaceCreation()
         updateSurfaceGeometry()
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.window != nil else { return }
+            self.window?.contentView?.layoutSubtreeIfNeeded()
+            self.updateSurfaceGeometry()
+        }
     }
 
     override func layout() {

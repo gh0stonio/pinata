@@ -17,6 +17,7 @@ final class SettingsViewController: NSViewController {
     private let appFontControl = FlatChoiceControl(labels: ["small", "default", "large"])
     private let terminalFontControl = FontStepperControl()
     private let fileIconColorControl = FlatChoiceControl(labels: ["colored", "monochrome"])
+    private let filePreviewControl = FlatChoiceControl(labels: ["on", "off"])
     private lazy var appearanceContent = AppearanceSettingsContentView(
         themeControl: themeControl,
         accentControl: accentControl,
@@ -27,6 +28,7 @@ final class SettingsViewController: NSViewController {
     )
     private let gitContent = RepositorySettingsView()
     private let connectionsContent = ConnectionsSettingsView()
+    private lazy var editorContent = EditorSettingsContentView(filePreviewControl: filePreviewControl)
     private lazy var navigationGroups = [
         SettingsNavigationGroup(
             title: "PERSONAL",
@@ -38,6 +40,11 @@ final class SettingsViewController: NSViewController {
                         accessibilityDescription: nil
                     ) ?? NSImage(),
                     content: appearanceContent
+                ),
+                SettingsPageItem(
+                    title: "Editor",
+                    image: NSImage(systemSymbolName: "text.cursor", accessibilityDescription: nil) ?? NSImage(),
+                    content: editorContent
                 ),
             ]
         ),
@@ -191,6 +198,7 @@ final class SettingsViewController: NSViewController {
         terminalFontControl.onChange = { [weak self] _ in self?.settingChanged() }
         accentControl.onChange = { [weak self] _ in self?.settingChanged() }
         fileIconColorControl.onChange = { [weak self] _ in self?.settingChanged() }
+        filePreviewControl.onChange = { [weak self] _ in self?.settingChanged() }
     }
 
     private func selectPage(at index: Int) {
@@ -217,6 +225,7 @@ final class SettingsViewController: NSViewController {
         fileIconColorControl.selectedIndex = FileIconColorPreference.allCases.firstIndex(
             of: settings.fileIconColor
         ) ?? 0
+        filePreviewControl.selectedIndex = settings.filePreviewsEnabled ? 0 : 1
     }
 
     private func dismissInputFocusIfNeeded(for event: NSEvent) {
@@ -251,7 +260,8 @@ final class SettingsViewController: NSViewController {
             accentIntensity: AccentIntensity.allCases[intensityControl.selectedIndex],
             appFontSize: AppFontSize.allCases[appFontControl.selectedIndex],
             terminalFontSize: TerminalFontSize.allCases[terminalFontControl.selectedIndex],
-            fileIconColor: FileIconColorPreference.allCases[fileIconColorControl.selectedIndex]
+            fileIconColor: FileIconColorPreference.allCases[fileIconColorControl.selectedIndex],
+            filePreviewsEnabled: filePreviewControl.selectedIndex == 0
         )
         if onChange?(next) == false {
             selectCurrentValues()
@@ -259,6 +269,39 @@ final class SettingsViewController: NSViewController {
             settings = next
         }
     }
+}
+
+@MainActor
+private final class EditorSettingsContentView: NSView, SettingsPageContent {
+    private let page = SettingsSplitPageView()
+
+    init(filePreviewControl: FlatChoiceControl) {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        addSubview(page)
+        NSLayoutConstraint.activate([
+            page.leadingAnchor.constraint(equalTo: leadingAnchor),
+            page.trailingAnchor.constraint(equalTo: trailingAnchor),
+            page.topAnchor.constraint(equalTo: topAnchor),
+            page.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        page.addSection(
+            title: "Files",
+            detail: "Controls for workspace file editors.",
+            content: settingsRowStack([SettingsRowView(
+                title: "File previews",
+                description: "Single-click reuses an italic preview tab",
+                control: filePreviewControl,
+                controlWidth: SettingsLayout.filePreviewControlWidth
+            )])
+        )
+        applyTheme()
+    }
+
+    @available(*, unavailable) required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+    func scrollToTop() { page.scrollToTop() }
+    func applyTheme() { layer?.backgroundColor = AppTheme.background.cgColor; page.applyTheme() }
 }
 
 @MainActor

@@ -612,6 +612,7 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertEqual(settings.appFontSize, UserSettings.defaults.appFontSize)
         XCTAssertEqual(settings.terminalFontSize, UserSettings.defaults.terminalFontSize)
         XCTAssertEqual(settings.fileIconColor, .colored)
+        XCTAssertTrue(settings.filePreviewsEnabled)
     }
 
     func testSettingsStoresRoundTripAndRecoverFromInvalidData() throws {
@@ -626,7 +627,8 @@ final class CoreLogicTests: XCTestCase {
             accentIntensity: .vibrant,
             appFontSize: .large,
             terminalFontSize: .extraLarge,
-            fileIconColor: .monochrome
+            fileIconColor: .monochrome,
+            filePreviewsEnabled: true
         )
 
         XCTAssertEqual(settingsStore.load(), .defaults)
