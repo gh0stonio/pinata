@@ -16,10 +16,12 @@ final class SettingsViewController: NSViewController {
     private let intensityControl = FlatChoiceControl(labels: ["transparent", "balanced", "vibrant"])
     private let appFontControl = FlatChoiceControl(labels: ["small", "default", "large"])
     private let terminalFontControl = FontStepperControl()
+    private let fileIconColorControl = FlatChoiceControl(labels: ["colored", "monochrome"])
     private lazy var appearanceContent = AppearanceSettingsContentView(
         themeControl: themeControl,
         accentControl: accentControl,
         intensityControl: intensityControl,
+        fileIconColorControl: fileIconColorControl,
         appFontControl: appFontControl,
         terminalFontControl: terminalFontControl
     )
@@ -188,6 +190,7 @@ final class SettingsViewController: NSViewController {
         appFontControl.onChange = { [weak self] _ in self?.settingChanged() }
         terminalFontControl.onChange = { [weak self] _ in self?.settingChanged() }
         accentControl.onChange = { [weak self] _ in self?.settingChanged() }
+        fileIconColorControl.onChange = { [weak self] _ in self?.settingChanged() }
     }
 
     private func selectPage(at index: Int) {
@@ -211,6 +214,9 @@ final class SettingsViewController: NSViewController {
         intensityControl.selectedIndex = AccentIntensity.allCases.firstIndex(of: settings.accentIntensity) ?? 0
         appFontControl.selectedIndex = AppFontSize.allCases.firstIndex(of: settings.appFontSize) ?? 0
         terminalFontControl.selectedIndex = TerminalFontSize.allCases.firstIndex(of: settings.terminalFontSize) ?? 0
+        fileIconColorControl.selectedIndex = FileIconColorPreference.allCases.firstIndex(
+            of: settings.fileIconColor
+        ) ?? 0
     }
 
     private func dismissInputFocusIfNeeded(for event: NSEvent) {
@@ -244,7 +250,8 @@ final class SettingsViewController: NSViewController {
             accent: AccentPreference.allCases[accentControl.selectedIndex],
             accentIntensity: AccentIntensity.allCases[intensityControl.selectedIndex],
             appFontSize: AppFontSize.allCases[appFontControl.selectedIndex],
-            terminalFontSize: TerminalFontSize.allCases[terminalFontControl.selectedIndex]
+            terminalFontSize: TerminalFontSize.allCases[terminalFontControl.selectedIndex],
+            fileIconColor: FileIconColorPreference.allCases[fileIconColorControl.selectedIndex]
         )
         if onChange?(next) == false {
             selectCurrentValues()
@@ -700,6 +707,7 @@ private final class AppearanceSettingsContentView: NSView, SettingsPageContent {
         themeControl: FlatChoiceControl,
         accentControl: AccentChoiceControl,
         intensityControl: FlatChoiceControl,
+        fileIconColorControl: FlatChoiceControl,
         appFontControl: FlatChoiceControl,
         terminalFontControl: FontStepperControl
     ) {
@@ -710,6 +718,7 @@ private final class AppearanceSettingsContentView: NSView, SettingsPageContent {
             themeControl: themeControl,
             accentControl: accentControl,
             intensityControl: intensityControl,
+            fileIconColorControl: fileIconColorControl,
             appFontControl: appFontControl,
             terminalFontControl: terminalFontControl
         )
@@ -734,6 +743,7 @@ private final class AppearanceSettingsContentView: NSView, SettingsPageContent {
         themeControl: FlatChoiceControl,
         accentControl: AccentChoiceControl,
         intensityControl: FlatChoiceControl,
+        fileIconColorControl: FlatChoiceControl,
         appFontControl: FlatChoiceControl,
         terminalFontControl: FontStepperControl
     ) {
@@ -763,6 +773,12 @@ private final class AppearanceSettingsContentView: NSView, SettingsPageContent {
                 description: "How loud accent surfaces feel",
                 control: intensityControl,
                 controlWidth: SettingsLayout.intensityControlWidth
+            ),
+            SettingsRowView(
+                title: "File icons",
+                description: "Colored by type, or a neutral monochrome style",
+                control: fileIconColorControl,
+                controlWidth: SettingsLayout.fileIconColorControlWidth
             ),
         ]
         let textRows = [

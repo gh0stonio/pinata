@@ -228,17 +228,12 @@ private final class ZmxLaunchConfiguration {
         case .ssh(let connection):
             executable = strdup("/usr/bin/ssh")!
             let command = "cd -- \(SSHCommand.shellQuote(workingDirectory)) && if [ -x \"$HOME/.local/bin/zmx\" ]; then exec \"$HOME/.local/bin/zmx\" attach \(SSHCommand.shellQuote(sessionName)); else exec zmx attach \(SSHCommand.shellQuote(sessionName)); fi"
-            let values = [
-                "ssh",
-                "-A",
-                "-S", "none",
-                "-o", "ControlMaster=no",
-                "-o", "ClearAllForwardings=yes",
-                "-tt",
-                "--",
-                connection.host,
-                command,
-            ]
+            let values = SSHCommand.arguments(
+                connection: connection,
+                command: command,
+                allocateTTY: true,
+                includeExecutableName: true
+            )
             arguments = Self.makeArguments(values)
             argumentCount = values.count
         }
@@ -288,15 +283,10 @@ private enum ZmxControl {
             process.arguments = ["kill", sessionName, "--force"]
         case .ssh(let connection):
             process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-            process.arguments = [
-                "-A",
-                "-S", "none",
-                "-o", "ControlMaster=no",
-                "-o", "ClearAllForwardings=yes",
-                "--",
-                connection.host,
-                "if [ -x \"$HOME/.local/bin/zmx\" ]; then exec \"$HOME/.local/bin/zmx\" kill \(SSHCommand.shellQuote(sessionName)) --force; else exec zmx kill \(SSHCommand.shellQuote(sessionName)) --force; fi",
-            ]
+            process.arguments = SSHCommand.arguments(
+                connection: connection,
+                command: "if [ -x \"$HOME/.local/bin/zmx\" ]; then exec \"$HOME/.local/bin/zmx\" kill \(SSHCommand.shellQuote(sessionName)) --force; else exec zmx kill \(SSHCommand.shellQuote(sessionName)) --force; fi"
+            )
         }
         return process
     }

@@ -14,7 +14,7 @@ flowchart LR
 
 Each pane has a stable UUID. Piñata derives the zmx name as `pinata-<pane-uuid>` and persists the pane UUID with its workspace layout. Restoring a pane attaches to that same zmx session, which rehydrates the terminal content before streaming live output.
 
-For local panes, Piñata runs its bundled zmx binary. For SSH panes, it runs `ssh -tt <alias> zmx attach <pane-id>` and zmx runs on the remote host. Do not nest local zmx around SSH.
+For local panes, Piñata runs its bundled zmx binary. For SSH panes, it preflights the registered alias, then runs `ssh -tt <alias> zmx attach <pane-id>` and zmx runs on the remote host. SSH uses non-interactive authentication, one connection attempt, and a 10-second connect timeout. A failed preflight leaves the pane open, reports the cause, and offers Reconnect. Do not nest local zmx around SSH.
 
 ## Lifecycle
 

@@ -32,13 +32,46 @@ struct AppButtonAppearance {
 }
 
 @MainActor
+enum WorkspacePanelLayout {
+    static func centerWidth(
+        windowWidth: CGFloat,
+        leftPanelVisible: Bool,
+        rightPanelVisible: Bool,
+        leftPanelWidth: CGFloat = AppTheme.leftPanelWidth,
+        rightPanelWidth: CGFloat = AppTheme.rightPanelWidth
+    ) -> CGFloat {
+        windowWidth
+            - (leftPanelVisible ? leftPanelWidth : 0)
+            - AppTheme.workspaceInset * 2
+            - (rightPanelVisible ? rightPanelWidth : 0)
+    }
+
+    static func minimumWindowWidth(
+        leftPanelVisible: Bool,
+        rightPanelVisible: Bool,
+        leftPanelWidth: CGFloat = AppTheme.leftPanelWidth,
+        rightPanelWidth: CGFloat = AppTheme.rightPanelWidth
+    ) -> CGFloat {
+        let settingsWidth = AppTheme.settingsRailWidth
+            + SettingsLayout.dividerThickness
+            + SettingsLayout.minimumPageWidth
+        let centerAndRightWidth = AppTheme.minimumCenterWidth
+            + (rightPanelVisible ? rightPanelWidth : 0)
+        return (leftPanelVisible ? leftPanelWidth : 0)
+            + AppTheme.workspaceInset * 2
+            + max(settingsWidth, centerAndRightWidth)
+    }
+}
+
+@MainActor
 enum AppTheme {
     static let leftPanelWidth: CGFloat = 264
-    static let rightPanelWidth: CGFloat = 304
+    static let rightPanelWidth: CGFloat = 350
     static let settingsRailWidth: CGFloat = 260
     static let panelContentInset: CGFloat = 14
     static let fullScreenSidebarWidth: CGFloat = 320
     static let leftPanelRange: ClosedRange<CGFloat> = 200...440
+    static let rightPanelRange: ClosedRange<CGFloat> = 350...550
     static let workspaceHeaderHeight: CGFloat = 36
     static let mainHeaderHeight: CGFloat = 44
     static let workspaceContentInset: CGFloat = 10
@@ -117,6 +150,7 @@ enum AppTheme {
     static let workspaceControlGap: CGFloat = 2
     static let workspaceControlCornerRadius: CGFloat = 6
     static let workspaceDividerThickness: CGFloat = 1
+    static let workspaceFileTreeInset: CGFloat = 0
     static let workspaceTabCloseInset: CGFloat = 10
     static let workspaceTabCloseHoverSize: CGFloat = 18
     static let workspaceTabCloseHoverCornerRadius: CGFloat = 4
@@ -165,6 +199,7 @@ enum AppTheme {
     static private(set) var panelAccentHoverIcon = color(0xFF746B)
     static private(set) var panelAccentHoverBackground = color(0xFF746B).withAlphaComponent(0.24)
     static private(set) var typography = typography(for: AppFontSize.regular)
+    static private(set) var usesColoredFileIcons = true
 
     static var interactiveHoverForeground: NSColor { primaryText }
     static var interactiveHoverBackground: NSColor { controlBackground }
@@ -218,6 +253,7 @@ enum AppTheme {
         panelAccentHoverIcon = panelAccentHover.icon
         panelAccentHoverBackground = panelAccentHover.background
         typography = typography(for: settings.appFontSize)
+        usesColoredFileIcons = settings.fileIconColor == .colored
     }
 
     static func font(ofSize size: CGFloat, weight: CGFloat = 400) -> NSFont {
@@ -317,9 +353,9 @@ enum AppTheme {
 
         switch role {
         case .accent:
-            let foreground = panelAccentIcon
+            let foreground = hovered ? panelAccentHoverIcon : panelAccentIcon
             return AppButtonAppearance(
-                background: panelAccentBackground,
+                background: hovered ? panelAccentHoverBackground : panelAccentBackground,
                 foreground: foreground,
                 border: foreground.withAlphaComponent(0.55),
                 borderWidth: 1
