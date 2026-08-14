@@ -913,6 +913,7 @@ final class WorkspaceViewController: NSViewController {
                     try RepositoryInspector().removeWorktree(
                         at: report.path,
                         branchHint: report.branch,
+                        taskID: scope.taskID,
                         from: repository,
                         connection: connection
                     )
@@ -1544,6 +1545,7 @@ final class WorkspaceViewController: NSViewController {
                             at: path,
                             branchHint: attachment.branch
                                 ?? attachment.worktreeProvisioning?.branch,
+                            taskID: task.id,
                             from: repository,
                             connection: connection
                         )
@@ -1640,6 +1642,7 @@ final class WorkspaceViewController: NSViewController {
                             at: path,
                             branchHint: attachment.branch
                                 ?? attachment.worktreeProvisioning?.branch,
+                            taskID: scope.taskID,
                             from: repository,
                             connection: connection
                         )

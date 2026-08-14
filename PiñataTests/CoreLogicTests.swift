@@ -851,6 +851,60 @@ final class CoreLogicTests: XCTestCase {
         )
     }
 
+    func testRepositoryRemovalDeletesRenamedWorktreeBranch() throws {
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+        let repositoryURL = try makeGitRepository(in: directoryURL)
+        let worktreeURL = directoryURL.appendingPathComponent("task", isDirectory: true)
+        let pinataBranch = "pinata/remove-test"
+        let renamedBranch = "antoine.leveque/remove-test"
+        _ = try runGit(["-C", repositoryURL.path, "branch", pinataBranch, "main"])
+        _ = try runGit(["-C", repositoryURL.path, "worktree", "add", worktreeURL.path, pinataBranch])
+        _ = try runGit(["-C", repositoryURL.path, "branch", "-m", pinataBranch, renamedBranch])
+        let inspector = RepositoryInspector()
+        let repository = try inspector.inspect(directory: repositoryURL)
+
+        try inspector.removeWorktree(
+            at: worktreeURL.path,
+            branchHint: pinataBranch,
+            taskID: UUID(),
+            from: repository
+        )
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: worktreeURL.path))
+        XCTAssertTrue(try runGit(["-C", repositoryURL.path, "branch", "--list", renamedBranch]).isEmpty)
+    }
+
+    func testRepositoryRemovalFindsMovedOwnedWorktree() throws {
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+        let repositoryURL = try makeGitRepository(in: directoryURL)
+        let originalURL = directoryURL.appendingPathComponent("task", isDirectory: true)
+        let movedURL = directoryURL.appendingPathComponent("moved-task", isDirectory: true)
+        let branch = "pinata/remove-test"
+        let taskID = UUID()
+        _ = try runGit(["-C", repositoryURL.path, "branch", branch, "main"])
+        _ = try runGit(["-C", repositoryURL.path, "worktree", "add", originalURL.path, branch])
+        let inspector = RepositoryInspector()
+        let repository = try inspector.inspect(directory: repositoryURL)
+        _ = try runGit(["-C", repositoryURL.path, "config", "extensions.worktreeConfig", "true"])
+        _ = try runGit(["-C", originalURL.path, "config", "--worktree", "pinata.task-id", taskID.uuidString])
+        _ = try runGit(["-C", originalURL.path, "config", "--worktree", "pinata.repository-id", repository.id.uuidString])
+        _ = try runGit(["-C", repositoryURL.path, "worktree", "move", originalURL.path, movedURL.path])
+
+        try inspector.removeWorktree(
+            at: originalURL.path,
+            branchHint: branch,
+            taskID: taskID,
+            from: repository
+        )
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: movedURL.path))
+        XCTAssertTrue(try runGit(["-C", repositoryURL.path, "branch", "--list", branch]).isEmpty)
+    }
+
     func testWorktreePathsUseTaskSlugAndConfiguredRoot() {
         let repository = RegisteredRepository(
             name: "Piñata App",
