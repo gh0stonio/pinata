@@ -47,6 +47,7 @@ final class WorkspaceViewController: NSViewController {
 
         init(
             runtime: GhosttyRuntime,
+            connectionStatusMonitor: SSHConnectionStatusMonitor,
             title: String,
             workingDirectory: String,
             target: TerminalTarget = .local,
@@ -63,6 +64,7 @@ final class WorkspaceViewController: NSViewController {
                         title: title,
                         controller: TerminalViewController(
                             runtime: runtime,
+                            connectionStatusMonitor: connectionStatusMonitor,
                             workingDirectory: workingDirectory,
                             target: target
                         )
@@ -75,7 +77,11 @@ final class WorkspaceViewController: NSViewController {
             }
         }
 
-        init(runtime: GhosttyRuntime, snapshot: StoredTerminalWorkspace) {
+        init(
+            runtime: GhosttyRuntime,
+            snapshot: StoredTerminalWorkspace,
+            connectionStatusMonitor: SSHConnectionStatusMonitor
+        ) {
             title = snapshot.title
             workingDirectory = snapshot.workingDirectory
             target = snapshot.tabs.first?.terminal.panes.first?.target ?? .local
@@ -84,7 +90,11 @@ final class WorkspaceViewController: NSViewController {
                 return TerminalTab(
                     id: tab.id,
                     title: tab.title,
-                    controller: TerminalViewController(runtime: runtime, snapshot: tab.terminal)
+                    controller: TerminalViewController(
+                        runtime: runtime,
+                        snapshot: tab.terminal,
+                        connectionStatusMonitor: connectionStatusMonitor
+                    )
                 )
             }
             activeTabID = tabs.contains(where: { $0.id == snapshot.activeTabID })
@@ -218,7 +228,11 @@ final class WorkspaceViewController: NSViewController {
                 guard !snapshot.tabs.isEmpty,
                       let scope = Self.workspaceScope(from: snapshot.scope, in: loadedTasks)
                 else { continue }
-                let workspace = TerminalWorkspace(runtime: runtime, snapshot: snapshot)
+                let workspace = TerminalWorkspace(
+                    runtime: runtime,
+                    snapshot: snapshot,
+                    connectionStatusMonitor: sshConnectionStatusMonitor
+                )
                 guard !workspace.tabs.isEmpty else { continue }
                 switch scope {
                 case .task(let taskID):
@@ -336,6 +350,7 @@ final class WorkspaceViewController: NSViewController {
             if taskWorkspaces[taskID] == nil {
                 taskWorkspaces[taskID] = TerminalWorkspace(
                     runtime: runtime,
+                    connectionStatusMonitor: sshConnectionStatusMonitor,
                     title: "Terminal",
                     workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path
                 )
@@ -352,6 +367,7 @@ final class WorkspaceViewController: NSViewController {
             title: isFirstTab ? workspace.title : "\(workspace.title) \(workspace.nextTabNumber)",
             controller: TerminalViewController(
                 runtime: runtime,
+                connectionStatusMonitor: sshConnectionStatusMonitor,
                 workingDirectory: workspace.workingDirectory,
                 target: workspace.target
             )
@@ -1942,6 +1958,7 @@ final class WorkspaceViewController: NSViewController {
         }
         repositoryWorkspaces[scope] = TerminalWorkspace(
             runtime: runtime,
+            connectionStatusMonitor: sshConnectionStatusMonitor,
             title: "~/\(name)",
             workingDirectory: workingDirectory,
             target: target,

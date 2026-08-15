@@ -130,6 +130,7 @@ struct TerminalSessionSnapshot: Codable, Equatable, Sendable {
 @MainActor
 final class TerminalViewController: NSViewController {
     private let runtime: GhosttyRuntime
+    private let connectionStatusMonitor: SSHConnectionStatusMonitor
     private var root: PaneNode
     private var activePaneID: PaneID
     private var paneControllers: [PaneID: TerminalPaneViewController] = [:]
@@ -139,11 +140,13 @@ final class TerminalViewController: NSViewController {
 
     init(
         runtime: GhosttyRuntime,
+        connectionStatusMonitor: SSHConnectionStatusMonitor,
         workingDirectory: String = FileManager.default.homeDirectoryForCurrentUser.path,
         target: TerminalTarget = .local
     ) {
         let paneID = UUID()
         self.runtime = runtime
+        self.connectionStatusMonitor = connectionStatusMonitor
         root = .pane(paneID)
         activePaneID = paneID
         super.init(nibName: nil, bundle: nil)
@@ -154,8 +157,13 @@ final class TerminalViewController: NSViewController {
         )
     }
 
-    init(runtime: GhosttyRuntime, snapshot: TerminalSessionSnapshot) {
+    init(
+        runtime: GhosttyRuntime,
+        snapshot: TerminalSessionSnapshot,
+        connectionStatusMonitor: SSHConnectionStatusMonitor
+    ) {
         self.runtime = runtime
+        self.connectionStatusMonitor = connectionStatusMonitor
         root = snapshot.root
         activePaneID = snapshot.activePaneID
         super.init(nibName: nil, bundle: nil)
@@ -295,6 +303,7 @@ final class TerminalViewController: NSViewController {
         let controller = TerminalPaneViewController(
             paneID: paneID,
             runtime: runtime,
+            connectionStatusMonitor: connectionStatusMonitor,
             workingDirectory: workingDirectory,
             target: target
         )
@@ -392,6 +401,7 @@ private final class TerminalPaneViewController: NSViewController {
     init(
         paneID: PaneID,
         runtime: GhosttyRuntime,
+        connectionStatusMonitor: SSHConnectionStatusMonitor,
         workingDirectory: String,
         target: TerminalTarget
     ) {
@@ -400,7 +410,8 @@ private final class TerminalPaneViewController: NSViewController {
             runtime: runtime,
             workingDirectory: workingDirectory,
             target: target,
-            sessionID: paneID
+            sessionID: paneID,
+            connectionStatusMonitor: connectionStatusMonitor
         )
         let defaultTitle = PaneHeaderView.displayTitle(terminalView.defaultTitle)
         let headerTitle = if case .ssh = target { "Connecting…" } else { defaultTitle }

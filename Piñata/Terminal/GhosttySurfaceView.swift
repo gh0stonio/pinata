@@ -52,6 +52,7 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
     private let runtime: GhosttyRuntime
     private let terminalSession: ZmxTerminalClient
     private let ioBridge: GhosttyIOBridge
+    private let connectionStatusMonitor: SSHConnectionStatusMonitor?
     private var markedTextStorage = NSMutableAttributedString()
     private var suppressFocusMouseUp = false
     private var trackingAreaToken: NSTrackingArea?
@@ -77,11 +78,13 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
         runtime: GhosttyRuntime,
         workingDirectory: String = FileManager.default.homeDirectoryForCurrentUser.path,
         target: TerminalTarget = .local,
-        sessionID: UUID
+        sessionID: UUID,
+        connectionStatusMonitor: SSHConnectionStatusMonitor? = nil
     ) {
         self.runtime = runtime
         self.workingDirectory = workingDirectory
         self.target = target
+        self.connectionStatusMonitor = connectionStatusMonitor
         terminalSession = ZmxTerminalClient(
             id: sessionID,
             workingDirectory: workingDirectory,
@@ -225,19 +228,29 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
             return
         }
         remoteStartTask?.cancel()
+        connectionStatusMonitor?.beginExternalCheck(for: connection)
         remoteStartTask = Task { [weak self] in
             do {
                 try await Task.detached {
                     try SSHCommand.test(connection: connection)
                 }.value
-                guard !Task.isCancelled,
-                      let self,
-                      await RemoteZmxInstallCoordinator.shared.ensureInstalled(on: connection)
-                else { return }
+                guard !Task.isCancelled, let self else { return }
+                self.connectionStatusMonitor?.completeExternalCheck(
+                    for: connection,
+                    status: .connected
+                )
+                guard await RemoteZmxInstallCoordinator.shared.ensureInstalled(on: connection) else {
+                    return
+                }
                 self.terminalSession.start()
             } catch is CancellationError {
                 return
             } catch {
+                guard !Task.isCancelled else { return }
+                self?.connectionStatusMonitor?.completeExternalCheck(
+                    for: connection,
+                    status: .disconnected
+                )
                 self?.presentConnectionFailure(error.localizedDescription)
             }
         }

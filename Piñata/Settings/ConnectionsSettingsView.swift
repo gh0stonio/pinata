@@ -119,6 +119,7 @@ final class ConnectionsSettingsView: NSView, SettingsPageContent {
             loadError = loadError ?? "Could not read ~/.ssh/config: \(error.localizedDescription)"
         }
         connectionStatusMonitor.sync(connections)
+        connectionStatusMonitor.refresh()
         setError(loadError)
 
         hostRows.arrangedSubviews.forEach {
@@ -352,27 +353,23 @@ private final class SSHStatusView: NSView, SettingsThemeApplying {
         didSet { applyTheme() }
     }
 
-    private let dot = NSView()
+    private let indicator: SSHConnectionStatusIndicator
     private let label: NSTextField
 
     init(status: SSHConnectionStatus) {
         self.status = status
+        indicator = SSHConnectionStatusIndicator(status: status)
         label = NSTextField(labelWithString: status.label)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-        wantsLayer = true
-        dot.translatesAutoresizingMaskIntoConstraints = false
         label.translatesAutoresizingMaskIntoConstraints = false
-        dot.wantsLayer = true
-        addSubview(dot)
+        addSubview(indicator)
         addSubview(label)
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: 18),
-            dot.leadingAnchor.constraint(equalTo: leadingAnchor),
-            dot.centerYAnchor.constraint(equalTo: centerYAnchor),
-            dot.widthAnchor.constraint(equalToConstant: 8),
-            dot.heightAnchor.constraint(equalToConstant: 8),
-            label.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 7),
+            indicator.leadingAnchor.constraint(equalTo: leadingAnchor),
+            indicator.centerYAnchor.constraint(equalTo: centerYAnchor),
+            label.leadingAnchor.constraint(equalTo: indicator.trailingAnchor, constant: 7),
             label.trailingAnchor.constraint(equalTo: trailingAnchor),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
@@ -384,8 +381,7 @@ private final class SSHStatusView: NSView, SettingsThemeApplying {
 
     func applyTheme() {
         let color = AppTheme.connectionStatusColor(status)
-        dot.layer?.backgroundColor = color.cgColor
-        dot.layer?.cornerRadius = 4
+        indicator.status = status
         label.stringValue = status.label
         label.textColor = color
         label.font = AppTheme.font(ofSize: AppTheme.typography.settingsBody, weight: 550)

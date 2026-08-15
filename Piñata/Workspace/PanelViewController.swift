@@ -1311,7 +1311,7 @@ private final class SidebarRepositoryRow: AppHoverView {
     private var connectionStatus: SSHConnectionStatus
     private var infoPopoverHovering = false
     private let trailingInfoStack = NSStackView()
-    private let connectionStatusDot = NSImageView()
+    private let connectionStatusDot = SSHConnectionStatusIndicator(status: .disabled)
     private var infoPopover: SidebarHoverPopover?
     private var infoCard: SidebarRepositoryInfoCard?
 
@@ -1380,12 +1380,6 @@ private final class SidebarRepositoryRow: AppHoverView {
         )
         activityIndicator.style = .spinning
         activityIndicator.controlSize = .small
-        connectionStatusDot.image = NSImage(
-            systemSymbolName: "circle.fill",
-            accessibilityDescription: "SSH connection status"
-        )?.withSymbolConfiguration(.init(pointSize: 8, weight: .medium))
-        connectionStatusDot.setAccessibilityLabel("SSH connection status")
-        connectionStatusDot.toolTip = connectionStatus.label
         if activity != nil, error == nil {
             activityIndicator.startAnimation(nil)
         }
@@ -1460,8 +1454,7 @@ private final class SidebarRepositoryRow: AppHoverView {
         statusLabel.textColor = error == nil
             ? AppTheme.tertiaryText
             : AppTheme.error
-        connectionStatusDot.contentTintColor = AppTheme.connectionStatusColor(connectionStatus)
-        connectionStatusDot.toolTip = connectionStatus.label
+        connectionStatusDot.status = connectionStatus
     }
 
     override func hoverStateDidChange() {
@@ -1947,7 +1940,7 @@ private final class SidebarTaskInfoRepositoryRow: NSView {
     private let connectionLabel: NSTextField
     private let branchLabel: NSTextField
     private let pathLabel: NSTextField
-    private let statusDot = NSView()
+    private let statusDot = SSHConnectionStatusIndicator(status: .disabled)
     private var icons: [NSImageView] = []
     private let contentStack = NSStackView()
 
@@ -1963,8 +1956,6 @@ private final class SidebarTaskInfoRepositoryRow: NSView {
         [nameLabel, connectionLabel, branchLabel, pathLabel].forEach {
             $0.isSelectable = true
         }
-        statusDot.translatesAutoresizingMaskIntoConstraints = false
-        statusDot.wantsLayer = true
         contentStack.orientation = .vertical
         contentStack.alignment = .leading
         contentStack.spacing = 3
@@ -2010,6 +2001,7 @@ private final class SidebarTaskInfoRepositoryRow: NSView {
         branchLabel.stringValue = context.branch ?? "Branch unavailable"
         pathLabel.stringValue = context.path ?? "Path unavailable"
         pathLabel.toolTip = context.path
+        statusDot.status = context.status
         statusDot.isHidden = context.connectionID == nil
         applyTheme()
     }
@@ -2026,8 +2018,7 @@ private final class SidebarTaskInfoRepositoryRow: NSView {
         pathLabel.font = .monospacedSystemFont(ofSize: AppTheme.typography.label, weight: .regular)
         pathLabel.textColor = AppTheme.secondaryText
         icons.forEach { $0.contentTintColor = AppTheme.tertiaryText }
-        statusDot.layer?.backgroundColor = AppTheme.connectionStatusColor(context.status).cgColor
-        statusDot.layer?.cornerRadius = 4
+        statusDot.status = context.status
     }
 
     private func makeHeader() -> NSView {
