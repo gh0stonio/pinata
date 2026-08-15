@@ -234,6 +234,10 @@ final class CoreLogicTests: XCTestCase {
             ["/srv/api", "/srv/Apps", "/srv/.cache"]
         )
         XCTAssertEqual(
+            RemoteDirectoryInspector.parseDirectories("/srv/api\0/srv/Apps\0"),
+            ["/srv/api", "/srv/Apps"]
+        )
+        XCTAssertEqual(
             RemoteDirectoryInspector.parseDirectoryTree(
                 "/srv/.cache\n/srv/api\n/srv/Apps\n",
                 root: "/srv"

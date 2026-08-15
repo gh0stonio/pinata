@@ -5,7 +5,7 @@ Piñata can register a Git repository that lives on an SSH host. Connections sto
 ## Setup
 
 1. Add a host alias to `~/.ssh/config` and verify it with `ssh <alias>`.
-2. In Settings → Connections, Piñata groups configured aliases into remote hosts and hides Git-only transport entries. Enable the host you want to use.
+2. In Settings → Connections, Piñata groups configured aliases into remote hosts and hides Git-only transport entries. Enable the host you want to use. Enabled hosts show a live `Connected`, `Checking`, or `Disconnected` status from a non-interactive SSH probe.
 3. Open the enabled host, choose **Browse remote folders**, then register the Git repository from its root folder.
 
 Piñata uses `ssh -o BatchMode=yes`. Interactive password prompts are deliberately unsupported. Configure an SSH agent or key authentication first.
@@ -33,7 +33,7 @@ If the Mac restarts, remote zmx sessions remain available. If the remote host re
 
 ## Remote file browsing
 
-The right Files panel browses an SSH-backed worktree through the same saved OpenSSH alias. It loads folders on demand and prefetches a bounded two-level neighborhood instead of enumerating the repository.
+The right Files panel browses an SSH-backed worktree through the same saved OpenSSH alias. It loads folders on demand and prefetches a bounded two-level neighborhood instead of enumerating the repository. The connection settings browser warms the home-folder listing, keeps a short-lived in-memory cache, and reuses an SSH control connection for nearby folder requests.
 
 When the Files panel, application, and window are visible, Piñata checks lightweight signatures for the root and visible expanded folders every two seconds. It requests a new listing only for changed directories. Closing the panel, switching tabs, minimizing the window, or changing workspace stops this work.
 
