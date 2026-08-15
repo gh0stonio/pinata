@@ -164,6 +164,8 @@ final class PanelViewController: NSViewController {
     var onSelectTask: ((UUID) -> Void)?
     var onSelectRepository: ((TaskRepositoryScope) -> Void)?
     var onToggleTaskExpansion: ((UUID) -> Void)?
+    var onSidebarTaskHover: ((UUID) -> Void)?
+    var onSidebarRepositoryHover: ((TaskRepositoryScope) -> Void)?
     var onShowTaskMenu: ((UUID, NSRect) -> Void)?
     var onShowRepositoryMenu: ((TaskRepositoryScope, NSRect) -> Void)?
     var onMoveTask: ((UUID, UUID?, Bool, Bool) -> Void)?
@@ -171,6 +173,7 @@ final class PanelViewController: NSViewController {
     private weak var trackingRoot: PanelTrackingView?
     private weak var leftHeader: LeftSidebarHeaderView?
     private weak var brandView: SidebarBrandView?
+    private let connectionStatusMonitor: SSHConnectionStatusMonitor
     private let newTaskButton = SidebarNewTaskButton(frame: .zero)
     private let taskScrollView = NSScrollView()
     private let taskDocument = NSView()
@@ -178,8 +181,16 @@ final class PanelViewController: NSViewController {
     private var taskMenuTaskID: UUID?
     private var repositoryMenuScope: TaskRepositoryScope?
 
-    init() {
+    init(connectionStatusMonitor: SSHConnectionStatusMonitor) {
+        self.connectionStatusMonitor = connectionStatusMonitor
         super.init(nibName: nil, bundle: nil)
+        connectionStatusMonitor.addObserver { [weak self] in
+            self?.refreshConnectionStatuses()
+        }
+    }
+
+    convenience init() {
+        self.init(connectionStatusMonitor: SSHConnectionStatusMonitor())
     }
 
     @available(*, unavailable)
@@ -233,6 +244,8 @@ final class PanelViewController: NSViewController {
         taskActivities: [UUID: String] = [:],
         repositoryActivities: [TaskRepositoryScope: String] = [:],
         repositoryTargets: [UUID: RepositoryTarget] = [:],
+        repositoryPaths: [UUID: String] = [:],
+        repositoryBranches: [UUID: String] = [:],
         taskErrors: [UUID: String],
         repositoryErrors: [TaskRepositoryScope: String],
         loadError: String?
@@ -265,14 +278,25 @@ final class PanelViewController: NSViewController {
                 repositoryMenuScope: repositoryMenuScope,
                 repositoryActivities: repositoryActivities,
                 repositoryErrors: repositoryErrors,
-                repositoryTargets: repositoryTargets
+                repositoryTargets: repositoryTargets,
+                repositoryPaths: repositoryPaths,
+                repositoryBranches: repositoryBranches,
+                connectionStatusMonitor: connectionStatusMonitor
             )
             group.onSelectTask = { [weak self] in self?.onSelectTask?(task.id) }
             group.onToggleExpansion = { [weak self] in
                 self?.onToggleTaskExpansion?(task.id)
             }
+            group.onHoverTask = { [weak self] in
+                self?.onSidebarTaskHover?(task.id)
+            }
             group.onSelectRepository = { [weak self] repositoryID in
                 self?.onSelectRepository?(
+                    TaskRepositoryScope(taskID: task.id, repositoryID: repositoryID)
+                )
+            }
+            group.onHoverRepository = { [weak self] repositoryID in
+                self?.onSidebarRepositoryHover?(
                     TaskRepositoryScope(taskID: task.id, repositoryID: repositoryID)
                 )
             }
@@ -337,6 +361,13 @@ final class PanelViewController: NSViewController {
         taskStack.arrangedSubviews
             .compactMap { $0 as? SidebarTaskGroupView }
             .forEach { $0.setRepositoryMenuActive(scope) }
+    }
+
+    private func refreshConnectionStatuses() {
+        guard isViewLoaded else { return }
+        taskStack.arrangedSubviews
+            .compactMap { $0 as? SidebarTaskGroupView }
+            .forEach { $0.refreshConnectionStatuses() }
     }
 
     private func installLeftPanel() {
@@ -502,10 +533,24 @@ private final class SidebarNewTaskButton: AppButton {
 }
 
 @MainActor
+private struct SidebarRepositoryContext {
+    let repositoryID: UUID
+    let name: String
+    let branch: String?
+    let path: String?
+    let target: RepositoryTarget
+    let connectionID: UUID?
+    let connectionName: String?
+    var status: SSHConnectionStatus
+}
+
+@MainActor
 private final class SidebarTaskGroupView: NSStackView {
     var onSelectTask: (() -> Void)?
     var onToggleExpansion: (() -> Void)?
+    var onHoverTask: (() -> Void)?
     var onSelectRepository: ((UUID) -> Void)?
+    var onHoverRepository: ((UUID) -> Void)?
     var onShowMenu: ((NSRect) -> Void)?
     var onShowRepositoryMenu: ((UUID, NSRect) -> Void)?
 
@@ -524,10 +569,38 @@ private final class SidebarTaskGroupView: NSStackView {
         repositoryMenuScope: TaskRepositoryScope?,
         repositoryActivities: [TaskRepositoryScope: String],
         repositoryErrors: [TaskRepositoryScope: String],
-        repositoryTargets: [UUID: RepositoryTarget]
+        repositoryTargets: [UUID: RepositoryTarget],
+        repositoryPaths: [UUID: String],
+        repositoryBranches: [UUID: String],
+        connectionStatusMonitor: SSHConnectionStatusMonitor
     ) {
         taskID = task.id
         isPinned = task.isPinned
+        let repositoryContexts = task.repositories.sorted(by: {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }).map { repository in
+            let target = repositoryTargets[repository.repositoryID] ?? .local
+            let connectionID: UUID?
+            if case .ssh(let id) = target {
+                connectionID = id
+            } else {
+                connectionID = nil
+            }
+            return SidebarRepositoryContext(
+                repositoryID: repository.repositoryID,
+                name: repository.name,
+                branch: repository.branch
+                    ?? repository.worktreeProvisioning?.branch
+                    ?? repositoryBranches[repository.repositoryID],
+                path: repository.worktreePath
+                    ?? repository.worktreeProvisioning?.path
+                    ?? repositoryPaths[repository.repositoryID],
+                target: target,
+                connectionID: connectionID,
+                connectionName: connectionID.flatMap { connectionStatusMonitor.name(for: $0) },
+                status: connectionID.map { connectionStatusMonitor.status(for: $0) } ?? .disabled
+            )
+        }
         let collapsedRepositoryError = expanded ? nil : task.repositories.lazy.compactMap {
             repositoryErrors[TaskRepositoryScope(
                 taskID: task.id,
@@ -542,7 +615,10 @@ private final class SidebarTaskGroupView: NSStackView {
             selected: selection == .task(task.id),
             menuActive: menuActive,
             activity: activity,
-            error: taskError ?? collapsedRepositoryError
+            error: taskError ?? collapsedRepositoryError,
+            repositoryContexts: repositoryContexts,
+            connectionStatusMonitor: connectionStatusMonitor,
+            createdAt: task.createdAt
         )
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
@@ -553,6 +629,7 @@ private final class SidebarTaskGroupView: NSStackView {
         taskRow.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
         taskRow.onSelect = { [weak self] in self?.onSelectTask?() }
         taskRow.onToggleExpansion = { [weak self] in self?.onToggleExpansion?() }
+        taskRow.onHover = { [weak self] in self?.onHoverTask?() }
         taskRow.onShowMenu = { [weak self] in self?.onShowMenu?($0) }
 
         if expanded {
@@ -560,6 +637,7 @@ private final class SidebarTaskGroupView: NSStackView {
                 $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
             }) {
                 let scope = TaskRepositoryScope(taskID: task.id, repositoryID: repository.repositoryID)
+                let context = repositoryContexts.first { $0.repositoryID == repository.repositoryID }
                 let row = SidebarRepositoryRow(
                     repository: repository,
                     selected: selection == .repository(scope),
@@ -568,11 +646,15 @@ private final class SidebarTaskGroupView: NSStackView {
                         !$0.succeeded && $0.failureMessage == nil
                     } == true ? "creating" : nil),
                     error: repositoryErrors[scope],
-                    target: repositoryTargets[repository.repositoryID] ?? .local,
-                    suppressActions: activity == "deleting"
+                    context: context,
+                    suppressActions: activity == "deleting",
+                    connectionStatusMonitor: connectionStatusMonitor
                 )
                 row.onSelect = { [weak self] in
                     self?.onSelectRepository?(repository.repositoryID)
+                }
+                row.onHover = { [weak self] in
+                    self?.onHoverRepository?(repository.repositoryID)
                 }
                 row.onShowMenu = { [weak self] anchorRect in
                     self?.onShowRepositoryMenu?(repository.repositoryID, anchorRect)
@@ -604,6 +686,11 @@ private final class SidebarTaskGroupView: NSStackView {
                 scope?.taskID == taskID && scope?.repositoryID == row.repositoryID
             )
         }
+    }
+
+    func refreshConnectionStatuses() {
+        taskRow.refreshConnectionStatuses()
+        repositoryRows.forEach { $0.refreshConnectionStatus() }
     }
 
     var dragPreviewSize: NSSize { taskRow.bounds.size }
@@ -649,9 +736,9 @@ private final class SidebarTrailingActionOverlay: NSView {
         button.translatesAutoresizingMaskIntoConstraints = false
         addSubview(button)
         NSLayoutConstraint.activate([
-            button.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            button.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
             button.centerYAnchor.constraint(equalTo: centerYAnchor),
-            button.widthAnchor.constraint(equalToConstant: 28),
+            button.widthAnchor.constraint(equalToConstant: 24),
             button.heightAnchor.constraint(equalToConstant: 24),
         ])
     }
@@ -718,6 +805,7 @@ private final class SidebarTaskSelectButton: AppButton, NSDraggingSource {
 private final class SidebarTaskRow: AppHoverView {
     var onSelect: (() -> Void)?
     var onToggleExpansion: (() -> Void)?
+    var onHover: (() -> Void)?
     var onShowMenu: ((NSRect) -> Void)?
 
     private let selected: Bool
@@ -733,6 +821,12 @@ private final class SidebarTaskRow: AppHoverView {
     private let errorIcon = NSImageView()
     private let activityIndicator = NSProgressIndicator()
     private let statusLabel: NSTextField
+    private let connectionStatusMonitor: SSHConnectionStatusMonitor
+    private let createdAt: Date
+    private var repositoryContexts: [SidebarRepositoryContext]
+    private var infoPopoverHovering = false
+    private var infoPopover: SidebarHoverPopover?
+    private var infoCard: SidebarTaskAggregateInfoCard?
 
     init(
         taskID: UUID,
@@ -742,20 +836,26 @@ private final class SidebarTaskRow: AppHoverView {
         selected: Bool,
         menuActive: Bool,
         activity: String?,
-        error: String?
+        error: String?,
+        repositoryContexts: [SidebarRepositoryContext],
+        connectionStatusMonitor: SSHConnectionStatusMonitor,
+        createdAt: Date
     ) {
         self.selected = selected
         self.hasRepositories = hasRepositories
         self.menuActive = menuActive
         self.activity = activity
         self.error = error
+        self.repositoryContexts = repositoryContexts
+        self.connectionStatusMonitor = connectionStatusMonitor
+        self.createdAt = createdAt
         titleLabel = NSTextField(labelWithString: title)
         statusLabel = NSTextField(labelWithString: activity ?? "")
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
         layer?.cornerRadius = AppTheme.workspaceControlCornerRadius
-        toolTip = error ?? title
+        toolTip = error
 
         [
             selectButton,
@@ -806,6 +906,7 @@ private final class SidebarTaskRow: AppHoverView {
         menuButton.forcedActive = menuActive
         titleLabel.usesSingleLineMode = true
         titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.isSelectable = true
         errorIcon.image = NSImage(
             systemSymbolName: "exclamationmark.circle.fill",
             accessibilityDescription: "Failed"
@@ -874,7 +975,7 @@ private final class SidebarTaskRow: AppHoverView {
     func applyTheme() {
         let appearance = AppTheme.buttonAppearance(
             role: selected ? .accent : .chrome,
-            hovered: !selected && (isHovering || menuActive)
+            hovered: !selected && (isHovering || infoPopoverHovering || menuActive)
         )
         layer?.backgroundColor = appearance.background.cgColor
         let textColor = error == nil
@@ -900,22 +1001,76 @@ private final class SidebarTaskRow: AppHoverView {
     override func hoverStateDidChange() {
         updateTrailingVisibility()
         applyTheme()
+        if isHovering {
+            onHover?()
+            showInfoPopover()
+        } else {
+            dismissInfoPopover()
+        }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil {
+            infoPopover?.close()
+        }
     }
 
     func setMenuActive(_ active: Bool) {
         menuActive = active
+        if active {
+            infoPopover?.close()
+        }
         menuButton.forcedActive = active
         updateTrailingVisibility()
         applyTheme()
     }
 
+    func refreshConnectionStatuses() {
+        repositoryContexts.indices.forEach { index in
+            guard let connectionID = repositoryContexts[index].connectionID else { return }
+            repositoryContexts[index].status = connectionStatusMonitor.status(for: connectionID)
+        }
+        infoCard?.update(contexts: repositoryContexts)
+    }
+
     private func updateTrailingVisibility() {
-        let showsMenu = activity == nil && (isHovering || menuActive)
+        let showsMenu = activity == nil && (isHovering || infoPopoverHovering || menuActive)
         menuOverlay.isHidden = !showsMenu
         disclosureButton.isHidden = !hasRepositories
         errorIcon.isHidden = error == nil
         activityIndicator.isHidden = activity == nil || error != nil
         statusLabel.isHidden = activity == nil
+    }
+
+    private func showInfoPopover() {
+        guard !menuActive, let window else { return }
+        let card = infoCard ?? {
+            let value = SidebarTaskAggregateInfoCard(
+                createdAt: createdAt,
+                contexts: repositoryContexts
+            )
+            infoCard = value
+            return value
+        }()
+        card.update(contexts: repositoryContexts)
+        let popover = infoPopover ?? {
+            let value = SidebarHoverPopover(content: card)
+            value.onHoverChanged = { [weak self] hovering in
+                self?.infoPopoverHovering = hovering
+                self?.updateTrailingVisibility()
+                self?.applyTheme()
+            }
+            infoPopover = value
+            return value
+        }()
+        popover.cancelScheduledClose()
+        guard !popover.isVisible, window.isVisible else { return }
+        popover.show(relativeTo: bounds, of: self)
+    }
+
+    private func dismissInfoPopover() {
+        infoPopover?.scheduleClose()
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
@@ -969,6 +1124,7 @@ private final class SidebarTaskRow: AppHoverView {
 
     @objc private func showMenu() {
         guard menuButton.window != nil else { return }
+        infoPopover?.close()
         onShowMenu?(convert(bounds, to: nil))
     }
 }
@@ -1049,7 +1205,7 @@ final class SidebarActionMenuView: NSView {
     }
 
     func applyTheme() {
-        layer?.backgroundColor = AppTheme.chromeBackground.cgColor
+        layer?.backgroundColor = AppTheme.surface.cgColor
         layer?.borderColor = AppTheme.border.cgColor
         layer?.shadowColor = NSColor.black.cgColor
         rows.forEach { $0.applyTheme() }
@@ -1106,7 +1262,7 @@ private final class SidebarActionMenuRow: AppHoverView {
 
     func applyTheme() {
         layer?.backgroundColor = (isHovering
-            ? AppTheme.chromeHoverBackground
+            ? AppTheme.controlBackground
             : NSColor.clear).cgColor
         let color = destructive
             ? AppTheme.error
@@ -1132,6 +1288,7 @@ private final class SidebarActionMenuRow: AppHoverView {
 @MainActor
 private final class SidebarRepositoryRow: AppHoverView {
     var onSelect: (() -> Void)?
+    var onHover: (() -> Void)?
     var onShowMenu: ((NSRect) -> Void)?
 
     let repositoryID: UUID
@@ -1148,6 +1305,15 @@ private final class SidebarRepositoryRow: AppHoverView {
     private let errorIcon = NSImageView()
     private let activityIndicator = NSProgressIndicator()
     private let statusLabel: NSTextField
+    private let connectionStatusMonitor: SSHConnectionStatusMonitor
+    private let connectionID: UUID?
+    private var repositoryContext: SidebarRepositoryContext?
+    private var connectionStatus: SSHConnectionStatus
+    private var infoPopoverHovering = false
+    private let trailingInfoStack = NSStackView()
+    private let connectionStatusDot = NSImageView()
+    private var infoPopover: SidebarHoverPopover?
+    private var infoCard: SidebarRepositoryInfoCard?
 
     init(
         repository: TaskRepositoryAttachment,
@@ -1155,8 +1321,9 @@ private final class SidebarRepositoryRow: AppHoverView {
         menuActive: Bool,
         activity: String?,
         error: String?,
-        target: RepositoryTarget,
-        suppressActions: Bool
+        context: SidebarRepositoryContext?,
+        suppressActions: Bool,
+        connectionStatusMonitor: SSHConnectionStatusMonitor
     ) {
         repositoryID = repository.repositoryID
         self.selected = selected
@@ -1164,21 +1331,29 @@ private final class SidebarRepositoryRow: AppHoverView {
         self.activity = activity
         self.error = error
         self.suppressActions = suppressActions
+        self.connectionStatusMonitor = connectionStatusMonitor
+        repositoryContext = context
+        connectionID = context?.connectionID
+        connectionStatus = context?.status ?? .disabled
         titleLabel = NSTextField(labelWithString: repository.name)
-        let isRemote: Bool
-        if case .ssh = target { isRemote = true } else { isRemote = false }
         statusLabel = NSTextField(labelWithString: error == nil ? activity ?? "" : "failed")
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
         layer?.cornerRadius = AppTheme.workspaceControlCornerRadius
-        toolTip = error ?? repository.name
+        toolTip = error ?? (self.connectionID == nil ? repository.name : nil)
         sourceIcon.image = NSImage(
-            systemSymbolName: isRemote ? "globe" : "laptopcomputer",
-            accessibilityDescription: isRemote ? "Remote repository" : "Local repository"
+            systemSymbolName: self.connectionID == nil ? "laptopcomputer" : "globe",
+            accessibilityDescription: self.connectionID == nil ? "Local repository" : "Remote repository"
         )
         sourceIcon.symbolConfiguration = .init(pointSize: 10, weight: .medium)
-        [button, sourceIcon, titleLabel, errorIcon, activityIndicator, statusLabel, menuOverlay].forEach {
+        trailingInfoStack.orientation = .horizontal
+        trailingInfoStack.alignment = .centerY
+        trailingInfoStack.spacing = 6
+        [errorIcon, activityIndicator, statusLabel, connectionStatusDot].forEach {
+            trailingInfoStack.addArrangedSubview($0)
+        }
+        [button, sourceIcon, titleLabel, trailingInfoStack, menuOverlay].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             addSubview($0)
         }
@@ -1198,12 +1373,19 @@ private final class SidebarRepositoryRow: AppHoverView {
         menuButton.forcedActive = menuActive
         titleLabel.usesSingleLineMode = true
         titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.isSelectable = true
         errorIcon.image = NSImage(
             systemSymbolName: "exclamationmark.circle.fill",
             accessibilityDescription: "Failed"
         )
         activityIndicator.style = .spinning
         activityIndicator.controlSize = .small
+        connectionStatusDot.image = NSImage(
+            systemSymbolName: "circle.fill",
+            accessibilityDescription: "SSH connection status"
+        )?.withSymbolConfiguration(.init(pointSize: 8, weight: .medium))
+        connectionStatusDot.setAccessibilityLabel("SSH connection status")
+        connectionStatusDot.toolTip = connectionStatus.label
         if activity != nil, error == nil {
             activityIndicator.startAnimation(nil)
         }
@@ -1226,24 +1408,19 @@ private final class SidebarRepositoryRow: AppHoverView {
                 constant: 6
             ),
             titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: errorIcon.leadingAnchor, constant: -6),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingInfoStack.leadingAnchor, constant: -6),
             menuOverlay.trailingAnchor.constraint(equalTo: trailingAnchor),
             menuOverlay.topAnchor.constraint(equalTo: topAnchor),
             menuOverlay.bottomAnchor.constraint(equalTo: bottomAnchor),
             menuOverlay.widthAnchor.constraint(equalToConstant: 88),
-            statusLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            statusLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            activityIndicator.trailingAnchor.constraint(
-                equalTo: statusLabel.leadingAnchor,
-                constant: -6
-            ),
-            activityIndicator.centerYAnchor.constraint(equalTo: centerYAnchor),
             activityIndicator.widthAnchor.constraint(equalToConstant: activity == nil ? 0 : 12),
             activityIndicator.heightAnchor.constraint(equalToConstant: 12),
-            errorIcon.trailingAnchor.constraint(equalTo: activityIndicator.leadingAnchor),
-            errorIcon.centerYAnchor.constraint(equalTo: centerYAnchor),
             errorIcon.widthAnchor.constraint(equalToConstant: error == nil ? 0 : 14),
             errorIcon.heightAnchor.constraint(equalToConstant: 12),
+            connectionStatusDot.widthAnchor.constraint(equalToConstant: 8),
+            connectionStatusDot.heightAnchor.constraint(equalToConstant: 8),
+            trailingInfoStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            trailingInfoStack.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
         updateTrailingVisibility()
         applyTheme()
@@ -1257,7 +1434,7 @@ private final class SidebarRepositoryRow: AppHoverView {
     func applyTheme() {
         let appearance = AppTheme.buttonAppearance(
             role: selected ? .accent : .chrome,
-            hovered: isHovering
+            hovered: isHovering || infoPopoverHovering
         )
         layer?.backgroundColor = appearance.background.cgColor
         let textColor = error == nil
@@ -1283,26 +1460,84 @@ private final class SidebarRepositoryRow: AppHoverView {
         statusLabel.textColor = error == nil
             ? AppTheme.tertiaryText
             : AppTheme.error
+        connectionStatusDot.contentTintColor = AppTheme.connectionStatusColor(connectionStatus)
+        connectionStatusDot.toolTip = connectionStatus.label
     }
 
     override func hoverStateDidChange() {
         updateTrailingVisibility()
         applyTheme()
+        if isHovering {
+            onHover?()
+            showInfoPopover()
+        } else {
+            dismissInfoPopover()
+        }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil {
+            infoPopover?.close()
+        }
     }
 
     func setMenuActive(_ active: Bool) {
         menuActive = active
+        if active {
+            infoPopover?.close()
+        }
         menuButton.forcedActive = active
         updateTrailingVisibility()
         applyTheme()
     }
 
+    func refreshConnectionStatus() {
+        guard let connectionID else { return }
+        connectionStatus = connectionStatusMonitor.status(for: connectionID)
+        repositoryContext?.status = connectionStatus
+        applyTheme()
+        if let repositoryContext {
+            infoCard?.update(context: repositoryContext)
+        }
+    }
+
     private func updateTrailingVisibility() {
-        let showsMenu = !suppressActions && activity == nil && (isHovering || menuActive)
+        let showsMenu = !suppressActions
+            && activity == nil
+            && (isHovering || infoPopoverHovering || menuActive)
         menuOverlay.isHidden = !showsMenu
         errorIcon.isHidden = error == nil
         activityIndicator.isHidden = activity == nil || error != nil
         statusLabel.isHidden = error == nil && activity == nil
+        connectionStatusDot.isHidden = connectionID == nil
+    }
+
+    private func showInfoPopover() {
+        guard !menuActive, let window, let repositoryContext else { return }
+        let card = infoCard ?? {
+            let value = SidebarRepositoryInfoCard(context: repositoryContext)
+            infoCard = value
+            return value
+        }()
+        card.update(context: repositoryContext)
+        let popover = infoPopover ?? {
+            let value = SidebarHoverPopover(content: card)
+            value.onHoverChanged = { [weak self] hovering in
+                self?.infoPopoverHovering = hovering
+                self?.updateTrailingVisibility()
+                self?.applyTheme()
+            }
+            infoPopover = value
+            return value
+        }()
+        popover.cancelScheduledClose()
+        guard !popover.isVisible, window.isVisible else { return }
+        popover.show(relativeTo: bounds, of: self)
+    }
+
+    private func dismissInfoPopover() {
+        infoPopover?.scheduleClose()
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
@@ -1319,7 +1554,555 @@ private final class SidebarRepositoryRow: AppHoverView {
 
     @objc private func showMenu() {
         guard menuButton.window != nil else { return }
+        infoPopover?.close()
         onShowMenu?(convert(bounds, to: nil))
+    }
+}
+
+@MainActor
+private final class SidebarHoverPopover: NSPanel {
+    private static weak var activePopover: SidebarHoverPopover?
+    private let chromeView: SidebarHoverPopoverView
+    private var closeTimer: Timer?
+    var onHoverChanged: ((Bool) -> Void)? {
+        didSet {
+            chromeView.onHoverChanged = { [weak self] hovering in
+                self?.handleContentHoverChanged(hovering)
+            }
+        }
+    }
+
+    init(content: NSView) {
+        chromeView = SidebarHoverPopoverView(content: content)
+        super.init(
+            contentRect: NSRect(origin: .zero, size: chromeView.intrinsicContentSize),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        contentView = chromeView
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = false
+        isFloatingPanel = true
+        level = .floating
+        hidesOnDeactivate = true
+        collectionBehavior = [.transient, .ignoresCycle]
+        isMovableByWindowBackground = false
+        isReleasedWhenClosed = false
+        becomesKeyOnlyIfNeeded = true
+    }
+
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+
+    func show(relativeTo rect: NSRect, of view: NSView) {
+        guard let window = view.window else { return }
+        cancelScheduledClose()
+        if let activePopover = Self.activePopover, activePopover !== self {
+            activePopover.close()
+        }
+        let windowRect = view.convert(rect, to: nil)
+        let screenRect = window.convertToScreen(windowRect)
+        let size = frame.size
+        setFrame(
+            NSRect(
+                x: screenRect.maxX + 8,
+                y: screenRect.maxY - size.height,
+                width: size.width,
+                height: size.height
+            ),
+            display: true
+        )
+        Self.activePopover = self
+        orderFrontRegardless()
+    }
+
+    func scheduleClose() {
+        closeTimer?.invalidate()
+        closeTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: false) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.close()
+            }
+        }
+    }
+
+    func cancelScheduledClose() {
+        closeTimer?.invalidate()
+        closeTimer = nil
+    }
+
+    private func handleContentHoverChanged(_ hovering: Bool) {
+        if hovering {
+            cancelScheduledClose()
+        } else {
+            scheduleClose()
+        }
+        onHoverChanged?(hovering)
+    }
+
+    override func close() {
+        cancelScheduledClose()
+        onHoverChanged?(false)
+        if Self.activePopover === self {
+            Self.activePopover = nil
+        }
+        super.close()
+    }
+}
+
+@MainActor
+private final class SidebarHoverPopoverView: NSView {
+    var onHoverChanged: ((Bool) -> Void)?
+    private let content: NSView
+    private var trackingAreaReference: NSTrackingArea?
+
+    init(content: NSView) {
+        self.content = content
+        let contentSize = content.intrinsicContentSize
+        super.init(
+            frame: NSRect(
+                x: 0,
+                y: 0,
+                width: contentSize.width,
+                height: contentSize.height
+            )
+        )
+        content.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: trailingAnchor),
+            content.topAnchor.constraint(equalTo: topAnchor),
+            content.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingAreaReference {
+            removeTrackingArea(trackingAreaReference)
+        }
+        let trackingArea = NSTrackingArea(
+            rect: bounds,
+            options: [.activeAlways, .mouseEnteredAndExited, .inVisibleRect],
+            owner: self
+        )
+        addTrackingArea(trackingArea)
+        trackingAreaReference = trackingArea
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        onHoverChanged?(true)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        onHoverChanged?(false)
+    }
+
+    override var intrinsicContentSize: NSSize {
+        let contentSize = content.intrinsicContentSize
+        return NSSize(
+            width: contentSize.width,
+            height: contentSize.height
+        )
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let rect = bounds.insetBy(dx: 0.5, dy: 0.5)
+        let path = NSBezierPath(
+            roundedRect: rect,
+            xRadius: 12,
+            yRadius: 12
+        )
+        AppTheme.surface.setFill()
+        path.fill()
+        AppTheme.border.withAlphaComponent(0.32).setStroke()
+        path.lineWidth = 1
+        path.stroke()
+    }
+}
+
+@MainActor
+private final class SidebarRepositoryInfoCard: NSView {
+    private let repositoryRow: SidebarTaskInfoRepositoryRow
+
+    init(context: SidebarRepositoryContext) {
+        repositoryRow = SidebarTaskInfoRepositoryRow(context: context)
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        layer?.cornerRadius = 0
+        layer?.borderWidth = 0
+        addSubview(repositoryRow)
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: 400),
+            heightAnchor.constraint(equalToConstant: 123),
+            repositoryRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            repositoryRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            repositoryRow.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+            repositoryRow.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
+        ])
+        applyTheme()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: 400, height: 123)
+    }
+
+    func update(context: SidebarRepositoryContext) {
+        repositoryRow.update(context: context)
+        applyTheme()
+    }
+
+    private func applyTheme() {
+        layer?.backgroundColor = NSColor.clear.cgColor
+        layer?.borderColor = NSColor.clear.cgColor
+        repositoryRow.applyTheme()
+    }
+}
+
+@MainActor
+private final class SidebarTaskAggregateInfoCard: NSView {
+    private let titleLabel: NSTextField
+    private let ageLabel: NSTextField
+    private let repositoryValue = NSTextField(labelWithString: "0")
+    private let sshValue = NSTextField(labelWithString: "0")
+    private let connectedValue = NSTextField(labelWithString: "0")
+    private let branchValue = NSTextField(labelWithString: "0")
+    private let worktreeValue = NSTextField(labelWithString: "0")
+    private let createdAt: Date
+    private let contentWidth: CGFloat = 300
+    private let horizontalInset: CGFloat = 16
+    private let verticalInset: CGFloat = 14
+
+    init(createdAt: Date, contexts: [SidebarRepositoryContext]) {
+        self.createdAt = createdAt
+        titleLabel = NSTextField(labelWithString: "Task overview")
+        ageLabel = NSTextField(labelWithString: Self.ageLabel(for: createdAt))
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.isSelectable = true
+        ageLabel.isSelectable = true
+        wantsLayer = true
+        layer?.cornerRadius = 0
+        layer?.borderWidth = 0
+
+        let header = NSView()
+        header.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        ageLabel.translatesAutoresizingMaskIntoConstraints = false
+        ageLabel.alignment = .right
+        header.addSubview(titleLabel)
+        header.addSubview(ageLabel)
+        NSLayoutConstraint.activate([
+            titleLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor),
+            titleLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: ageLabel.leadingAnchor, constant: -10),
+            ageLabel.trailingAnchor.constraint(equalTo: header.trailingAnchor),
+            ageLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+        ])
+
+        let metrics = NSStackView(views: [
+            makeMetricRow(symbol: "folder", label: "Repositories", value: repositoryValue),
+            makeMetricRow(symbol: "globe", label: "SSH connections", value: sshValue),
+            makeMetricRow(symbol: "circle.fill", label: "Connected", value: connectedValue),
+            makeMetricRow(symbol: "arrow.triangle.branch", label: "Branches", value: branchValue),
+            makeMetricRow(symbol: "folder", label: "Worktrees", value: worktreeValue),
+        ])
+        metrics.orientation = .vertical
+        metrics.alignment = .leading
+        metrics.spacing = 5
+        metrics.translatesAutoresizingMaskIntoConstraints = false
+
+        let content = NSStackView(views: [header, metrics])
+        content.orientation = .vertical
+        content.alignment = .leading
+        content.spacing = 10
+        content.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(content)
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: contentWidth + horizontalInset * 2),
+            heightAnchor.constraint(equalToConstant: 194),
+            content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: horizontalInset),
+            content.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -horizontalInset),
+            content.topAnchor.constraint(equalTo: topAnchor, constant: verticalInset),
+            content.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -verticalInset),
+            header.widthAnchor.constraint(equalTo: content.widthAnchor),
+            header.heightAnchor.constraint(equalToConstant: 26),
+            metrics.widthAnchor.constraint(equalTo: content.widthAnchor),
+        ])
+        update(contexts: contexts)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: contentWidth + horizontalInset * 2, height: 194)
+    }
+
+    func update(contexts: [SidebarRepositoryContext]) {
+        let connectionIDs = Set(contexts.compactMap(\.connectionID))
+        let connectedIDs = Set(
+            contexts
+                .filter { $0.status == .connected }
+                .compactMap(\.connectionID)
+        )
+        repositoryValue.stringValue = "\(contexts.count)"
+        sshValue.stringValue = "\(connectionIDs.count)"
+        connectedValue.stringValue = connectionIDs.isEmpty
+            ? "None"
+            : "\(connectedIDs.count)/\(connectionIDs.count)"
+        branchValue.stringValue = "\(Set(contexts.compactMap(\.branch)).count)"
+        worktreeValue.stringValue = "\(contexts.filter { $0.path != nil }.count)"
+        ageLabel.stringValue = Self.ageLabel(for: createdAt)
+        applyTheme()
+    }
+
+    private func makeMetricRow(symbol: String, label: String, value: NSTextField) -> NSView {
+        let row = NSView()
+        row.translatesAutoresizingMaskIntoConstraints = false
+        let icon = NSImageView()
+        icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        let labelField = NSTextField(labelWithString: label)
+        labelField.translatesAutoresizingMaskIntoConstraints = false
+        labelField.isSelectable = true
+        value.translatesAutoresizingMaskIntoConstraints = false
+        value.isSelectable = true
+        value.alignment = .right
+        row.addSubview(icon)
+        row.addSubview(labelField)
+        row.addSubview(value)
+        NSLayoutConstraint.activate([
+            row.heightAnchor.constraint(equalToConstant: 22),
+            icon.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+            icon.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 18),
+            icon.heightAnchor.constraint(equalToConstant: 18),
+            labelField.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 10),
+            labelField.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            value.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+            value.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            labelField.trailingAnchor.constraint(lessThanOrEqualTo: value.leadingAnchor, constant: -10),
+        ])
+        row.setAccessibilityElement(true)
+        row.setAccessibilityLabel(label)
+        row.setAccessibilityValue(value.stringValue)
+        return row
+    }
+
+    private func applyTheme() {
+        layer?.backgroundColor = NSColor.clear.cgColor
+        layer?.borderColor = NSColor.clear.cgColor
+        titleLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsBody, weight: 600)
+        titleLabel.textColor = AppTheme.primaryText
+        ageLabel.font = .monospacedSystemFont(ofSize: AppTheme.typography.label, weight: .regular)
+        ageLabel.textColor = AppTheme.tertiaryText
+        [repositoryValue, sshValue, connectedValue, branchValue, worktreeValue].forEach {
+            $0.font = .monospacedSystemFont(ofSize: AppTheme.typography.label, weight: .regular)
+            $0.textColor = AppTheme.primaryText
+        }
+        subviews
+            .flatMap { $0.subviews }
+            .compactMap { $0 as? NSStackView }
+            .flatMap(\.arrangedSubviews)
+            .forEach { row in
+                row.subviews.compactMap { $0 as? NSImageView }.forEach {
+                    $0.contentTintColor = AppTheme.tertiaryText
+                }
+                row.subviews.compactMap { $0 as? NSTextField }.forEach {
+                    if ![repositoryValue, sshValue, connectedValue, branchValue, worktreeValue].contains($0) {
+                        $0.font = AppTheme.font(ofSize: AppTheme.typography.settingsBody, weight: 400)
+                        $0.textColor = AppTheme.secondaryText
+                    }
+                }
+            }
+    }
+
+    private static func ageLabel(for date: Date) -> String {
+        let elapsed = max(0, Date().timeIntervalSince(date))
+        if elapsed < 60 { return "now" }
+        if elapsed < 60 * 60 { return "\(Int(elapsed / 60))m" }
+        if elapsed < 60 * 60 * 24 { return "\(Int(elapsed / (60 * 60)))h" }
+        return "\(Int(elapsed / (60 * 60 * 24)))d"
+    }
+}
+
+@MainActor
+private final class SidebarTaskInfoRepositoryRow: NSView {
+    let repositoryID: UUID
+    private var context: SidebarRepositoryContext
+    private let nameLabel: NSTextField
+    private let connectionLabel: NSTextField
+    private let branchLabel: NSTextField
+    private let pathLabel: NSTextField
+    private let statusDot = NSView()
+    private var icons: [NSImageView] = []
+    private let contentStack = NSStackView()
+
+    init(context: SidebarRepositoryContext) {
+        repositoryID = context.repositoryID
+        self.context = context
+        nameLabel = NSTextField(labelWithString: context.name)
+        connectionLabel = NSTextField(labelWithString: "")
+        branchLabel = NSTextField(labelWithString: "")
+        pathLabel = NSTextField(labelWithString: "")
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        [nameLabel, connectionLabel, branchLabel, pathLabel].forEach {
+            $0.isSelectable = true
+        }
+        statusDot.translatesAutoresizingMaskIntoConstraints = false
+        statusDot.wantsLayer = true
+        contentStack.orientation = .vertical
+        contentStack.alignment = .leading
+        contentStack.spacing = 3
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(contentStack)
+        let header = makeHeader()
+        let connection = makeConnectionRow()
+        let branch = makeMetadataRow(symbol: "arrow.triangle.branch", label: branchLabel)
+        let path = makeMetadataRow(symbol: "folder", label: pathLabel)
+        [header, connection, branch, path].forEach {
+            contentStack.addArrangedSubview($0)
+            $0.translatesAutoresizingMaskIntoConstraints = false
+            $0.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        }
+        NSLayoutConstraint.activate([
+            contentStack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            contentStack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            contentStack.topAnchor.constraint(equalTo: topAnchor),
+            contentStack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            header.heightAnchor.constraint(equalToConstant: 26),
+            connection.heightAnchor.constraint(equalToConstant: 20),
+            branch.heightAnchor.constraint(equalToConstant: 20),
+            path.heightAnchor.constraint(equalToConstant: 20),
+            widthAnchor.constraint(equalToConstant: 368),
+            heightAnchor.constraint(equalToConstant: 95),
+        ])
+        update(context: context)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: 368, height: 95)
+    }
+
+    func update(context: SidebarRepositoryContext) {
+        self.context = context
+        nameLabel.stringValue = context.name
+        connectionLabel.stringValue = context.connectionID == nil
+            ? "Local repository"
+            : context.connectionName ?? "SSH"
+        branchLabel.stringValue = context.branch ?? "Branch unavailable"
+        pathLabel.stringValue = context.path ?? "Path unavailable"
+        pathLabel.toolTip = context.path
+        statusDot.isHidden = context.connectionID == nil
+        applyTheme()
+    }
+
+    func applyTheme() {
+        nameLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsBody, weight: 600)
+        nameLabel.textColor = AppTheme.primaryText
+        connectionLabel.font = .monospacedSystemFont(ofSize: AppTheme.typography.label, weight: .regular)
+        connectionLabel.textColor = context.connectionID == nil
+            ? AppTheme.tertiaryText
+            : AppTheme.secondaryText
+        branchLabel.font = .monospacedSystemFont(ofSize: AppTheme.typography.label, weight: .regular)
+        branchLabel.textColor = AppTheme.secondaryText
+        pathLabel.font = .monospacedSystemFont(ofSize: AppTheme.typography.label, weight: .regular)
+        pathLabel.textColor = AppTheme.secondaryText
+        icons.forEach { $0.contentTintColor = AppTheme.tertiaryText }
+        statusDot.layer?.backgroundColor = AppTheme.connectionStatusColor(context.status).cgColor
+        statusDot.layer?.cornerRadius = 4
+    }
+
+    private func makeHeader() -> NSView {
+        let row = NSView()
+        let icon = NSImageView()
+        icon.image = NSImage(systemSymbolName: "book.closed", accessibilityDescription: "Repository")
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icons.append(icon)
+        row.addSubview(icon)
+        row.addSubview(nameLabel)
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            icon.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+            icon.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 18),
+            icon.heightAnchor.constraint(equalToConstant: 18),
+            nameLabel.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 10),
+            nameLabel.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            nameLabel.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+        ])
+        return row
+    }
+
+    private func makeConnectionRow() -> NSView {
+        let row = NSView()
+        let icon = NSImageView()
+        icon.image = NSImage(
+            systemSymbolName: context.connectionID == nil ? "laptopcomputer" : "globe",
+            accessibilityDescription: nil
+        )
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icons.append(icon)
+        connectionLabel.translatesAutoresizingMaskIntoConstraints = false
+        connectionLabel.usesSingleLineMode = true
+        connectionLabel.lineBreakMode = .byTruncatingMiddle
+        row.addSubview(icon)
+        row.addSubview(connectionLabel)
+        row.addSubview(statusDot)
+        NSLayoutConstraint.activate([
+            icon.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+            icon.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 18),
+            icon.heightAnchor.constraint(equalToConstant: 18),
+            connectionLabel.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 10),
+            connectionLabel.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            connectionLabel.trailingAnchor.constraint(lessThanOrEqualTo: statusDot.leadingAnchor, constant: -8),
+            statusDot.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+            statusDot.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            statusDot.widthAnchor.constraint(equalToConstant: 8),
+            statusDot.heightAnchor.constraint(equalToConstant: 8),
+        ])
+        return row
+    }
+
+    private func makeMetadataRow(symbol: String, label: NSTextField) -> NSView {
+        let row = NSView()
+        let icon = NSImageView()
+        icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icons.append(icon)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.usesSingleLineMode = true
+        label.lineBreakMode = .byTruncatingMiddle
+        row.addSubview(icon)
+        row.addSubview(label)
+        NSLayoutConstraint.activate([
+            icon.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+            icon.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 18),
+            icon.heightAnchor.constraint(equalToConstant: 18),
+            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 10),
+            label.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            label.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+        ])
+        return row
     }
 }
 

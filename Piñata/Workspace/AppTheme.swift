@@ -206,6 +206,15 @@ enum AppTheme {
     static var taskModalInputBackground: NSColor { controlSelection }
     static var taskModalOverlayBackground: NSColor { .black.withAlphaComponent(0.52) }
 
+    static func connectionStatusColor(_ status: SSHConnectionStatus) -> NSColor {
+        switch status {
+        case .disabled: tertiaryText
+        case .checking: panelAccentIcon
+        case .connected: success
+        case .disconnected: error
+        }
+    }
+
     static var separator: NSColor {
         tertiaryText.withAlphaComponent(0.28)
     }
@@ -386,14 +395,14 @@ enum AppTheme {
             )
         case .chrome:
             return AppButtonAppearance(
-                background: hovered ? chromeHoverBackground : .clear,
+                background: hovered ? surface : .clear,
                 foreground: hovered ? interactiveHoverForeground : secondaryText,
                 border: .clear,
                 borderWidth: 0
             )
         case .icon:
             return AppButtonAppearance(
-                background: hovered ? interactiveHoverBackground : .clear,
+                background: hovered ? surface : .clear,
                 foreground: hovered ? interactiveHoverForeground : tertiaryText,
                 border: .clear,
                 borderWidth: 0

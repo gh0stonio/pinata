@@ -124,7 +124,10 @@ final class WorkspaceViewController: NSViewController {
     private let mainColumn = NSView()
     private let terminalHost = NSView()
     private let workspaceHeader = WorkspaceHeaderView()
-    private let leftPanelController = PanelViewController()
+    private let sshConnectionStatusMonitor = SSHConnectionStatusMonitor()
+    private lazy var leftPanelController = PanelViewController(
+        connectionStatusMonitor: sshConnectionStatusMonitor
+    )
     private let rightPanelController = WorkspacePanelViewController()
     private let leftResizeHandle = PanelResizeHandle(
         indicatorOffset: AppTheme.workspaceInset
@@ -152,8 +155,10 @@ final class WorkspaceViewController: NSViewController {
     private var deleteTaskModal: DeleteTaskModalView?
     private var taskActionMenu: SidebarActionMenuView?
     private var taskActionMenuMouseMonitor: Any?
+    private var taskActionMenuTaskID: UUID?
     private var repositoryActionMenu: SidebarActionMenuView?
     private var repositoryActionMenuMouseMonitor: Any?
+    private var repositoryActionMenuScope: TaskRepositoryScope?
     private var leftResizeWindowWidth: CGFloat?
 
     private var leftWidthConstraint: NSLayoutConstraint!
@@ -634,6 +639,24 @@ final class WorkspaceViewController: NSViewController {
         }
         leftPanelController.onToggleTaskExpansion = { [weak self] taskID in
             self?.toggleTaskExpansion(taskID)
+        }
+        leftPanelController.onSidebarTaskHover = { [weak self] taskID in
+            guard let self else { return }
+            if taskActionMenu != nil, taskActionMenuTaskID != taskID {
+                dismissTaskActionMenu()
+            }
+            if repositoryActionMenu != nil {
+                dismissRepositoryActionMenu()
+            }
+        }
+        leftPanelController.onSidebarRepositoryHover = { [weak self] scope in
+            guard let self else { return }
+            if taskActionMenu != nil {
+                dismissTaskActionMenu()
+            }
+            if repositoryActionMenu != nil, repositoryActionMenuScope != scope {
+                dismissRepositoryActionMenu()
+            }
         }
         leftPanelController.onMoveTask = { [weak self] sourceID, targetID, after, pinned in
             self?.moveTask(
@@ -1233,6 +1256,7 @@ final class WorkspaceViewController: NSViewController {
         }
         dismissRepositoryActionMenu()
         dismissTaskActionMenu()
+        taskActionMenuTaskID = taskID
         leftPanelController.setTaskMenuTask(taskID)
 
         let menu = SidebarActionMenuView(items: [
@@ -1303,6 +1327,7 @@ final class WorkspaceViewController: NSViewController {
         }
         taskActionMenu?.removeFromSuperview()
         taskActionMenu = nil
+        taskActionMenuTaskID = nil
         leftPanelController.setTaskMenuTask(nil)
     }
 
@@ -1320,6 +1345,7 @@ final class WorkspaceViewController: NSViewController {
         }
         dismissTaskActionMenu()
         dismissRepositoryActionMenu()
+        repositoryActionMenuScope = scope
         leftPanelController.setRepositoryMenuScope(scope)
         let isRemote: Bool
         if let repository = try? repositoryStore.load().first(where: { $0.id == attachment.repositoryID }),
@@ -1376,6 +1402,7 @@ final class WorkspaceViewController: NSViewController {
         }
         repositoryActionMenu?.removeFromSuperview()
         repositoryActionMenu = nil
+        repositoryActionMenuScope = nil
         leftPanelController.setRepositoryMenuScope(nil)
     }
 
@@ -1986,13 +2013,19 @@ final class WorkspaceViewController: NSViewController {
     }
 
     private func updateTaskSidebar() {
-        let repositoryTargets: [UUID: RepositoryTarget]
+        sshConnectionStatusMonitor.sync((try? sshConnectionStore.load()) ?? [])
+        let registeredRepositories: [UUID: RegisteredRepository]
         do {
-            repositoryTargets = try Dictionary(
-                uniqueKeysWithValues: repositoryStore.load().map { ($0.id, $0.target) }
+            registeredRepositories = try Dictionary(
+                uniqueKeysWithValues: repositoryStore.load().map { ($0.id, $0) }
             )
         } catch {
-            repositoryTargets = [:]
+            registeredRepositories = [:]
+        }
+        let repositoryTargets = registeredRepositories.mapValues(\.target)
+        let repositoryPaths = registeredRepositories.mapValues(\.path)
+        let repositoryBranches = registeredRepositories.compactMapValues {
+            $0.currentBranch ?? $0.defaultBranch
         }
         var displayedRepositoryErrors = repositoryErrors
         for task in tasks {
@@ -2038,6 +2071,8 @@ final class WorkspaceViewController: NSViewController {
             taskActivities: taskActivities,
             repositoryActivities: repositoryActivities,
             repositoryTargets: repositoryTargets,
+            repositoryPaths: repositoryPaths,
+            repositoryBranches: repositoryBranches,
             taskErrors: taskErrors,
             repositoryErrors: displayedRepositoryErrors,
             loadError: taskLoadError
