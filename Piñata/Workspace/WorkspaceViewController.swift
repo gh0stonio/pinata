@@ -432,7 +432,10 @@ final class WorkspaceViewController: NSViewController {
             return
         }
 
-        let controller = SettingsViewController(settings: settings)
+        let controller = SettingsViewController(
+            settings: settings,
+            connectionStatusMonitor: sshConnectionStatusMonitor
+        )
         controller.onChange = onChange
         addChild(controller)
         controller.view.translatesAutoresizingMaskIntoConstraints = false
@@ -471,6 +474,10 @@ final class WorkspaceViewController: NSViewController {
         taskActionMenu?.applyTheme()
         repositoryActionMenu?.applyTheme()
         applySidebarPresentation()
+    }
+
+    func refreshSSHConnectionStatuses() {
+        sshConnectionStatusMonitor.refresh()
     }
 
     private func configureWorkspaceCard() {

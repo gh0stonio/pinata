@@ -2,6 +2,12 @@ import AppKit
 
 @MainActor
 final class ConnectionsSettingsView: NSView, SettingsPageContent {
+    private static let folderCacheLifetime: TimeInterval = 30
+    private static var sharedFolderTrees: [UUID: [String: [String]]] = [:]
+    private static var sharedFolderWarmTasks: [UUID: Task<[String: [String]], Error>] = [:]
+    private static var sharedFolderWarmDates: [UUID: Date] = [:]
+
+    private let connectionStatusMonitor: SSHConnectionStatusMonitor
     private let connectionStore = SSHConnectionStore()
     private let repositoryStore = RepositoryRegistryStore()
     private let page = SettingsSplitPageView()
@@ -10,14 +16,20 @@ final class ConnectionsSettingsView: NSView, SettingsPageContent {
     private let errorLabel = NSTextField(wrappingLabelWithString: "")
     private var connections: [SSHConnection] = []
     private var configuredHosts: [SSHConfigHost] = []
+    private var connectionRows: [String: ConnectionRowView] = [:]
     private var detailView: ConnectionRepositoriesView?
     private var folderPicker: RemoteFolderPickerModal?
+    private var statusObserverID: UUID?
     private var registrationTask: Task<Void, Never>?
     private var folderWarmTasks: [UUID: Task<[String: [String]], Error>] = [:]
     private var folderTrees: [UUID: [String: [String]]] = [:]
 
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
+    init(connectionStatusMonitor: SSHConnectionStatusMonitor) {
+        self.connectionStatusMonitor = connectionStatusMonitor
+        super.init(frame: .zero)
+        statusObserverID = connectionStatusMonitor.addObserver { [weak self] in
+            self?.refreshConnectionStatuses()
+        }
         translatesAutoresizingMaskIntoConstraints = false
         installLayout()
         reloadConnections()
@@ -27,6 +39,15 @@ final class ConnectionsSettingsView: NSView, SettingsPageContent {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is unavailable")
+    }
+
+    deinit {
+        if let statusObserverID {
+            let monitor = connectionStatusMonitor
+            Task { @MainActor in
+                monitor.removeObserver(statusObserverID)
+            }
+        }
     }
 
     func scrollToTop() {
@@ -97,18 +118,25 @@ final class ConnectionsSettingsView: NSView, SettingsPageContent {
             configuredHosts = []
             loadError = loadError ?? "Could not read ~/.ssh/config: \(error.localizedDescription)"
         }
+        connectionStatusMonitor.sync(connections)
         setError(loadError)
 
         hostRows.arrangedSubviews.forEach {
             hostRows.removeArrangedSubview($0)
             $0.removeFromSuperview()
         }
+        connectionRows = [:]
         let rows: [NSView] = configuredHosts.isEmpty
             ? [SettingsMessageRow("No remote SSH hosts found in ~/.ssh/config.")]
             : configuredHosts.map { host in
-                let row = ConnectionRowView(host: host, connection: connection(for: host))
+                let row = ConnectionRowView(
+                    host: host,
+                    connection: connection(for: host),
+                    status: status(for: host)
+                )
                 row.onToggle = { [weak self] enabled in self?.setEnabled(enabled, for: host) }
                 row.onRepositories = { [weak self] in self?.showRepositories(for: host) }
+                connectionRows[host.alias] = row
                 return row
             }
         rows.forEach {
@@ -121,6 +149,26 @@ final class ConnectionsSettingsView: NSView, SettingsPageContent {
 
     private func connection(for host: SSHConfigHost) -> SSHConnection? {
         connections.first { $0.host == host.alias }
+    }
+
+    private func status(for host: SSHConfigHost) -> SSHConnectionStatus {
+        connection(for: host).map { connectionStatusMonitor.status(for: $0.id) } ?? .disabled
+    }
+
+    private func refreshConnectionStatuses() {
+        connectionRows.forEach { alias, row in
+            guard let host = configuredHosts.first(where: { $0.alias == alias }) else { return }
+            row.update(
+                connection: connection(for: host),
+                status: status(for: host)
+            )
+        }
+        if let detailView,
+           let host = configuredHosts.first(where: { $0.alias == detailView.hostAlias }),
+           let connection = connection(for: host)
+        {
+            detailView.update(status: connectionStatusMonitor.status(for: connection.id))
+        }
     }
 
     private func setEnabled(_ enabled: Bool, for host: SSHConfigHost) {
@@ -146,7 +194,12 @@ final class ConnectionsSettingsView: NSView, SettingsPageContent {
             guard case .ssh(let connectionID) = $0.target else { return false }
             return connectionID == connection?.id
         } ?? []
-        let detail = ConnectionRepositoriesView(host: host, connection: connection, repositories: repositories)
+        let detail = ConnectionRepositoriesView(
+            host: host,
+            connection: connection,
+            repositories: repositories,
+            status: connection.map { connectionStatusMonitor.status(for: $0.id) } ?? .disabled
+        )
         detail.onBack = { [weak self] in self?.closeDetails() }
         detail.onBrowse = { [weak self] in self?.presentFolderPicker(for: host) }
         addSubview(detail)
@@ -179,6 +232,10 @@ final class ConnectionsSettingsView: NSView, SettingsPageContent {
         picker.onCancel = { [weak self] in self?.dismissFolderPicker() }
         picker.onFolderTreeChange = { [weak self] tree in
             self?.folderTrees[connection.id] = tree
+            Self.sharedFolderTrees[connection.id] = tree
+            if tree["~"] != nil {
+                Self.sharedFolderWarmDates[connection.id] = Date()
+            }
         }
         picker.onRegister = { [weak self] path in
             self?.registerRemoteRepository(at: path, for: host, connection: connection)
@@ -199,18 +256,40 @@ final class ConnectionsSettingsView: NSView, SettingsPageContent {
 
     private func warmEnabledConnections() {
         for connection in connections where connection.isEnabled {
-            guard folderTrees[connection.id]?["~"] == nil,
-                  folderWarmTasks[connection.id] == nil
-            else { continue }
+            if let cached = Self.sharedFolderTrees[connection.id] {
+                folderTrees[connection.id] = cached
+            }
+            let cacheIsFresh = Self.sharedFolderWarmDates[connection.id].map {
+                Date().timeIntervalSince($0) < Self.folderCacheLifetime
+            } ?? false
+            guard !cacheIsFresh, folderWarmTasks[connection.id] == nil else { continue }
+            if let sharedTask = Self.sharedFolderWarmTasks[connection.id] {
+                folderWarmTasks[connection.id] = sharedTask
+                observeFolderWarm(sharedTask, for: connection.id)
+                continue
+            }
             let worker = Task.detached(priority: .userInitiated) {
                 try RemoteDirectoryInspector().directoryTree(at: "~", connection: connection)
             }
+            Self.sharedFolderWarmTasks[connection.id] = worker
             folderWarmTasks[connection.id] = worker
-            Task { [weak self] in
-                defer { self?.folderWarmTasks[connection.id] = nil }
-                guard let tree = try? await worker.value, !Task.isCancelled else { return }
-                self?.folderTrees[connection.id] = tree
+            observeFolderWarm(worker, for: connection.id)
+        }
+    }
+
+    private func observeFolderWarm(
+        _ worker: Task<[String: [String]], Error>,
+        for connectionID: UUID
+    ) {
+        Task { [weak self] in
+            defer {
+                Self.sharedFolderWarmTasks[connectionID] = nil
+                self?.folderWarmTasks[connectionID] = nil
             }
+            guard let tree = try? await worker.value, !Task.isCancelled else { return }
+            Self.sharedFolderTrees[connectionID] = tree
+            Self.sharedFolderWarmDates[connectionID] = Date()
+            self?.folderTrees[connectionID] = tree
         }
     }
 
@@ -268,6 +347,131 @@ private enum ConnectionSettingsError: LocalizedError {
 }
 
 @MainActor
+private final class SSHStatusView: NSView, SettingsThemeApplying {
+    var status: SSHConnectionStatus {
+        didSet { applyTheme() }
+    }
+
+    private let dot = NSView()
+    private let label: NSTextField
+
+    init(status: SSHConnectionStatus) {
+        self.status = status
+        label = NSTextField(labelWithString: status.label)
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        dot.translatesAutoresizingMaskIntoConstraints = false
+        label.translatesAutoresizingMaskIntoConstraints = false
+        dot.wantsLayer = true
+        addSubview(dot)
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 18),
+            dot.leadingAnchor.constraint(equalTo: leadingAnchor),
+            dot.centerYAnchor.constraint(equalTo: centerYAnchor),
+            dot.widthAnchor.constraint(equalToConstant: 8),
+            dot.heightAnchor.constraint(equalToConstant: 8),
+            label.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 7),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+        applyTheme()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+
+    func applyTheme() {
+        let color = AppTheme.connectionStatusColor(status)
+        dot.layer?.backgroundColor = color.cgColor
+        dot.layer?.cornerRadius = 4
+        label.stringValue = status.label
+        label.textColor = color
+        label.font = AppTheme.font(ofSize: AppTheme.typography.settingsBody, weight: 550)
+        toolTip = status.label
+    }
+}
+
+@MainActor
+private final class ConnectionToggleControl: NSControl {
+    var isOn = false {
+        didSet {
+            setAccessibilityValue(isOn ? "On" : "Off")
+            needsDisplay = true
+        }
+    }
+
+    var onChange: ((Bool) -> Void)?
+
+    override var isEnabled: Bool {
+        didSet { needsDisplay = true }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        translatesAutoresizingMaskIntoConstraints = false
+        setAccessibilityRole(.checkBox)
+        focusRingType = .none
+        setAccessibilityValue("Off")
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+
+    override var acceptsFirstResponder: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let track = bounds.insetBy(dx: 1, dy: 3)
+        let trackColor = isEnabled
+            ? isOn ? AppTheme.panelAccentIcon.withAlphaComponent(0.68) : AppTheme.controlBackground
+            : AppTheme.border
+        trackColor.setFill()
+        NSBezierPath(roundedRect: track, xRadius: track.height / 2, yRadius: track.height / 2).fill()
+
+        if !isOn {
+            AppTheme.border.setStroke()
+            let border = NSBezierPath(
+                roundedRect: track,
+                xRadius: track.height / 2,
+                yRadius: track.height / 2
+            )
+            border.lineWidth = 1
+            border.stroke()
+        }
+
+        let diameter = track.height - 6
+        let knobX = isOn ? track.maxX - diameter - 3 : track.minX + 3
+        let knob = NSRect(
+            x: knobX,
+            y: track.minY + 3,
+            width: diameter,
+            height: diameter
+        )
+        (isEnabled ? AppTheme.secondaryText : AppTheme.tertiaryText).setFill()
+        NSBezierPath(ovalIn: knob).fill()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard isEnabled else { return }
+        toggle()
+    }
+
+    override func keyDown(with event: NSEvent) {
+        guard isEnabled, event.keyCode == 49 else {
+            super.keyDown(with: event)
+            return
+        }
+        toggle()
+    }
+
+    private func toggle() {
+        isOn.toggle()
+        onChange?(isOn)
+    }
+}
+
+@MainActor
 private final class ConnectionRowView: AppHoverView, SettingsThemeApplying {
     var onToggle: ((Bool) -> Void)?
     var onRepositories: (() -> Void)?
@@ -276,12 +480,14 @@ private final class ConnectionRowView: AppHoverView, SettingsThemeApplying {
     private let nameLabel: NSTextField
     private let detailLabel: NSTextField
     private let chevron = NSImageView()
-    private let toggle = NSSwitch()
+    private let statusView: SSHStatusView
+    private let toggle = ConnectionToggleControl()
     private let repositoriesButton = AppButton(role: .hitTarget)
 
-    init(host: SSHConfigHost, connection: SSHConnection?) {
+    init(host: SSHConfigHost, connection: SSHConnection?, status: SSHConnectionStatus) {
         nameLabel = NSTextField(labelWithString: host.alias)
         detailLabel = NSTextField(labelWithString: host.detail)
+        statusView = SSHStatusView(status: status)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
@@ -291,31 +497,34 @@ private final class ConnectionRowView: AppHoverView, SettingsThemeApplying {
         icon.imageScaling = .scaleProportionallyDown
         chevron.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)
         chevron.imageScaling = .scaleProportionallyDown
-        toggle.state = connection?.isEnabled == true ? .on : .off
-        toggle.controlSize = .small
-        toggle.target = self
-        toggle.action = #selector(toggleChanged)
+        toggle.isOn = connection?.isEnabled == true
+        toggle.onChange = { [weak self] enabled in self?.onToggle?(enabled) }
         toggle.setAccessibilityLabel("Enable \(host.alias)")
         repositoriesButton.target = self
         repositoriesButton.action = #selector(showRepositories)
         repositoriesButton.setAccessibilityLabel("View repositories on \(host.alias)")
-        [icon, nameLabel, detailLabel, chevron, toggle, repositoriesButton].forEach {
+        [icon, nameLabel, detailLabel, statusView, chevron, toggle, repositoriesButton].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             addSubview($0)
         }
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: SettingsLayout.compactRowHeight),
+            heightAnchor.constraint(equalToConstant: 58),
             icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: SettingsLayout.compactContentInset),
             icon.centerYAnchor.constraint(equalTo: centerYAnchor),
             icon.widthAnchor.constraint(equalToConstant: 16),
             icon.heightAnchor.constraint(equalToConstant: 16),
             nameLabel.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: SettingsLayout.compactContentInset),
-            nameLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            nameLabel.centerYAnchor.constraint(equalTo: centerYAnchor, constant: -9),
             detailLabel.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: SettingsLayout.compactMetadataGap),
             detailLabel.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -12),
-            detailLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            detailLabel.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
+            statusView.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
+            statusView.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 3),
+            statusView.widthAnchor.constraint(equalToConstant: 104),
             toggle.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -SettingsLayout.compactContentInset),
             toggle.centerYAnchor.constraint(equalTo: centerYAnchor),
+            toggle.widthAnchor.constraint(equalToConstant: 44),
+            toggle.heightAnchor.constraint(equalToConstant: 24),
             chevron.trailingAnchor.constraint(equalTo: toggle.leadingAnchor, constant: -16),
             chevron.centerYAnchor.constraint(equalTo: centerYAnchor),
             chevron.widthAnchor.constraint(equalToConstant: SettingsLayout.compactChevronWidth),
@@ -343,10 +552,15 @@ private final class ConnectionRowView: AppHoverView, SettingsThemeApplying {
         detailLabel.font = SettingsLayout.valueFont
         icon.contentTintColor = AppTheme.tertiaryText
         chevron.contentTintColor = AppTheme.tertiaryText
+        statusView.applyTheme()
+    }
+
+    func update(connection: SSHConnection?, status: SSHConnectionStatus) {
+        toggle.isOn = connection?.isEnabled == true
+        statusView.status = status
     }
 
     override func hoverStateDidChange() { applyTheme() }
-    @objc private func toggleChanged() { onToggle?(toggle.state == .on) }
     @objc private func showRepositories() { onRepositories?() }
 }
 
@@ -355,15 +569,24 @@ private final class ConnectionRepositoriesView: NSView, SettingsThemeApplying {
     var onBack: (() -> Void)?
     var onBrowse: (() -> Void)?
 
+    let hostAlias: String
     private let header: ConnectionHeaderView
     private let page = SettingsSplitPageView(topPadding: SettingsLayout.detailPageTopPadding)
     private let connectionDetails: NSStackView
     private let repositoryContent = NSStackView()
     private let repositoryRows = NSStackView()
     private let browseAction: RemoteRepositoryBrowseActionView
+    private let statusView: SSHStatusView
 
-    init(host: SSHConfigHost, connection: SSHConnection?, repositories: [RegisteredRepository]) {
+    init(
+        host: SSHConfigHost,
+        connection: SSHConnection?,
+        repositories: [RegisteredRepository],
+        status: SSHConnectionStatus
+    ) {
+        hostAlias = host.alias
         header = ConnectionHeaderView(title: host.alias)
+        statusView = SSHStatusView(status: status)
         connectionDetails = settingsRowStack([
             SettingsRowView(
                 title: "Alias",
@@ -395,6 +618,13 @@ private final class ConnectionRepositoriesView: NSView, SettingsThemeApplying {
                 control: SettingsValueLabel(host.identityFile ?? "SSH default"),
                 controlHeight: nil
             ),
+            SettingsRowView(
+                title: "Status",
+                description: "Latest non-interactive SSH health check.",
+                control: statusView,
+                controlHeight: 18,
+                minimumHeight: 44
+            ),
         ])
         browseAction = RemoteRepositoryBrowseActionView(enabled: connection?.isEnabled == true)
         super.init(frame: .zero)
@@ -411,7 +641,13 @@ private final class ConnectionRepositoriesView: NSView, SettingsThemeApplying {
         header.applyTheme()
         page.applyTheme()
         browseAction.applyTheme()
+        statusView.applyTheme()
         repositoryRows.arrangedSubviews.compactMap { $0 as? SettingsThemeApplying }.forEach { $0.applyTheme() }
+    }
+
+    func update(status: SSHConnectionStatus) {
+        statusView.status = status
+        applyTheme()
     }
 
     private func installLayout(connection: SSHConnection?, repositories: [RegisteredRepository]) {
@@ -544,6 +780,7 @@ private final class ConnectionRepositoryRowView: NSView, SettingsThemeApplying {
             icon.heightAnchor.constraint(equalToConstant: SettingsLayout.compactIconSize),
             nameLabel.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: SettingsLayout.compactContentInset),
             nameLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            nameLabel.widthAnchor.constraint(equalToConstant: 180),
             metadataLabel.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: SettingsLayout.compactMetadataGap),
             metadataLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -SettingsLayout.compactContentInset),
             metadataLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -559,6 +796,9 @@ private final class ConnectionRepositoryRowView: NSView, SettingsThemeApplying {
         nameLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsHeading, weight: 600)
         metadataLabel.textColor = AppTheme.tertiaryText
         metadataLabel.font = SettingsLayout.valueFont
+        metadataLabel.alignment = .right
+        metadataLabel.lineBreakMode = .byTruncatingMiddle
+        metadataLabel.toolTip = metadataLabel.stringValue
         icon.contentTintColor = AppTheme.tertiaryText
     }
 }
@@ -754,6 +994,18 @@ private final class RemoteFolderPickerModal: NSView, SettingsThemeApplying {
         let path = currentPath
         if let cached = folderCache[path] {
             showFolders(cached)
+            if path == "~", let initialRootLoad {
+                loadTask = Task { [weak self] in
+                    guard let tree = try? await initialRootLoad.value,
+                          !Task.isCancelled,
+                          let self
+                    else { return }
+                    self.store(tree, for: path)
+                    if self.currentPath == path {
+                        self.showFolders(self.folderCache[path] ?? [])
+                    }
+                }
+            }
             return
         }
         showLoading()
@@ -766,9 +1018,11 @@ private final class RemoteFolderPickerModal: NSView, SettingsThemeApplying {
                 guard self.currentPath == path else { return }
                 self.showFolders(self.folderCache[path] ?? [])
             } catch is CancellationError {
+                self?.folderFetchTasks[path] = nil
                 return
             } catch {
                 guard let self, self.currentPath == path else { return }
+                self.folderFetchTasks[path] = nil
                 self.showError(error.localizedDescription)
             }
         }
@@ -788,8 +1042,13 @@ private final class RemoteFolderPickerModal: NSView, SettingsThemeApplying {
         let worker = fetchTask(for: path)
         Task { [weak self] in
             guard let self else { return }
-            guard let tree = try? await worker.value, !Task.isCancelled else { return }
-            self.store(tree, for: path)
+            do {
+                let tree = try await worker.value
+                guard !Task.isCancelled else { return }
+                self.store(tree, for: path)
+            } catch {
+                self.folderFetchTasks[path] = nil
+            }
         }
     }
 

@@ -28,7 +28,7 @@ final class SettingsViewController: NSViewController {
         terminalFontControl: terminalFontControl
     )
     private let gitContent = RepositorySettingsView()
-    private let connectionsContent = ConnectionsSettingsView()
+    private let connectionsContent: ConnectionsSettingsView
     private lazy var editorContent = EditorSettingsContentView(
         filePreviewControl: filePreviewControl,
         editorFontControl: editorFontControl
@@ -73,8 +73,11 @@ final class SettingsViewController: NSViewController {
     ]
     private var pages: [SettingsPageItem] { navigationGroups.flatMap(\.pages) }
 
-    init(settings: UserSettings) {
+    init(settings: UserSettings, connectionStatusMonitor: SSHConnectionStatusMonitor) {
         self.settings = settings
+        connectionsContent = ConnectionsSettingsView(
+            connectionStatusMonitor: connectionStatusMonitor
+        )
         super.init(nibName: nil, bundle: nil)
     }
 
