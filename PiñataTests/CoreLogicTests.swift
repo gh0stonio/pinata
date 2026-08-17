@@ -3,6 +3,66 @@ import AppKit
 @testable import Pinata
 
 final class CoreLogicTests: XCTestCase {
+    func testPullRequestStatusSummarizesChecksAndIssues() {
+        let pullRequest = PullRequestSummary(
+            number: 42,
+            title: "Ship sidebar PR status",
+            state: "OPEN",
+            isDraft: false,
+            baseBranch: "main",
+            headBranch: "feature/pr-status",
+            headRepositoryOwner: "gh0stonio",
+            mergeable: "CONFLICTING",
+            mergeStateStatus: "DIRTY",
+            reviewDecision: "APPROVED",
+            checks: [
+                PullRequestCheck(name: "Build", status: .passed),
+                PullRequestCheck(name: "Lint", status: .failed),
+                PullRequestCheck(name: "Tests", status: .pending),
+            ],
+            url: "https://github.com/gh0stonio/pinata/pull/42"
+        )
+
+        XCTAssertEqual(pullRequest.displayStatus, .issue)
+        XCTAssertEqual(
+            pullRequest.checkCountsLabel,
+            "3 total, 1 passed, 1 failed, 1 pending"
+        )
+        XCTAssertEqual(pullRequest.checkSummary, "✓ Build, ✕ Lint, ◷ Tests")
+    }
+
+    func testPullRequestStackFindsParentChildAndSharedHeadPRs() {
+        func makePR(_ number: Int, head: String, base: String) -> PullRequestSummary {
+            PullRequestSummary(
+                number: number,
+                title: "PR \(number)",
+                state: "OPEN",
+                isDraft: false,
+                baseBranch: base,
+                headBranch: head,
+                headRepositoryOwner: "gh0stonio",
+                mergeable: "MERGEABLE",
+                mergeStateStatus: "CLEAN",
+                reviewDecision: "APPROVED",
+                checks: [],
+                url: nil
+            )
+        }
+
+        let pullRequests = [
+            makePR(2, head: "feature/base", base: "main"),
+            makePR(3, head: "feature/stack", base: "feature/base"),
+            makePR(4, head: "feature/stack", base: "main"),
+            makePR(5, head: "feature/child", base: "feature/stack"),
+            makePR(99, head: "unrelated", base: "main"),
+        ]
+
+        let related = PullRequestStack.related(to: "feature/stack", in: pullRequests)
+
+        XCTAssertEqual(Set(related.map(\.number)), Set([2, 3, 4, 5]))
+        XCTAssertFalse(related.contains { $0.number == 99 })
+    }
+
     func testEditorLanguageUsesFileExtension() {
         XCTAssertEqual(EditorLanguage(path: "/tmp/app.swift"), .swift)
         XCTAssertEqual(EditorLanguage(path: "/tmp/README.md"), .markdown)

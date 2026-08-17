@@ -135,6 +135,7 @@ final class WorkspaceViewController: NSViewController {
     private let terminalHost = NSView()
     private let workspaceHeader = WorkspaceHeaderView()
     private let sshConnectionStatusMonitor = SSHConnectionStatusMonitor()
+    private let pullRequestStatusStore = PullRequestStatusStore()
     private lazy var leftPanelController = PanelViewController(
         connectionStatusMonitor: sshConnectionStatusMonitor
     )
@@ -263,6 +264,9 @@ final class WorkspaceViewController: NSViewController {
             )
         }
         super.init(nibName: nil, bundle: nil)
+        pullRequestStatusStore.onChange = { [weak self] in
+            self?.updateTaskSidebar()
+        }
         if let storedTab = restoredSession?.recentlyClosedTerminalTab,
            storedTab.tab.terminal.isValid,
            Self.workspaceScope(from: storedTab.scope, in: loadedTasks) != nil {
@@ -2183,7 +2187,9 @@ final class WorkspaceViewController: NSViewController {
     }
 
     private func updateTaskSidebar() {
-        sshConnectionStatusMonitor.sync((try? sshConnectionStore.load()) ?? [])
+        let connections = (try? sshConnectionStore.load()) ?? []
+        sshConnectionStatusMonitor.sync(connections)
+        let connectionsByID = Dictionary(uniqueKeysWithValues: connections.map { ($0.id, $0) })
         let registeredRepositories: [UUID: RegisteredRepository]
         do {
             registeredRepositories = try Dictionary(
@@ -2197,6 +2203,24 @@ final class WorkspaceViewController: NSViewController {
         let repositoryBranches = registeredRepositories.compactMapValues {
             $0.currentBranch ?? $0.defaultBranch
         }
+        let repositoryIDs = Set(tasks.flatMap { $0.repositories.map(\.repositoryID) })
+        let pullRequestContexts = repositoryIDs.reduce(into: [UUID: PullRequestQueryContext]()) { result, repositoryID in
+            guard let repository = registeredRepositories[repositoryID] else { return }
+            switch repository.target {
+            case .local:
+                result[repositoryID] = PullRequestQueryContext(
+                    path: repository.path,
+                    target: .local
+                )
+            case .ssh(let connectionID):
+                guard let connection = connectionsByID[connectionID], connection.isEnabled else { return }
+                result[repositoryID] = PullRequestQueryContext(
+                    path: repository.path,
+                    target: .ssh(connection)
+                )
+            }
+        }
+        pullRequestStatusStore.refresh(pullRequestContexts)
         var displayedRepositoryErrors = repositoryErrors
         for task in tasks {
             for repository in task.repositories {
@@ -2243,6 +2267,7 @@ final class WorkspaceViewController: NSViewController {
             repositoryTargets: repositoryTargets,
             repositoryPaths: repositoryPaths,
             repositoryBranches: repositoryBranches,
+            pullRequestStatuses: pullRequestStatusStore.statuses,
             taskErrors: taskErrors,
             repositoryErrors: displayedRepositoryErrors,
             loadError: taskLoadError

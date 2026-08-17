@@ -246,6 +246,7 @@ final class PanelViewController: NSViewController {
         repositoryTargets: [UUID: RepositoryTarget] = [:],
         repositoryPaths: [UUID: String] = [:],
         repositoryBranches: [UUID: String] = [:],
+        pullRequestStatuses: [UUID: PullRequestRepositoryStatus] = [:],
         taskErrors: [UUID: String],
         repositoryErrors: [TaskRepositoryScope: String],
         loadError: String?
@@ -281,6 +282,7 @@ final class PanelViewController: NSViewController {
                 repositoryTargets: repositoryTargets,
                 repositoryPaths: repositoryPaths,
                 repositoryBranches: repositoryBranches,
+                pullRequestStatuses: pullRequestStatuses,
                 connectionStatusMonitor: connectionStatusMonitor
             )
             group.onSelectTask = { [weak self] in self?.onSelectTask?(task.id) }
@@ -542,6 +544,11 @@ private struct SidebarRepositoryContext {
     let connectionID: UUID?
     let connectionName: String?
     var status: SSHConnectionStatus
+    let pullRequestStatus: PullRequestRepositoryStatus
+
+    var pullRequests: [PullRequestSummary] {
+        pullRequestStatus.related(to: branch)
+    }
 }
 
 @MainActor
@@ -572,6 +579,7 @@ private final class SidebarTaskGroupView: NSStackView {
         repositoryTargets: [UUID: RepositoryTarget],
         repositoryPaths: [UUID: String],
         repositoryBranches: [UUID: String],
+        pullRequestStatuses: [UUID: PullRequestRepositoryStatus],
         connectionStatusMonitor: SSHConnectionStatusMonitor
     ) {
         taskID = task.id
@@ -598,7 +606,8 @@ private final class SidebarTaskGroupView: NSStackView {
                 target: target,
                 connectionID: connectionID,
                 connectionName: connectionID.flatMap { connectionStatusMonitor.name(for: $0) },
-                status: connectionID.map { connectionStatusMonitor.status(for: $0) } ?? .disabled
+                status: connectionID.map { connectionStatusMonitor.status(for: $0) } ?? .disabled,
+                pullRequestStatus: pullRequestStatuses[repository.repositoryID] ?? .idle
             )
         }
         let collapsedRepositoryError = expanded ? nil : task.repositories.lazy.compactMap {
@@ -1305,6 +1314,7 @@ private final class SidebarRepositoryRow: AppHoverView {
     private let errorIcon = NSImageView()
     private let activityIndicator = NSProgressIndicator()
     private let statusLabel: NSTextField
+    private let pullRequestIcon = NSImageView()
     private let connectionStatusMonitor: SSHConnectionStatusMonitor
     private let connectionID: UUID?
     private var repositoryContext: SidebarRepositoryContext?
@@ -1350,7 +1360,7 @@ private final class SidebarRepositoryRow: AppHoverView {
         trailingInfoStack.orientation = .horizontal
         trailingInfoStack.alignment = .centerY
         trailingInfoStack.spacing = 6
-        [errorIcon, activityIndicator, statusLabel, connectionStatusDot].forEach {
+        [pullRequestIcon, errorIcon, activityIndicator, statusLabel, connectionStatusDot].forEach {
             trailingInfoStack.addArrangedSubview($0)
         }
         [button, sourceIcon, titleLabel, trailingInfoStack, menuOverlay].forEach {
@@ -1380,6 +1390,9 @@ private final class SidebarRepositoryRow: AppHoverView {
         )
         activityIndicator.style = .spinning
         activityIndicator.controlSize = .small
+        pullRequestIcon.image = Self.pullRequestImage()
+        pullRequestIcon.imageScaling = .scaleProportionallyDown
+        pullRequestIcon.setAccessibilityLabel("Pull request status")
         if activity != nil, error == nil {
             activityIndicator.startAnimation(nil)
         }
@@ -1413,6 +1426,8 @@ private final class SidebarRepositoryRow: AppHoverView {
             errorIcon.heightAnchor.constraint(equalToConstant: 12),
             connectionStatusDot.widthAnchor.constraint(equalToConstant: 8),
             connectionStatusDot.heightAnchor.constraint(equalToConstant: 8),
+            pullRequestIcon.widthAnchor.constraint(equalToConstant: 14),
+            pullRequestIcon.heightAnchor.constraint(equalToConstant: 14),
             trailingInfoStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             trailingInfoStack.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
@@ -1455,6 +1470,7 @@ private final class SidebarRepositoryRow: AppHoverView {
             ? AppTheme.tertiaryText
             : AppTheme.error
         connectionStatusDot.status = connectionStatus
+        updatePullRequestIcon()
     }
 
     override func hoverStateDidChange() {
@@ -1504,6 +1520,36 @@ private final class SidebarRepositoryRow: AppHoverView {
         activityIndicator.isHidden = activity == nil || error != nil
         statusLabel.isHidden = error == nil && activity == nil
         connectionStatusDot.isHidden = connectionID == nil
+    }
+
+    private func updatePullRequestIcon() {
+        let pullRequests = repositoryContext?.pullRequests ?? []
+        pullRequestIcon.isHidden = pullRequests.isEmpty
+        guard let status = PullRequestSummary.aggregateStatus(for: pullRequests) else {
+            pullRequestIcon.toolTip = nil
+            pullRequestIcon.setAccessibilityValue(nil)
+            return
+        }
+        pullRequestIcon.contentTintColor = AppTheme.pullRequestColor(status)
+        pullRequestIcon.toolTip = pullRequests.count == 1
+            ? "Pull request #\(pullRequests[0].number): \(status.label)"
+            : "\(pullRequests.count) pull requests: \(status.label)"
+        pullRequestIcon.setAccessibilityValue(status.label)
+    }
+
+    private static func pullRequestImage() -> NSImage? {
+        if let url = Bundle.main.url(forResource: "git-pull-request", withExtension: "png"),
+           let image = NSImage(contentsOf: url)
+        {
+            image.isTemplate = true
+            return image
+        }
+        return NSImage(
+            systemSymbolName: "arrow.triangle.pull",
+            accessibilityDescription: "Pull request"
+        )?.withSymbolConfiguration(
+            NSImage.SymbolConfiguration(pointSize: 11, weight: .medium)
+        )
     }
 
     private func showInfoPopover() {
@@ -1725,22 +1771,38 @@ private final class SidebarHoverPopoverView: NSView {
 @MainActor
 private final class SidebarRepositoryInfoCard: NSView {
     private let repositoryRow: SidebarTaskInfoRepositoryRow
+    private let pullRequestView: SidebarPullRequestInfoView
+    private let contentStack = NSStackView()
+    private let divider = NSView()
 
     init(context: SidebarRepositoryContext) {
         repositoryRow = SidebarTaskInfoRepositoryRow(context: context)
+        pullRequestView = SidebarPullRequestInfoView(status: context.pullRequestStatus, branch: context.branch)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
         layer?.cornerRadius = 0
         layer?.borderWidth = 0
-        addSubview(repositoryRow)
+        contentStack.orientation = .vertical
+        contentStack.alignment = .leading
+        contentStack.spacing = 10
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        divider.translatesAutoresizingMaskIntoConstraints = false
+        divider.wantsLayer = true
+        contentStack.addArrangedSubview(repositoryRow)
+        contentStack.addArrangedSubview(divider)
+        contentStack.addArrangedSubview(pullRequestView)
+        addSubview(contentStack)
         NSLayoutConstraint.activate([
             widthAnchor.constraint(equalToConstant: 400),
-            heightAnchor.constraint(equalToConstant: 123),
-            repositoryRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            repositoryRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-            repositoryRow.topAnchor.constraint(equalTo: topAnchor, constant: 14),
-            repositoryRow.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
+            contentStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            contentStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            contentStack.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+            contentStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
+            repositoryRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            divider.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            divider.heightAnchor.constraint(equalToConstant: 1),
+            pullRequestView.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
         ])
         applyTheme()
     }
@@ -1749,18 +1811,206 @@ private final class SidebarRepositoryInfoCard: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: 400, height: 123)
+        NSSize(
+            width: 400,
+            height: 28 + 95 + 1 + pullRequestView.intrinsicContentSize.height + 20
+        )
     }
 
     func update(context: SidebarRepositoryContext) {
         repositoryRow.update(context: context)
+        pullRequestView.update(status: context.pullRequestStatus, branch: context.branch)
+        invalidateIntrinsicContentSize()
         applyTheme()
     }
 
     private func applyTheme() {
         layer?.backgroundColor = NSColor.clear.cgColor
         layer?.borderColor = NSColor.clear.cgColor
+        divider.layer?.backgroundColor = AppTheme.border.cgColor
         repositoryRow.applyTheme()
+        pullRequestView.applyTheme()
+    }
+}
+
+@MainActor
+private final class SidebarPullRequestInfoView: NSView {
+    private let titleLabel = NSTextField(labelWithString: "Pull requests")
+    private let countLabel = NSTextField(labelWithString: "")
+    private let rowsStack = NSStackView()
+    private var status: PullRequestRepositoryStatus
+    private var branch: String?
+
+    init(status: PullRequestRepositoryStatus, branch: String?) {
+        self.status = status
+        self.branch = branch
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        countLabel.translatesAutoresizingMaskIntoConstraints = false
+        countLabel.alignment = .right
+        rowsStack.translatesAutoresizingMaskIntoConstraints = false
+        rowsStack.orientation = .vertical
+        rowsStack.alignment = .leading
+        rowsStack.spacing = 4
+        addSubview(titleLabel)
+        addSubview(countLabel)
+        addSubview(rowsStack)
+        NSLayoutConstraint.activate([
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
+            titleLabel.centerYAnchor.constraint(equalTo: countLabel.centerYAnchor),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: countLabel.leadingAnchor, constant: -8),
+            countLabel.trailingAnchor.constraint(equalTo: trailingAnchor),
+            countLabel.topAnchor.constraint(equalTo: topAnchor),
+            countLabel.heightAnchor.constraint(equalToConstant: 22),
+            rowsStack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            rowsStack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            rowsStack.topAnchor.constraint(equalTo: countLabel.bottomAnchor, constant: 6),
+            rowsStack.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        update(status: status, branch: branch)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+
+    override var intrinsicContentSize: NSSize {
+        let rowsHeight: CGFloat
+        switch status.availability {
+        case .loaded:
+            let rowCount = status.related(to: branch).count
+            let spacing = CGFloat(max(0, rowCount - 1)) * rowsStack.spacing
+            rowsHeight = max(22, CGFloat(rowCount) * 54 + spacing)
+        case .idle, .loading, .unavailable:
+            rowsHeight = 22
+        }
+        return NSSize(width: 368, height: 28 + rowsHeight)
+    }
+
+    func update(status: PullRequestRepositoryStatus, branch: String?) {
+        self.status = status
+        self.branch = branch
+        countLabel.stringValue = switch status.availability {
+        case .idle: ""
+        case .loading: "…"
+        case .unavailable: "Unavailable"
+        case .loaded: "\(status.related(to: branch).count)"
+        }
+        rowsStack.arrangedSubviews.forEach {
+            rowsStack.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
+        switch status.availability {
+        case .idle:
+            addMessage("Pull request status not loaded.")
+        case .loading:
+            addMessage("Checking GitHub…")
+        case .unavailable:
+            addMessage(status.failureMessage ?? "GitHub PR status unavailable.")
+        case .loaded:
+            let pullRequests = status.related(to: branch)
+            if pullRequests.isEmpty {
+                addMessage("No pull request for this branch.")
+            } else {
+                pullRequests.forEach { summary in
+                    let row = SidebarPullRequestInfoRow(summary: summary)
+                    rowsStack.addArrangedSubview(row)
+                    row.widthAnchor.constraint(equalTo: rowsStack.widthAnchor).isActive = true
+                }
+            }
+        }
+        invalidateIntrinsicContentSize()
+        applyTheme()
+    }
+
+    func applyTheme() {
+        titleLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsBody, weight: 600)
+        titleLabel.textColor = AppTheme.primaryText
+        countLabel.font = .monospacedSystemFont(ofSize: AppTheme.typography.label, weight: .regular)
+        countLabel.textColor = AppTheme.tertiaryText
+        rowsStack.arrangedSubviews.forEach { view in
+            if let row = view as? SidebarPullRequestInfoRow {
+                row.applyTheme()
+            } else if let label = view as? NSTextField {
+                label.font = .monospacedSystemFont(ofSize: AppTheme.typography.label, weight: .regular)
+                label.textColor = AppTheme.secondaryText
+            }
+        }
+    }
+
+    private func addMessage(_ message: String) {
+        let label = NSTextField(labelWithString: message)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.usesSingleLineMode = true
+        label.lineBreakMode = .byTruncatingTail
+        label.toolTip = message
+        label.heightAnchor.constraint(equalToConstant: 22).isActive = true
+        rowsStack.addArrangedSubview(label)
+        label.widthAnchor.constraint(equalTo: rowsStack.widthAnchor).isActive = true
+    }
+}
+
+@MainActor
+private final class SidebarPullRequestInfoRow: NSView {
+    private let summary: PullRequestSummary
+    private let icon = NSImageView()
+    private let titleLabel: NSTextField
+    private let metadataLabel: NSTextField
+    private let checksLabel: NSTextField
+    private let detailsStack = NSStackView()
+
+    init(summary: PullRequestSummary) {
+        self.summary = summary
+        titleLabel = NSTextField(labelWithString: "#\(summary.number) \(summary.title)")
+        metadataLabel = NSTextField(
+            labelWithString: "\(summary.headBranch) → \(summary.baseBranch) · \(summary.displayStatus.label) · \(summary.reviewLabel)"
+        )
+        checksLabel = NSTextField(
+            labelWithString: "Checks (\(summary.checkCountsLabel)): \(summary.checkSummary)"
+        )
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        icon.image = NSImage(systemSymbolName: "arrow.triangle.pull", accessibilityDescription: "Pull request")
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.symbolConfiguration = .init(pointSize: 12, weight: .medium)
+        detailsStack.translatesAutoresizingMaskIntoConstraints = false
+        detailsStack.orientation = .vertical
+        detailsStack.alignment = .leading
+        detailsStack.spacing = 2
+        [titleLabel, metadataLabel, checksLabel].forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+            $0.usesSingleLineMode = true
+            $0.lineBreakMode = .byTruncatingTail
+            detailsStack.addArrangedSubview($0)
+            $0.widthAnchor.constraint(equalTo: detailsStack.widthAnchor).isActive = true
+        }
+        addSubview(icon)
+        addSubview(detailsStack)
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 54),
+            icon.leadingAnchor.constraint(equalTo: leadingAnchor),
+            icon.centerYAnchor.constraint(equalTo: detailsStack.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 18),
+            icon.heightAnchor.constraint(equalToConstant: 18),
+            detailsStack.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
+            detailsStack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            detailsStack.topAnchor.constraint(equalTo: topAnchor),
+            detailsStack.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        applyTheme()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+
+    func applyTheme() {
+        icon.contentTintColor = AppTheme.pullRequestColor(summary.displayStatus)
+        titleLabel.font = AppTheme.font(ofSize: AppTheme.typography.label, weight: 600)
+        titleLabel.textColor = AppTheme.primaryText
+        metadataLabel.font = .monospacedSystemFont(ofSize: AppTheme.typography.label, weight: .regular)
+        metadataLabel.textColor = AppTheme.secondaryText
+        checksLabel.font = .monospacedSystemFont(ofSize: AppTheme.typography.label, weight: .regular)
+        checksLabel.textColor = AppTheme.tertiaryText
     }
 }
 

@@ -37,6 +37,7 @@
 		000000000000000000000088 /* ZmxResources/zmx in Resources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000089 /* ZmxResources/zmx */; };
 		000000000000000000000090 /* FileTreeIconResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000091 /* FileTreeIconResolver.swift */; };
 		000000000000000000000092 /* SyntaxHighlighter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000093 /* SyntaxHighlighter.swift */; };
+		000000000000000000000095 /* PullRequestStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000096 /* PullRequestStatus.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -82,6 +83,7 @@
 		000000000000000000000089 /* ZmxResources/zmx */ = {isa = PBXFileReference; lastKnownFileType = file; path = ZmxResources/zmx; sourceTree = "<group>"; };
 		000000000000000000000091 /* FileTreeIconResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileTreeIconResolver.swift; sourceTree = "<group>"; };
 		000000000000000000000093 /* SyntaxHighlighter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyntaxHighlighter.swift; sourceTree = "<group>"; };
+		000000000000000000000096 /* PullRequestStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PullRequestStatus.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -146,6 +148,7 @@
 				000000000000000000000024 /* AppTheme.swift */,
 				000000000000000000000091 /* FileTreeIconResolver.swift */,
 				000000000000000000000093 /* SyntaxHighlighter.swift */,
+				000000000000000000000096 /* PullRequestStatus.swift */,
 				000000000000000000000025 /* PanelViewController.swift */,
 				000000000000000000000026 /* PanelToggleButton.swift */,
 				000000000000000000000027 /* WorkspaceViewController.swift */,
@@ -298,6 +301,7 @@
 				000000000000000000000020 /* AppTheme.swift in Sources */,
 				000000000000000000000090 /* FileTreeIconResolver.swift in Sources */,
 				000000000000000000000092 /* SyntaxHighlighter.swift in Sources */,
+				000000000000000000000095 /* PullRequestStatus.swift in Sources */,
 				000000000000000000000021 /* PanelViewController.swift in Sources */,
 				000000000000000000000022 /* PanelToggleButton.swift in Sources */,
 				000000000000000000000023 /* WorkspaceViewController.swift in Sources */,

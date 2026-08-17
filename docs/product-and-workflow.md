@@ -110,6 +110,8 @@ sequenceDiagram
 
 Piñata fetches the registered repository's configured default branch first. The new branch is then created from the updated `origin/<default-branch>` reference. This avoids basing new worktrees on a stale local branch.
 
+After creation, the task attachment keeps its provisioned branch as its source context. A terminal can temporarily check out another branch without changing the task attachment or its pull request context.
+
 ### Naming
 
 The task title is serialized to lowercase words separated by hyphens. For example, `Fix SSO sign in` becomes `fix-sso-sign-in`.
@@ -174,7 +176,7 @@ Piñata persists application settings locally: dark or light theme, accent color
 ## Current product limits
 
 - SSH uses an existing OpenSSH alias and non-interactive key authentication. Piñata does not manage keys, passwords, host verification, tunnels, or port forwarding.
-- No diff, review, checks, or pull request workflow. Review and PR tabs are placeholders.
+- Sidebar pull request status and check results are read-only and depend on local or remote `gh` availability. Diff, review, check actions, and pull request workflows remain placeholders.
 - No Pi discussion UI, Pi daemon, or agent-specific persistence.
 - No recovery of a local shell after macOS restarts, or a remote process after its host restarts.
 
