@@ -130,8 +130,11 @@ private struct GitCommandRunner {
                 reuseConnection: true
             )
         } else {
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-            process.arguments = arguments
+            process.executableURL = URL(fileURLWithPath: UserShell.loginPath)
+            let gitCommand = (["git"] + arguments)
+                .map(SSHCommand.shellQuote)
+                .joined(separator: " ")
+            process.arguments = ["-lc", "exec \(gitCommand)"]
         }
         var environment = ProcessInfo.processInfo.environment
         environment["GIT_TERMINAL_PROMPT"] = "0"
@@ -401,7 +404,7 @@ struct RepositoryInspector: Sendable {
         } catch GitCommandError.timedOut {
             throw RepositoryInspectionError.gitFailed("Git command timed out.")
         } catch GitCommandError.failed(let message) {
-            throw arguments.contains("rev-parse")
+            throw arguments.contains("rev-parse") && message.localizedCaseInsensitiveContains("not a git repository")
                 ? RepositoryInspectionError.invalidRepository
                 : RepositoryInspectionError.gitFailed(message)
         }
