@@ -1302,7 +1302,9 @@ final class WorkspaceViewController: NSViewController {
             return
         }
 
-        let worktreeBasePath = RepositoryDefaultsStore().loadWorktreeBasePath()
+        let repositoryDefaults = RepositoryDefaultsStore()
+        let worktreeBasePath = repositoryDefaults.loadWorktreeBasePath()
+        let branchPrefix = repositoryDefaults.loadTaskBranchPrefix()
         var provisionableRepositories: [(repository: RegisteredRepository, connection: SSHConnection?)] = []
         for repository in repositories {
             let scope = TaskRepositoryScope(taskID: task.id, repositoryID: repository.id)
@@ -1315,6 +1317,7 @@ final class WorkspaceViewController: NSViewController {
             }
             let provisioner = WorktreeProvisioner(
                 globalBasePath: worktreeBasePath,
+                branchPrefix: branchPrefix,
                 connection: connection
             )
             let report = provisioner.preparing(
@@ -1342,7 +1345,7 @@ final class WorkspaceViewController: NSViewController {
         installActiveWorkspace()
 
         let updates = AsyncStream<(TaskRepositoryScope, WorktreeProvisioningReport)> { continuation in
-            Task.detached { [provisionableRepositories, task, worktreeBasePath] in
+            Task.detached { [provisionableRepositories, task, worktreeBasePath, branchPrefix] in
                 await withTaskGroup(of: Void.self) { group in
                     for item in provisionableRepositories {
                         group.addTask {
@@ -1353,6 +1356,7 @@ final class WorkspaceViewController: NSViewController {
                             )
                             let provisioner = WorktreeProvisioner(
                                 globalBasePath: worktreeBasePath,
+                                branchPrefix: branchPrefix,
                                 connection: item.connection
                             )
                             _ = provisioner.provision(

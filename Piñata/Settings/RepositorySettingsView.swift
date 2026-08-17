@@ -9,6 +9,7 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
     private let errorLabel = NSTextField(wrappingLabelWithString: "")
     private let registerAction = RepositoryRegisterActionView()
     private let defaultWorktreeField = SettingsTextField()
+    private let branchPrefixField = SettingsTextField()
     private let repositoryContent = NSStackView()
     private let repositoryRows = NSStackView()
     private var detailView: RepositoryDetailView?
@@ -82,6 +83,17 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
             minimumHeight: SettingsLayout.rowHeight
         )
 
+        branchPrefixField.stringValue = defaultsStore.loadTaskBranchPrefix()
+        branchPrefixField.placeholderString = "Example: antoine.leveque/"
+        branchPrefixField.delegate = self
+        let branchPrefixRow = SettingsRowView(
+            title: "Task branch prefix",
+            description: "Used for new task branches as <prefix><task-slug>-<short-id>. Changes only affect future tasks.",
+            control: branchPrefixField,
+            controlWidth: SettingsLayout.repositoryPathControlWidth,
+            minimumHeight: SettingsLayout.rowHeight
+        )
+
         registerAction.onAction = { [weak self] in self?.registerRepository() }
 
         errorLabel.isHidden = true
@@ -110,6 +122,11 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
             title: "Worktrees",
             detail: "Where new task worktrees are created.",
             content: defaultRow
+        )
+        page.addSection(
+            title: "Branches",
+            detail: "How Piñata names new task branches.",
+            content: branchPrefixRow
         )
         page.addSection(
             title: "Repositories",
@@ -389,16 +406,28 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
     }
 
     func controlTextDidEndEditing(_ notification: Notification) {
-        guard notification.object as? NSTextField === defaultWorktreeField else { return }
-        let path = defaultWorktreeField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        let value = path.isEmpty ? RepositoryDefaultsStore.defaultWorktreeBasePath : path
-        if let error = WorktreePathValidator.error(for: value, allowRepositoryRelative: false) {
-            setError(error)
-            defaultWorktreeField.stringValue = defaultsStore.loadWorktreeBasePath()
+        if notification.object as? NSTextField === defaultWorktreeField {
+            let path = defaultWorktreeField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            let value = path.isEmpty ? RepositoryDefaultsStore.defaultWorktreeBasePath : path
+            if let error = WorktreePathValidator.error(for: value, allowRepositoryRelative: false) {
+                setError(error)
+                defaultWorktreeField.stringValue = defaultsStore.loadWorktreeBasePath()
+                return
+            }
+            defaultsStore.saveWorktreeBasePath(value)
+            defaultWorktreeField.stringValue = value
+            setError(nil)
             return
         }
-        defaultsStore.saveWorktreeBasePath(value)
-        defaultWorktreeField.stringValue = value
+        guard notification.object as? NSTextField === branchPrefixField else { return }
+        let prefix = branchPrefixField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let normalized = TaskBranchName.normalizedPrefix(prefix) else {
+            setError(TaskBranchName.error(for: prefix) ?? "Use a valid Git branch prefix.")
+            branchPrefixField.stringValue = defaultsStore.loadTaskBranchPrefix()
+            return
+        }
+        defaultsStore.saveTaskBranchPrefix(normalized)
+        branchPrefixField.stringValue = normalized
         setError(nil)
     }
 

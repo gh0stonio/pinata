@@ -358,7 +358,7 @@ struct RepositoryInspector: Sendable {
             }
         }
 
-        if let branch, (taskID != nil || branch.hasPrefix("pinata/")), !(try gitOutput(
+        if let branch, (taskID != nil || branch.hasPrefix(TaskBranchName.defaultPrefix)), !(try gitOutput(
             ["-C", repository.path, "branch", "--list", branch],
             connection: connection
         )).isEmpty {
@@ -492,9 +492,71 @@ struct RepositoryRegistryStore {
     }
 }
 
+enum TaskBranchName {
+    static let defaultPrefix = "pinata/"
+
+    static func normalizedPrefix(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard error(for: trimmed) == nil else { return nil }
+        return trimmed.hasSuffix("/") ? trimmed : trimmed + "/"
+    }
+
+    static func error(for value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return "Enter a branch prefix."
+        }
+        guard !trimmed.contains("\n"), !trimmed.contains("\r"), !trimmed.contains("\0") else {
+            return "Use a single-line branch prefix."
+        }
+
+        let prefix = trimmed.hasSuffix("/") ? trimmed : trimmed + "/"
+        let namespace = String(prefix.dropLast())
+        guard !namespace.isEmpty, !namespace.hasPrefix("/"), !namespace.contains("//") else {
+            return "Use a valid Git branch prefix."
+        }
+        guard !namespace.contains(".."), !namespace.contains("@{") else {
+            return "Use a valid Git branch prefix."
+        }
+
+        let invalidCharacters = CharacterSet(charactersIn: " ~^:?*[\\\\")
+        guard !namespace.unicodeScalars.contains(where: {
+            $0.value < 0x20 || $0.value == 0x7F || invalidCharacters.contains($0)
+        }) else {
+            return "Use a valid Git branch prefix."
+        }
+
+        let components = namespace.split(separator: "/", omittingEmptySubsequences: false)
+        guard components.allSatisfy({ component in
+            let value = String(component)
+            return !value.isEmpty
+                && value != "."
+                && value != ".."
+                && !value.hasPrefix(".")
+                && !value.hasSuffix(".")
+                && !value.hasSuffix(".lock")
+                && !value.hasPrefix("-")
+        }) else {
+            return "Use a valid Git branch prefix."
+        }
+        return nil
+    }
+
+    static func branch(
+        prefix: String,
+        taskTitle: String,
+        taskID: UUID
+    ) -> String {
+        let normalized = normalizedPrefix(prefix) ?? defaultPrefix
+        return "\(normalized)\(WorktreePathResolver.serializedTaskName(taskTitle))-\(taskID.uuidString.prefix(8).lowercased())"
+    }
+}
+
 struct RepositoryDefaultsStore {
     static let defaultWorktreeBasePath = "~/.pinata/worktrees"
+    static let defaultTaskBranchPrefix = TaskBranchName.defaultPrefix
     private static let key = "pinata.repository-defaults.v1"
+    private static let branchPrefixKey = "pinata.repository-branch-prefix.v1"
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
@@ -507,6 +569,20 @@ struct RepositoryDefaultsStore {
 
     func saveWorktreeBasePath(_ path: String) {
         defaults.set(path, forKey: Self.key)
+    }
+
+    func loadTaskBranchPrefix() -> String {
+        guard let value = defaults.string(forKey: Self.branchPrefixKey) else {
+            return Self.defaultTaskBranchPrefix
+        }
+        return TaskBranchName.normalizedPrefix(value) ?? Self.defaultTaskBranchPrefix
+    }
+
+    func saveTaskBranchPrefix(_ prefix: String) {
+        defaults.set(
+            TaskBranchName.normalizedPrefix(prefix) ?? Self.defaultTaskBranchPrefix,
+            forKey: Self.branchPrefixKey
+        )
     }
 }
 
@@ -611,15 +687,19 @@ enum WorktreeProvisioningError: LocalizedError {
 
 struct WorktreeProvisioner {
     let globalBasePath: String
+    let branchPrefix: String
     let connection: SSHConnection?
     private let fileManager: FileManager
 
     init(
         globalBasePath: String,
+        branchPrefix: String = RepositoryDefaultsStore.defaultTaskBranchPrefix,
         connection: SSHConnection? = nil,
         fileManager: FileManager = .default
     ) {
         self.globalBasePath = globalBasePath
+        self.branchPrefix = TaskBranchName.normalizedPrefix(branchPrefix)
+            ?? RepositoryDefaultsStore.defaultTaskBranchPrefix
         self.connection = connection
         self.fileManager = fileManager
     }
@@ -645,7 +725,11 @@ struct WorktreeProvisioner {
             ) + "/\(name)"
         }
         let remoteBranch = "origin/\(repository.defaultBranch)"
-        let branch = "pinata/\(WorktreePathResolver.serializedTaskName(taskTitle))-\(taskID.uuidString.prefix(8).lowercased())"
+        let branch = TaskBranchName.branch(
+            prefix: branchPrefix,
+            taskTitle: taskTitle,
+            taskID: taskID
+        )
         return WorktreeProvisioningReport(
             path: destination,
             branch: branch,
