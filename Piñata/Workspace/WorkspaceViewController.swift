@@ -20,7 +20,7 @@ final class WorkspaceViewController: NSViewController {
 
     private struct TerminalTab {
         let id: UUID
-        let title: String
+        var title: String
         let controller: TerminalViewController
     }
 
@@ -632,6 +632,9 @@ final class WorkspaceViewController: NSViewController {
         workspaceHeader.onCloseTab = { [weak self] id in
             self?.closeTerminalTab(id)
         }
+        workspaceHeader.onRenameTab = { [weak self] id, title in
+            self?.renameTerminalTab(id, title: title)
+        }
         workspaceHeader.onTogglePanel = { [weak self] in
             self?.toggleRightPanel(nil)
         }
@@ -773,6 +776,17 @@ final class WorkspaceViewController: NSViewController {
         workspace.activeTabID = id
         scheduleSessionSave()
         installActiveWorkspace()
+    }
+
+    private func renameTerminalTab(_ id: UUID, title: String) {
+        guard let workspace = activeTerminalWorkspace,
+              let index = workspace.tabs.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, workspace.tabs[index].title != title else { return }
+        workspace.tabs[index].title = title
+        scheduleSessionSave()
     }
 
     private func installActiveWorkspace() {

@@ -5,6 +5,7 @@ final class WorkspaceHeaderView: NSView {
     var onCreateTab: (() -> Void)?
     var onSelectTab: ((UUID) -> Void)?
     var onCloseTab: ((UUID) -> Void)?
+    var onRenameTab: ((UUID, String) -> Void)?
     var onTogglePanel: (() -> Void)?
 
     private let tabsStack = NSStackView()
@@ -119,6 +120,7 @@ final class WorkspaceHeaderView: NSView {
                 title: tab.title,
                 selected: tab.id == activeID,
                 isPreview: previewTabIDs.contains(tab.id),
+                isFileTab: fileTabIDs.contains(tab.id),
                 showsFullTitle: fileTabIDs.contains(tab.id)
             )
             item.onSelect = { [weak self] id in
@@ -126,6 +128,9 @@ final class WorkspaceHeaderView: NSView {
             }
             item.onClose = { [weak self] id in
                 self?.onCloseTab?(id)
+            }
+            item.onRename = { [weak self] id, title in
+                self?.onRenameTab?(id, title)
             }
             tabsStack.insertArrangedSubview(item, at: tabsStack.arrangedSubviews.count - 1)
             if tab.id == activeID {
@@ -245,13 +250,15 @@ final class WorkspaceHeaderView: NSView {
 }
 
 @MainActor
-final class TabButton: AppButton {
+final class TabButton: AppButton, NSTextFieldDelegate {
     var onSelect: ((UUID) -> Void)?
     var onClose: ((UUID) -> Void)?
+    var onRename: ((UUID, String) -> Void)?
 
     private let tabID: UUID
     private let selected: Bool
     private let isPreview: Bool
+    private let isFileTab: Bool
     private let showsFullTitle: Bool
     private let terminalIcon = NSImageView()
     private let titleLabel: NSTextField
@@ -259,6 +266,11 @@ final class TabButton: AppButton {
     private let closeHoverLayer = CALayer()
     private var closeHovered = false
     private var activationPoint: NSPoint?
+    private var originalTitle: String?
+    private var isRenaming = false
+    private var editingWidthConstraint: NSLayoutConstraint?
+    private var maximumWidthConstraint: NSLayoutConstraint?
+    private var editingMinimumWidth: CGFloat = 0
 
     override var usesAutomaticHoverTracking: Bool { false }
 
@@ -267,11 +279,13 @@ final class TabButton: AppButton {
         title: String,
         selected: Bool,
         isPreview: Bool = false,
+        isFileTab: Bool = false,
         showsFullTitle: Bool = false
     ) {
         tabID = id
         self.selected = selected
         self.isPreview = isPreview
+        self.isFileTab = isFileTab
         self.showsFullTitle = showsFullTitle
         titleLabel = NSTextField(labelWithString: title)
         super.init(role: selected ? .accent : .naked)
@@ -293,6 +307,9 @@ final class TabButton: AppButton {
         terminalIcon.imageScaling = .scaleProportionallyDown
         titleLabel.usesSingleLineMode = true
         titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.delegate = self
+        titleLabel.cell?.isScrollable = true
+        titleLabel.cell?.wraps = false
         titleLabel.setContentCompressionResistancePriority(
             showsFullTitle ? .required : .defaultLow,
             for: .horizontal
@@ -347,7 +364,11 @@ final class TabButton: AppButton {
             closeIcon.heightAnchor.constraint(equalToConstant: AppTheme.workspaceTabCloseSymbolSize),
         ]
         if !showsFullTitle {
-            constraints.append(widthAnchor.constraint(lessThanOrEqualToConstant: AppTheme.workspaceTabMaximumWidth))
+            let maximumWidthConstraint = widthAnchor.constraint(
+                lessThanOrEqualToConstant: AppTheme.workspaceTabMaximumWidth
+            )
+            constraints.append(maximumWidthConstraint)
+            self.maximumWidthConstraint = maximumWidthConstraint
         }
         NSLayoutConstraint.activate(constraints)
         applyTheme()
@@ -370,14 +391,19 @@ final class TabButton: AppButton {
         let font = isPreview
             ? AppTheme.previewFont(ofSize: tabFontSize - 1, weight: 600)
             : AppTheme.font(ofSize: tabFontSize, weight: 600)
-        titleLabel.attributedStringValue = NSAttributedString(
-            string: titleLabel.stringValue,
-            attributes: [
-                .font: font,
-                .foregroundColor: foreground,
-                .baselineOffset: 2.0,
-            ]
-        )
+        if isRenaming {
+            titleLabel.font = font
+            titleLabel.textColor = foreground
+        } else {
+            titleLabel.attributedStringValue = NSAttributedString(
+                string: titleLabel.stringValue,
+                attributes: [
+                    .font: font,
+                    .foregroundColor: foreground,
+                    .baselineOffset: 2.0,
+                ]
+            )
+        }
         closeIcon.contentTintColor = closeHovered ? closeAppearance.foreground : foreground
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -442,7 +468,12 @@ final class TabButton: AppButton {
     }
 
     override func mouseDown(with event: NSEvent) {
-        activationPoint = convert(event.locationInWindow, from: nil)
+        let point = convert(event.locationInWindow, from: nil)
+        if event.clickCount >= 2, !isFileTab, !closeHitRect.contains(point) {
+            beginRenaming()
+            return
+        }
+        activationPoint = point
         defer { activationPoint = nil }
         super.mouseDown(with: event)
     }
@@ -461,6 +492,111 @@ final class TabButton: AppButton {
             return
         }
         performPointerAction(at: activationPoint)
+    }
+
+    private func beginRenaming() {
+        guard !isRenaming else { return }
+        originalTitle = titleLabel.stringValue
+        isRenaming = true
+        let width = bounds.width > 0 ? bounds.width : intrinsicContentSize.width
+        let widthConstraint = widthAnchor.constraint(greaterThanOrEqualToConstant: width)
+        widthConstraint.isActive = true
+        editingWidthConstraint = widthConstraint
+        editingMinimumWidth = width
+        maximumWidthConstraint?.isActive = false
+        applyTheme()
+        titleLabel.isEditable = true
+        titleLabel.isSelectable = true
+        titleLabel.isBordered = false
+        titleLabel.drawsBackground = false
+        titleLabel.focusRingType = .none
+        titleLabel.target = self
+        titleLabel.action = #selector(commitRenaming)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isRenaming else { return }
+            self.window?.makeFirstResponder(self.titleLabel)
+            self.titleLabel.selectText(nil)
+        }
+    }
+
+    @objc private func commitRenaming() {
+        guard isRenaming else { return }
+        let originalTitle = originalTitle ?? titleLabel.stringValue
+        let title = titleLabel.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let committedTitle = title.isEmpty ? originalTitle : title
+        endRenaming(with: committedTitle)
+        updateAccessibilityTitle(committedTitle)
+        applyTheme()
+        if committedTitle != originalTitle {
+            onRename?(tabID, committedTitle)
+        }
+    }
+
+    private func cancelRenaming() {
+        guard isRenaming else { return }
+        endRenaming(with: originalTitle ?? titleLabel.stringValue)
+        applyTheme()
+    }
+
+    private func endRenaming(with title: String) {
+        titleLabel.stringValue = title
+        editingWidthConstraint?.isActive = false
+        editingWidthConstraint = nil
+        editingMinimumWidth = 0
+        maximumWidthConstraint?.isActive = true
+        invalidateIntrinsicContentSize()
+        titleLabel.window?.endEditing(for: titleLabel)
+        titleLabel.isEditable = false
+        titleLabel.isSelectable = false
+        titleLabel.target = nil
+        titleLabel.action = nil
+        self.originalTitle = nil
+        isRenaming = false
+    }
+
+    func control(
+        _ control: NSControl,
+        textView: NSTextView,
+        doCommandBy commandSelector: Selector
+    ) -> Bool {
+        guard control === titleLabel,
+              isRenaming,
+              commandSelector == #selector(NSResponder.cancelOperation(_:)) else {
+            return false
+        }
+        cancelRenaming()
+        return true
+    }
+
+    func controlTextDidChange(_ notification: Notification) {
+        guard isRenaming else { return }
+        let font = titleLabel.font ?? .systemFont(ofSize: NSFont.systemFontSize)
+        let titleWidth = ceil(
+            (titleLabel.stringValue as NSString).size(withAttributes: [.font: font]).width
+        )
+        let requiredWidth = AppTheme.workspaceTabHorizontalInset
+            + AppTheme.workspaceTabIconWidth
+            + AppTheme.workspaceTabContentGap
+            + titleWidth
+            + AppTheme.workspaceTabAccessoryGap
+            + AppTheme.workspaceTabCloseSymbolSize
+            + AppTheme.workspaceTabCloseInset
+        editingWidthConstraint?.constant = max(editingMinimumWidth, requiredWidth)
+        titleLabel.invalidateIntrinsicContentSize()
+        invalidateIntrinsicContentSize()
+        needsLayout = true
+    }
+
+    private func updateAccessibilityTitle(_ title: String) {
+        setAccessibilityLabel(title)
+        closeIcon.setAccessibilityLabel("Close \(title)")
+        setAccessibilityCustomActions([
+            NSAccessibilityCustomAction(name: "Close \(title)") { [weak self] in
+                guard let self else { return false }
+                onClose?(tabID)
+                return true
+            },
+        ])
     }
 }
 
