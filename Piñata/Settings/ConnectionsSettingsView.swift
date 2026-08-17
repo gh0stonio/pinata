@@ -230,7 +230,7 @@ final class ConnectionsSettingsView: NSView, SettingsPageContent {
             initialFolderTree: folderTrees[connection.id] ?? [:],
             initialRootLoad: folderWarmTasks[connection.id]
         )
-        picker.onCancel = { [weak self] in self?.dismissFolderPicker() }
+        picker.onCancel = { [weak self] in self?.cancelFolderPicker() }
         picker.onFolderTreeChange = { [weak self] tree in
             self?.folderTrees[connection.id] = tree
             Self.sharedFolderTrees[connection.id] = tree
@@ -299,36 +299,73 @@ final class ConnectionsSettingsView: NSView, SettingsPageContent {
         folderPicker = nil
     }
 
+    private func cancelFolderPicker() {
+        registrationTask?.cancel()
+        registrationTask = nil
+        dismissFolderPicker()
+    }
+
     private func registerRemoteRepository(
         at path: String,
         for host: SSHConfigHost,
         connection: SSHConnection
     ) {
         registrationTask?.cancel()
+        folderPicker?.beginRegistration()
+        do {
+            let repositories = try repositoryStore.load()
+            let target = RepositoryTarget.ssh(connection.id)
+            let normalizedPath = normalizedRemotePath(path)
+            if repositories.contains(where: {
+                $0.target == target && normalizedRemotePath($0.path) == normalizedPath
+            }) {
+                folderPicker?.showError(ConnectionSettingsError.repositoryAlreadyRegistered.localizedDescription)
+                return
+            }
+        } catch {
+            folderPicker?.showError(error.localizedDescription)
+            return
+        }
         let worker = Task.detached(priority: .userInitiated) {
             try RepositoryInspector().inspect(path: path, connection: connection)
         }
         registrationTask = Task { [weak self] in
             do {
-                let repository = try await worker.value
+                let repository = try await withTaskCancellationHandler {
+                    try await worker.value
+                } onCancel: {
+                    worker.cancel()
+                }
                 guard !Task.isCancelled, let self else { return }
                 var repositories = try self.repositoryStore.load()
                 guard !repositories.contains(where: {
-                    $0.path == repository.path && $0.target == repository.target
+                    normalizedRemotePath($0.path) == normalizedRemotePath(repository.path)
+                        && $0.target == repository.target
                 }) else {
                     throw ConnectionSettingsError.repositoryAlreadyRegistered
                 }
                 repositories.append(repository)
                 try self.repositoryStore.save(repositories)
+                self.registrationTask = nil
                 self.dismissFolderPicker()
                 self.closeDetails()
                 self.showRepositories(for: host)
             } catch is CancellationError {
+                self?.registrationTask = nil
                 return
             } catch {
+                self?.registrationTask = nil
                 self?.folderPicker?.showError(error.localizedDescription)
             }
         }
+    }
+
+    private func normalizedRemotePath(_ path: String) -> String {
+        var value = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        while value.count > 1, value.hasSuffix("/") {
+            value.removeLast()
+        }
+        return value
     }
 
     private func setError(_ message: String?) {
@@ -800,7 +837,9 @@ private final class ConnectionRepositoryRowView: NSView, SettingsThemeApplying {
 }
 
 @MainActor
-private final class RemoteFolderPickerModal: NSView, SettingsThemeApplying {
+private final class RemoteFolderPickerModal: NSView, SettingsThemeApplying,
+    NSTableViewDataSource, NSTableViewDelegate
+{
     var onCancel: (() -> Void)?
     var onRegister: ((String) -> Void)?
     var onFolderTreeChange: (([String: [String]]) -> Void)?
@@ -812,20 +851,22 @@ private final class RemoteFolderPickerModal: NSView, SettingsThemeApplying {
     private let closeButton = AppButton(role: .hitTarget)
     private let pathField = SettingsTextField()
     private let upButton = AppButton(role: .hitTarget)
-    private let folderDocument = SettingsDocumentView()
-    private let folderRows = NSStackView()
+    private let folderTableView = NSTableView()
     private let folderScrollView = NSScrollView()
+    private let folderStatusLabel = NSTextField(wrappingLabelWithString: "")
     private let errorLabel = NSTextField(wrappingLabelWithString: "")
     private let divider = NSView()
+    private let registrationIndicator = NSProgressIndicator()
+    private let registrationStatusLabel = NSTextField(labelWithString: "")
     private let cancelButton = ModalActionButton(title: "Cancel", primary: false)
     private let registerButton = ModalActionButton(title: "Register repository", primary: true)
     private var currentPath = "~"
     private var selectedPath: String?
     private var folderCache: [String: [String]] = [:]
+    private var folderPaths: [String] = []
     private let initialRootLoad: Task<[String: [String]], Error>?
     private var loadTask: Task<Void, Never>?
     private var folderFetchTasks: [String: Task<[String: [String]], Error>] = [:]
-    private var isSizingFolderRows = false
 
     init(
         connection: SSHConnection,
@@ -858,7 +899,7 @@ private final class RemoteFolderPickerModal: NSView, SettingsThemeApplying {
 
     override func layout() {
         super.layout()
-        sizeFolderRowsToViewport()
+        sizeFolderTableToViewport()
     }
 
     func applyTheme() {
@@ -878,10 +919,14 @@ private final class RemoteFolderPickerModal: NSView, SettingsThemeApplying {
         upButton.applyTheme()
         cancelButton.applyTheme()
         registerButton.applyTheme()
-        folderRows.arrangedSubviews.compactMap { $0 as? SettingsThemeApplying }.forEach { $0.applyTheme() }
+        registrationStatusLabel.textColor = AppTheme.secondaryText
+        registrationStatusLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsBody)
         folderScrollView.backgroundColor = AppTheme.taskModalInputBackground
         folderScrollView.contentView.layer?.backgroundColor = AppTheme.taskModalInputBackground.cgColor
-        folderDocument.layer?.backgroundColor = AppTheme.taskModalInputBackground.cgColor
+        folderTableView.backgroundColor = AppTheme.taskModalInputBackground
+        folderStatusLabel.textColor = AppTheme.tertiaryText
+        folderStatusLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsBody)
+        folderTableView.reloadData()
     }
 
     private func installLayout() {
@@ -892,7 +937,7 @@ private final class RemoteFolderPickerModal: NSView, SettingsThemeApplying {
         card.layer?.borderWidth = 1
         card.layer?.masksToBounds = true
         addSubview(card)
-        [titleLabel, hostLabel, closeButton, pathField, upButton, folderScrollView, errorLabel, divider, cancelButton, registerButton].forEach {
+        [titleLabel, hostLabel, closeButton, pathField, upButton, folderScrollView, folderStatusLabel, errorLabel, divider, registrationIndicator, registrationStatusLabel, cancelButton, registerButton].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             card.addSubview($0)
         }
@@ -905,29 +950,35 @@ private final class RemoteFolderPickerModal: NSView, SettingsThemeApplying {
         pathField.delegate = self
         pathField.target = self
         pathField.action = #selector(openTypedPath)
-        folderDocument.translatesAutoresizingMaskIntoConstraints = true
-        folderDocument.wantsLayer = true
-        folderRows.translatesAutoresizingMaskIntoConstraints = false
-        folderRows.orientation = .vertical
-        folderRows.alignment = .leading
-        folderRows.spacing = 0
-        folderDocument.addSubview(folderRows)
+        pathField.placeholderString = "~/path/to/repository"
+        let column = NSTableColumn(identifier: RemoteFolderPickerRow.reuseIdentifier)
+        folderTableView.addTableColumn(column)
+        folderTableView.headerView = nil
+        folderTableView.delegate = self
+        folderTableView.dataSource = self
+        folderTableView.rowHeight = 46
+        folderTableView.intercellSpacing = .zero
+        folderTableView.selectionHighlightStyle = .none
+        folderTableView.focusRingType = .none
+        folderTableView.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
+        folderTableView.autoresizingMask = [.width]
         folderScrollView.drawsBackground = true
         folderScrollView.borderType = .noBorder
         folderScrollView.hasVerticalScroller = true
+        folderScrollView.hasHorizontalScroller = false
         folderScrollView.autohidesScrollers = true
         folderScrollView.wantsLayer = true
         folderScrollView.contentView.wantsLayer = true
-        folderScrollView.contentView.postsBoundsChangedNotifications = true
         folderScrollView.layer?.cornerRadius = SettingsLayout.compactRowCornerRadius
         folderScrollView.layer?.masksToBounds = true
-        folderScrollView.documentView = folderDocument
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(folderScrollBoundsDidChange),
-            name: NSView.boundsDidChangeNotification,
-            object: folderScrollView.contentView
-        )
+        folderScrollView.documentView = folderTableView
+        folderStatusLabel.alignment = .center
+        folderStatusLabel.isHidden = true
+        registrationIndicator.style = .spinning
+        registrationIndicator.controlSize = .small
+        registrationIndicator.isDisplayedWhenStopped = false
+        registrationIndicator.isHidden = true
+        registrationStatusLabel.isHidden = true
         cancelButton.target = self
         cancelButton.action = #selector(cancel)
         registerButton.target = self
@@ -964,6 +1015,9 @@ private final class RemoteFolderPickerModal: NSView, SettingsThemeApplying {
             folderScrollView.trailingAnchor.constraint(equalTo: pathField.trailingAnchor),
             folderScrollView.topAnchor.constraint(equalTo: pathField.bottomAnchor, constant: 14),
             folderScrollView.bottomAnchor.constraint(equalTo: errorLabel.topAnchor, constant: -10),
+            folderStatusLabel.leadingAnchor.constraint(equalTo: folderScrollView.leadingAnchor, constant: 16),
+            folderStatusLabel.trailingAnchor.constraint(equalTo: folderScrollView.trailingAnchor, constant: -16),
+            folderStatusLabel.centerYAnchor.constraint(equalTo: folderScrollView.centerYAnchor),
             errorLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             errorLabel.trailingAnchor.constraint(equalTo: pathField.trailingAnchor),
             errorLabel.bottomAnchor.constraint(equalTo: divider.topAnchor, constant: -12),
@@ -971,16 +1025,41 @@ private final class RemoteFolderPickerModal: NSView, SettingsThemeApplying {
             divider.trailingAnchor.constraint(equalTo: card.trailingAnchor),
             divider.heightAnchor.constraint(equalToConstant: 1),
             divider.bottomAnchor.constraint(equalTo: registerButton.topAnchor, constant: -12),
+            registrationIndicator.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            registrationIndicator.centerYAnchor.constraint(equalTo: registerButton.centerYAnchor),
+            registrationIndicator.widthAnchor.constraint(equalToConstant: 16),
+            registrationIndicator.heightAnchor.constraint(equalToConstant: 16),
+            registrationStatusLabel.leadingAnchor.constraint(equalTo: registrationIndicator.trailingAnchor, constant: 8),
+            registrationStatusLabel.centerYAnchor.constraint(equalTo: registerButton.centerYAnchor),
+            registrationStatusLabel.trailingAnchor.constraint(lessThanOrEqualTo: cancelButton.leadingAnchor, constant: -12),
             cancelButton.trailingAnchor.constraint(equalTo: registerButton.leadingAnchor, constant: -12),
             cancelButton.centerYAnchor.constraint(equalTo: registerButton.centerYAnchor),
             cancelButton.heightAnchor.constraint(equalToConstant: AppTheme.taskModalButtonHeight),
             registerButton.trailingAnchor.constraint(equalTo: pathField.trailingAnchor),
             registerButton.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -AppTheme.taskModalFooterBottomInset),
             registerButton.heightAnchor.constraint(equalToConstant: AppTheme.taskModalButtonHeight),
-            folderRows.leadingAnchor.constraint(equalTo: folderDocument.leadingAnchor),
-            folderRows.trailingAnchor.constraint(equalTo: folderDocument.trailingAnchor),
-            folderRows.topAnchor.constraint(equalTo: folderDocument.topAnchor),
         ])
+    }
+
+    func numberOfRows(in tableView: NSTableView) -> Int {
+        folderPaths.count
+    }
+
+    func tableView(
+        _ tableView: NSTableView,
+        viewFor tableColumn: NSTableColumn?,
+        row: Int
+    ) -> NSView? {
+        guard folderPaths.indices.contains(row) else { return nil }
+        let path = folderPaths[row]
+        let rowView = tableView.makeView(
+            withIdentifier: RemoteFolderPickerRow.reuseIdentifier,
+            owner: self
+        ) as? RemoteFolderPickerRow ?? RemoteFolderPickerRow(path: path)
+        rowView.configure(path: path, selected: path == selectedPath)
+        rowView.onSelect = { [weak self] in self?.select(path) }
+        rowView.onOpen = { [weak self] in self?.navigate(to: path) }
+        return rowView
     }
 
     private func loadFolders() {
@@ -1055,58 +1134,51 @@ private final class RemoteFolderPickerModal: NSView, SettingsThemeApplying {
     }
 
     private func showFolders(_ folders: [String]) {
-        folderRows.alphaValue = 1
-        folderRows.arrangedSubviews.forEach {
-            folderRows.removeArrangedSubview($0)
-            $0.removeFromSuperview()
-        }
-        let rows: [NSView] = folders.isEmpty
-            ? [SettingsMessageRow("No folders found here.")]
-            : folders.map { path in
-                let row = RemoteFolderPickerRow(path: path)
-                row.isSelected = path == selectedPath
-                row.onSelect = { [weak self] in
-                    self?.select(path)
-                }
-                row.onOpen = { [weak self] in
-                    self?.navigate(to: path)
-                }
-                return row
-            }
-        rows.forEach {
-            folderRows.addArrangedSubview($0)
-            $0.widthAnchor.constraint(equalTo: folderRows.widthAnchor).isActive = true
-        }
-        applyTheme()
-        layoutSubtreeIfNeeded()
-        sizeFolderRowsToViewport()
+        folderPaths = folders
+        folderStatusLabel.stringValue = folders.isEmpty ? "No folders found here." : ""
+        folderStatusLabel.isHidden = !folders.isEmpty
+        folderTableView.reloadData()
+        sizeFolderTableToViewport()
         folderScrollView.contentView.scroll(to: .zero)
         folderScrollView.reflectScrolledClipView(folderScrollView.contentView)
     }
 
     private func showLoading() {
-        guard folderRows.arrangedSubviews.isEmpty else {
-            folderRows.alphaValue = 0.45
-            return
-        }
-        replaceFolderRows(with: [SettingsMessageRow("Loading folders…")])
+        folderPaths = []
+        folderStatusLabel.stringValue = "Loading folders…"
+        folderStatusLabel.isHidden = false
+        folderTableView.reloadData()
+        sizeFolderTableToViewport()
     }
 
-    private func replaceFolderRows(with rows: [NSView]) {
-        folderRows.arrangedSubviews.forEach {
-            folderRows.removeArrangedSubview($0)
-            $0.removeFromSuperview()
-        }
-        rows.forEach {
-            folderRows.addArrangedSubview($0)
-            $0.widthAnchor.constraint(equalTo: folderRows.widthAnchor).isActive = true
-        }
-        needsLayout = true
-    }
-
-    private func navigate(to path: String) {
-        selectedPath = nil
+    func beginRegistration() {
+        errorLabel.isHidden = true
+        folderStatusLabel.isHidden = true
+        registrationStatusLabel.stringValue = "Checking repository…"
+        registrationStatusLabel.isHidden = false
+        registrationIndicator.isHidden = false
+        registrationIndicator.startAnimation(nil)
+        registerButton.title = "Registering…"
         registerButton.isEnabled = false
+        pathField.isEnabled = false
+        upButton.isEnabled = false
+        folderTableView.isEnabled = false
+    }
+
+    private func endRegistration() {
+        registrationIndicator.stopAnimation(nil)
+        registrationIndicator.isHidden = true
+        registrationStatusLabel.isHidden = true
+        registerButton.title = "Register repository"
+        registerButton.isEnabled = selectedPath != nil
+        pathField.isEnabled = true
+        upButton.isEnabled = true
+        folderTableView.isEnabled = true
+    }
+
+    private func navigate(to path: String, selecting: Bool = false) {
+        selectedPath = selecting ? path : nil
+        registerButton.isEnabled = selecting
         currentPath = path
         loadFolders()
     }
@@ -1114,35 +1186,29 @@ private final class RemoteFolderPickerModal: NSView, SettingsThemeApplying {
     private func select(_ path: String) {
         selectedPath = path
         registerButton.isEnabled = true
-        folderRows.arrangedSubviews.compactMap { $0 as? RemoteFolderPickerRow }.forEach {
-            $0.isSelected = $0.path == path
-        }
+        folderTableView.reloadData()
         prefetch(path)
     }
 
-    private func sizeFolderRowsToViewport() {
-        guard !isSizingFolderRows else { return }
+    private func sizeFolderTableToViewport() {
         let viewport = folderScrollView.contentView.bounds.size
         guard viewport.width > 0, viewport.height > 0 else { return }
-        isSizingFolderRows = true
-        defer { isSizingFolderRows = false }
-        folderDocument.setFrameSize(NSSize(width: viewport.width, height: max(1, viewport.height)))
-        folderDocument.layoutSubtreeIfNeeded()
-        let height = max(folderRows.frame.maxY, viewport.height)
-        folderDocument.setFrameSize(NSSize(width: viewport.width, height: height))
-    }
+        let contentHeight = CGFloat(folderPaths.count) * folderTableView.rowHeight
+        let shouldScroll = contentHeight > viewport.height
 
-    private func refreshFolderRowHoverStates() {
-        folderRows.arrangedSubviews.compactMap { $0 as? RemoteFolderPickerRow }.forEach {
-            $0.refreshHoverState()
-        }
-    }
+        folderScrollView.hasVerticalScroller = shouldScroll
+        folderScrollView.verticalScrollElasticity = shouldScroll ? .automatic : .none
 
-    @objc private func folderScrollBoundsDidChange() {
-        refreshFolderRowHoverStates()
+        let contentWidth = folderScrollView.contentView.bounds.width
+        let height = max(folderScrollView.contentView.bounds.height, contentHeight)
+        folderTableView.setFrameSize(NSSize(width: contentWidth, height: height))
+        folderTableView.tableColumns.first?.width = contentWidth
     }
 
     func showError(_ message: String) {
+        endRegistration()
+        folderStatusLabel.isHidden = true
+        folderTableView.reloadData()
         errorLabel.stringValue = message
         errorLabel.isHidden = false
     }
@@ -1155,7 +1221,7 @@ private final class RemoteFolderPickerModal: NSView, SettingsThemeApplying {
     @objc private func openTypedPath() {
         let path = pathField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !path.isEmpty else { return }
-        navigate(to: path)
+        navigate(to: path, selecting: true)
     }
 
     @objc private func registerCurrentFolder() {
@@ -1174,7 +1240,9 @@ extension RemoteFolderPickerModal: NSTextFieldDelegate {
 
 @MainActor
 private final class RemoteFolderPickerRow: AppHoverView, SettingsThemeApplying {
-    let path: String
+    static let reuseIdentifier = NSUserInterfaceItemIdentifier("RemoteFolderPickerRow")
+
+    private(set) var path: String
     var onSelect: (() -> Void)?
     var onOpen: (() -> Void)?
     var isSelected = false {
@@ -1183,23 +1251,29 @@ private final class RemoteFolderPickerRow: AppHoverView, SettingsThemeApplying {
     private let icon = NSImageView()
     private let nameLabel: NSTextField
     private let button = AppButton(role: .hitTarget)
+    private let openButton = AppButton(role: .hitTarget)
 
     init(path: String) {
         self.path = path
         nameLabel = NSTextField(labelWithString: URL(fileURLWithPath: path).lastPathComponent)
         super.init(frame: .zero)
+        identifier = Self.reuseIdentifier
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
         layer?.cornerRadius = SettingsLayout.compactRowCornerRadius
         toolTip = path
         icon.image = NSImage(systemSymbolName: "folder", accessibilityDescription: "Folder")
         icon.imageScaling = .scaleProportionallyDown
-        [icon, nameLabel, button].forEach {
+        openButton.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)
+        openButton.imageScaling = .scaleProportionallyDown
+        [icon, nameLabel, button, openButton].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             addSubview($0)
         }
         button.target = self
         button.action = #selector(activate)
+        openButton.target = self
+        openButton.action = #selector(openFolder)
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: 46),
             icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
@@ -1208,9 +1282,13 @@ private final class RemoteFolderPickerRow: AppHoverView, SettingsThemeApplying {
             icon.heightAnchor.constraint(equalToConstant: 18),
             nameLabel.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 14),
             nameLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            nameLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            nameLabel.trailingAnchor.constraint(equalTo: openButton.leadingAnchor, constant: -8),
+            openButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            openButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            openButton.widthAnchor.constraint(equalToConstant: 28),
+            openButton.heightAnchor.constraint(equalToConstant: 32),
             button.leadingAnchor.constraint(equalTo: leadingAnchor),
-            button.trailingAnchor.constraint(equalTo: trailingAnchor),
+            button.trailingAnchor.constraint(equalTo: openButton.leadingAnchor),
             button.topAnchor.constraint(equalTo: topAnchor),
             button.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
@@ -1220,6 +1298,16 @@ private final class RemoteFolderPickerRow: AppHoverView, SettingsThemeApplying {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
 
+    func configure(path: String, selected: Bool) {
+        self.path = path
+        let name = URL(fileURLWithPath: path).lastPathComponent
+        nameLabel.stringValue = name
+        toolTip = path
+        button.setAccessibilityLabel("Select \(name)")
+        openButton.setAccessibilityLabel("Open \(name)")
+        isSelected = selected
+    }
+
     func applyTheme() {
         let appearance = AppTheme.buttonAppearance(
             role: .segmented,
@@ -1228,6 +1316,9 @@ private final class RemoteFolderPickerRow: AppHoverView, SettingsThemeApplying {
         )
         layer?.backgroundColor = appearance.background.cgColor
         icon.contentTintColor = AppTheme.tertiaryText
+        button.applyTheme()
+        openButton.applyTheme()
+        openButton.isVisuallySelected = isSelected
         nameLabel.textColor = isSelected ? appearance.foreground : AppTheme.primaryText
         nameLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsHeading, weight: 550)
     }
@@ -1240,6 +1331,7 @@ private final class RemoteFolderPickerRow: AppHoverView, SettingsThemeApplying {
             onSelect?()
         }
     }
+    @objc private func openFolder() { onOpen?() }
 }
 
 @MainActor

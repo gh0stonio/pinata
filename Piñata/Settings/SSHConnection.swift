@@ -1046,13 +1046,7 @@ struct RemoteDirectoryInspector: Sendable {
 
         let process = SSHCommand.makeProcess(
             connection: connection,
-            command: [
-                "find", path,
-                "-mindepth", "1",
-                "-maxdepth", "1",
-                "-type", "d",
-                "-print0",
-            ],
+            command: ["sh", "-lc", Self.directoryListingScript(path: path)],
             reuseConnection: true
         )
         process.standardOutput = output
@@ -1091,10 +1085,16 @@ struct RemoteDirectoryInspector: Sendable {
         return [path: directories]
     }
 
+    static func directoryListingScript(path: String) -> String {
+        let root = SSHCommand.shellQuote(path)
+        return "root=\(root); if [ ! -d \"$root\" ]; then printf 'Remote folder is unavailable.\\n' >&2; exit 1; fi; for entry in \"$root\"/* \"$root\"/.[!.]* \"$root\"/..?*; do [ -d \"$entry\" ] && [ ! -L \"$entry\" ] || continue; printf '%s\\0' \"$entry\"; done"
+    }
+
     static func parseDirectories(_ output: String) -> [String] {
-        sortDirectories(output.split { $0 == "\0" || $0.isNewline }
-            .map(String.init)
-            .filter { !$0.isEmpty })
+        let paths = output.contains("\0")
+            ? output.split(separator: "\0", omittingEmptySubsequences: true).map(String.init)
+            : output.split(whereSeparator: \.isNewline).map(String.init)
+        return sortDirectories(paths.filter { !$0.isEmpty })
     }
 
     static func parseDirectoryTree(_ output: String, root: String) -> [String: [String]] {
