@@ -2,6 +2,12 @@ import AppKit
 
 @MainActor
 final class ConnectionsSettingsView: NSView, SettingsPageContent {
+    private static let folderCacheLifetime: TimeInterval = 30
+    private static var sharedFolderTrees: [UUID: [String: [String]]] = [:]
+    private static var sharedFolderWarmTasks: [UUID: Task<[String: [String]], Error>] = [:]
+    private static var sharedFolderWarmDates: [UUID: Date] = [:]
+
+    private let connectionStatusMonitor: SSHConnectionStatusMonitor
     private let connectionStore = SSHConnectionStore()
     private let repositoryStore = RepositoryRegistryStore()
     private let page = SettingsSplitPageView()
@@ -10,14 +16,20 @@ final class ConnectionsSettingsView: NSView, SettingsPageContent {
     private let errorLabel = NSTextField(wrappingLabelWithString: "")
     private var connections: [SSHConnection] = []
     private var configuredHosts: [SSHConfigHost] = []
+    private var connectionRows: [String: ConnectionRowView] = [:]
     private var detailView: ConnectionRepositoriesView?
     private var folderPicker: RemoteFolderPickerModal?
+    private var statusObserverID: UUID?
     private var registrationTask: Task<Void, Never>?
     private var folderWarmTasks: [UUID: Task<[String: [String]], Error>] = [:]
     private var folderTrees: [UUID: [String: [String]]] = [:]
 
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
+    init(connectionStatusMonitor: SSHConnectionStatusMonitor) {
+        self.connectionStatusMonitor = connectionStatusMonitor
+        super.init(frame: .zero)
+        statusObserverID = connectionStatusMonitor.addObserver { [weak self] in
+            self?.refreshConnectionStatuses()
+        }
         translatesAutoresizingMaskIntoConstraints = false
         installLayout()
         reloadConnections()
@@ -27,6 +39,15 @@ final class ConnectionsSettingsView: NSView, SettingsPageContent {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is unavailable")
+    }
+
+    deinit {
+        if let statusObserverID {
+            let monitor = connectionStatusMonitor
+            Task { @MainActor in
+                monitor.removeObserver(statusObserverID)
+            }
+        }
     }
 
     func scrollToTop() {
@@ -97,18 +118,26 @@ final class ConnectionsSettingsView: NSView, SettingsPageContent {
             configuredHosts = []
             loadError = loadError ?? "Could not read ~/.ssh/config: \(error.localizedDescription)"
         }
+        connectionStatusMonitor.sync(connections)
+        connectionStatusMonitor.refresh()
         setError(loadError)
 
         hostRows.arrangedSubviews.forEach {
             hostRows.removeArrangedSubview($0)
             $0.removeFromSuperview()
         }
+        connectionRows = [:]
         let rows: [NSView] = configuredHosts.isEmpty
             ? [SettingsMessageRow("No remote SSH hosts found in ~/.ssh/config.")]
             : configuredHosts.map { host in
-                let row = ConnectionRowView(host: host, connection: connection(for: host))
+                let row = ConnectionRowView(
+                    host: host,
+                    connection: connection(for: host),
+                    status: status(for: host)
+                )
                 row.onToggle = { [weak self] enabled in self?.setEnabled(enabled, for: host) }
                 row.onRepositories = { [weak self] in self?.showRepositories(for: host) }
+                connectionRows[host.alias] = row
                 return row
             }
         rows.forEach {
@@ -121,6 +150,26 @@ final class ConnectionsSettingsView: NSView, SettingsPageContent {
 
     private func connection(for host: SSHConfigHost) -> SSHConnection? {
         connections.first { $0.host == host.alias }
+    }
+
+    private func status(for host: SSHConfigHost) -> SSHConnectionStatus {
+        connection(for: host).map { connectionStatusMonitor.status(for: $0.id) } ?? .disabled
+    }
+
+    private func refreshConnectionStatuses() {
+        connectionRows.forEach { alias, row in
+            guard let host = configuredHosts.first(where: { $0.alias == alias }) else { return }
+            row.update(
+                connection: connection(for: host),
+                status: status(for: host)
+            )
+        }
+        if let detailView,
+           let host = configuredHosts.first(where: { $0.alias == detailView.hostAlias }),
+           let connection = connection(for: host)
+        {
+            detailView.update(status: connectionStatusMonitor.status(for: connection.id))
+        }
     }
 
     private func setEnabled(_ enabled: Bool, for host: SSHConfigHost) {
@@ -146,7 +195,12 @@ final class ConnectionsSettingsView: NSView, SettingsPageContent {
             guard case .ssh(let connectionID) = $0.target else { return false }
             return connectionID == connection?.id
         } ?? []
-        let detail = ConnectionRepositoriesView(host: host, connection: connection, repositories: repositories)
+        let detail = ConnectionRepositoriesView(
+            host: host,
+            connection: connection,
+            repositories: repositories,
+            status: connection.map { connectionStatusMonitor.status(for: $0.id) } ?? .disabled
+        )
         detail.onBack = { [weak self] in self?.closeDetails() }
         detail.onBrowse = { [weak self] in self?.presentFolderPicker(for: host) }
         addSubview(detail)
@@ -176,9 +230,13 @@ final class ConnectionsSettingsView: NSView, SettingsPageContent {
             initialFolderTree: folderTrees[connection.id] ?? [:],
             initialRootLoad: folderWarmTasks[connection.id]
         )
-        picker.onCancel = { [weak self] in self?.dismissFolderPicker() }
+        picker.onCancel = { [weak self] in self?.cancelFolderPicker() }
         picker.onFolderTreeChange = { [weak self] tree in
             self?.folderTrees[connection.id] = tree
+            Self.sharedFolderTrees[connection.id] = tree
+            if tree["~"] != nil {
+                Self.sharedFolderWarmDates[connection.id] = Date()
+            }
         }
         picker.onRegister = { [weak self] path in
             self?.registerRemoteRepository(at: path, for: host, connection: connection)
@@ -199,18 +257,40 @@ final class ConnectionsSettingsView: NSView, SettingsPageContent {
 
     private func warmEnabledConnections() {
         for connection in connections where connection.isEnabled {
-            guard folderTrees[connection.id]?["~"] == nil,
-                  folderWarmTasks[connection.id] == nil
-            else { continue }
+            if let cached = Self.sharedFolderTrees[connection.id] {
+                folderTrees[connection.id] = cached
+            }
+            let cacheIsFresh = Self.sharedFolderWarmDates[connection.id].map {
+                Date().timeIntervalSince($0) < Self.folderCacheLifetime
+            } ?? false
+            guard !cacheIsFresh, folderWarmTasks[connection.id] == nil else { continue }
+            if let sharedTask = Self.sharedFolderWarmTasks[connection.id] {
+                folderWarmTasks[connection.id] = sharedTask
+                observeFolderWarm(sharedTask, for: connection.id)
+                continue
+            }
             let worker = Task.detached(priority: .userInitiated) {
                 try RemoteDirectoryInspector().directoryTree(at: "~", connection: connection)
             }
+            Self.sharedFolderWarmTasks[connection.id] = worker
             folderWarmTasks[connection.id] = worker
-            Task { [weak self] in
-                defer { self?.folderWarmTasks[connection.id] = nil }
-                guard let tree = try? await worker.value, !Task.isCancelled else { return }
-                self?.folderTrees[connection.id] = tree
+            observeFolderWarm(worker, for: connection.id)
+        }
+    }
+
+    private func observeFolderWarm(
+        _ worker: Task<[String: [String]], Error>,
+        for connectionID: UUID
+    ) {
+        Task { [weak self] in
+            defer {
+                Self.sharedFolderWarmTasks[connectionID] = nil
+                self?.folderWarmTasks[connectionID] = nil
             }
+            guard let tree = try? await worker.value, !Task.isCancelled else { return }
+            Self.sharedFolderTrees[connectionID] = tree
+            Self.sharedFolderWarmDates[connectionID] = Date()
+            self?.folderTrees[connectionID] = tree
         }
     }
 
@@ -219,36 +299,73 @@ final class ConnectionsSettingsView: NSView, SettingsPageContent {
         folderPicker = nil
     }
 
+    private func cancelFolderPicker() {
+        registrationTask?.cancel()
+        registrationTask = nil
+        dismissFolderPicker()
+    }
+
     private func registerRemoteRepository(
         at path: String,
         for host: SSHConfigHost,
         connection: SSHConnection
     ) {
         registrationTask?.cancel()
+        folderPicker?.beginRegistration()
+        do {
+            let repositories = try repositoryStore.load()
+            let target = RepositoryTarget.ssh(connection.id)
+            let normalizedPath = normalizedRemotePath(path)
+            if repositories.contains(where: {
+                $0.target == target && normalizedRemotePath($0.path) == normalizedPath
+            }) {
+                folderPicker?.showError(ConnectionSettingsError.repositoryAlreadyRegistered.localizedDescription)
+                return
+            }
+        } catch {
+            folderPicker?.showError(error.localizedDescription)
+            return
+        }
         let worker = Task.detached(priority: .userInitiated) {
             try RepositoryInspector().inspect(path: path, connection: connection)
         }
         registrationTask = Task { [weak self] in
             do {
-                let repository = try await worker.value
+                let repository = try await withTaskCancellationHandler {
+                    try await worker.value
+                } onCancel: {
+                    worker.cancel()
+                }
                 guard !Task.isCancelled, let self else { return }
                 var repositories = try self.repositoryStore.load()
                 guard !repositories.contains(where: {
-                    $0.path == repository.path && $0.target == repository.target
+                    normalizedRemotePath($0.path) == normalizedRemotePath(repository.path)
+                        && $0.target == repository.target
                 }) else {
                     throw ConnectionSettingsError.repositoryAlreadyRegistered
                 }
                 repositories.append(repository)
                 try self.repositoryStore.save(repositories)
+                self.registrationTask = nil
                 self.dismissFolderPicker()
                 self.closeDetails()
                 self.showRepositories(for: host)
             } catch is CancellationError {
+                self?.registrationTask = nil
                 return
             } catch {
+                self?.registrationTask = nil
                 self?.folderPicker?.showError(error.localizedDescription)
             }
         }
+    }
+
+    private func normalizedRemotePath(_ path: String) -> String {
+        var value = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        while value.count > 1, value.hasSuffix("/") {
+            value.removeLast()
+        }
+        return value
     }
 
     private func setError(_ message: String?) {
@@ -268,6 +385,126 @@ private enum ConnectionSettingsError: LocalizedError {
 }
 
 @MainActor
+private final class SSHStatusView: NSView, SettingsThemeApplying {
+    var status: SSHConnectionStatus {
+        didSet { applyTheme() }
+    }
+
+    private let indicator: SSHConnectionStatusIndicator
+    private let label: NSTextField
+
+    init(status: SSHConnectionStatus) {
+        self.status = status
+        indicator = SSHConnectionStatusIndicator(status: status)
+        label = NSTextField(labelWithString: status.label)
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(indicator)
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 18),
+            indicator.leadingAnchor.constraint(equalTo: leadingAnchor),
+            indicator.centerYAnchor.constraint(equalTo: centerYAnchor),
+            label.leadingAnchor.constraint(equalTo: indicator.trailingAnchor, constant: 7),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+        applyTheme()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+
+    func applyTheme() {
+        let color = AppTheme.connectionStatusColor(status)
+        indicator.status = status
+        label.stringValue = status.label
+        label.textColor = color
+        label.font = AppTheme.font(ofSize: AppTheme.typography.settingsBody, weight: 550)
+        toolTip = status.label
+    }
+}
+
+@MainActor
+private final class ConnectionToggleControl: NSControl {
+    var isOn = false {
+        didSet {
+            setAccessibilityValue(isOn ? "On" : "Off")
+            needsDisplay = true
+        }
+    }
+
+    var onChange: ((Bool) -> Void)?
+
+    override var isEnabled: Bool {
+        didSet { needsDisplay = true }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        translatesAutoresizingMaskIntoConstraints = false
+        setAccessibilityRole(.checkBox)
+        focusRingType = .none
+        setAccessibilityValue("Off")
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+
+    override var acceptsFirstResponder: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let track = bounds.insetBy(dx: 1, dy: 3)
+        let trackColor = isEnabled
+            ? isOn ? AppTheme.panelAccentIcon.withAlphaComponent(0.68) : AppTheme.controlBackground
+            : AppTheme.border
+        trackColor.setFill()
+        NSBezierPath(roundedRect: track, xRadius: track.height / 2, yRadius: track.height / 2).fill()
+
+        if !isOn {
+            AppTheme.border.setStroke()
+            let border = NSBezierPath(
+                roundedRect: track,
+                xRadius: track.height / 2,
+                yRadius: track.height / 2
+            )
+            border.lineWidth = 1
+            border.stroke()
+        }
+
+        let diameter = track.height - 6
+        let knobX = isOn ? track.maxX - diameter - 3 : track.minX + 3
+        let knob = NSRect(
+            x: knobX,
+            y: track.minY + 3,
+            width: diameter,
+            height: diameter
+        )
+        (isEnabled ? AppTheme.secondaryText : AppTheme.tertiaryText).setFill()
+        NSBezierPath(ovalIn: knob).fill()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard isEnabled else { return }
+        toggle()
+    }
+
+    override func keyDown(with event: NSEvent) {
+        guard isEnabled, event.keyCode == 49 else {
+            super.keyDown(with: event)
+            return
+        }
+        toggle()
+    }
+
+    private func toggle() {
+        isOn.toggle()
+        onChange?(isOn)
+    }
+}
+
+@MainActor
 private final class ConnectionRowView: AppHoverView, SettingsThemeApplying {
     var onToggle: ((Bool) -> Void)?
     var onRepositories: (() -> Void)?
@@ -276,12 +513,14 @@ private final class ConnectionRowView: AppHoverView, SettingsThemeApplying {
     private let nameLabel: NSTextField
     private let detailLabel: NSTextField
     private let chevron = NSImageView()
-    private let toggle = NSSwitch()
+    private let statusView: SSHStatusView
+    private let toggle = ConnectionToggleControl()
     private let repositoriesButton = AppButton(role: .hitTarget)
 
-    init(host: SSHConfigHost, connection: SSHConnection?) {
+    init(host: SSHConfigHost, connection: SSHConnection?, status: SSHConnectionStatus) {
         nameLabel = NSTextField(labelWithString: host.alias)
         detailLabel = NSTextField(labelWithString: host.detail)
+        statusView = SSHStatusView(status: status)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
@@ -291,31 +530,34 @@ private final class ConnectionRowView: AppHoverView, SettingsThemeApplying {
         icon.imageScaling = .scaleProportionallyDown
         chevron.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)
         chevron.imageScaling = .scaleProportionallyDown
-        toggle.state = connection?.isEnabled == true ? .on : .off
-        toggle.controlSize = .small
-        toggle.target = self
-        toggle.action = #selector(toggleChanged)
+        toggle.isOn = connection?.isEnabled == true
+        toggle.onChange = { [weak self] enabled in self?.onToggle?(enabled) }
         toggle.setAccessibilityLabel("Enable \(host.alias)")
         repositoriesButton.target = self
         repositoriesButton.action = #selector(showRepositories)
         repositoriesButton.setAccessibilityLabel("View repositories on \(host.alias)")
-        [icon, nameLabel, detailLabel, chevron, toggle, repositoriesButton].forEach {
+        [icon, nameLabel, detailLabel, statusView, chevron, toggle, repositoriesButton].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             addSubview($0)
         }
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: SettingsLayout.compactRowHeight),
+            heightAnchor.constraint(equalToConstant: 58),
             icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: SettingsLayout.compactContentInset),
             icon.centerYAnchor.constraint(equalTo: centerYAnchor),
             icon.widthAnchor.constraint(equalToConstant: 16),
             icon.heightAnchor.constraint(equalToConstant: 16),
             nameLabel.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: SettingsLayout.compactContentInset),
-            nameLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            nameLabel.centerYAnchor.constraint(equalTo: centerYAnchor, constant: -9),
             detailLabel.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: SettingsLayout.compactMetadataGap),
             detailLabel.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -12),
-            detailLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            detailLabel.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
+            statusView.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
+            statusView.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 3),
+            statusView.widthAnchor.constraint(equalToConstant: 104),
             toggle.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -SettingsLayout.compactContentInset),
             toggle.centerYAnchor.constraint(equalTo: centerYAnchor),
+            toggle.widthAnchor.constraint(equalToConstant: 44),
+            toggle.heightAnchor.constraint(equalToConstant: 24),
             chevron.trailingAnchor.constraint(equalTo: toggle.leadingAnchor, constant: -16),
             chevron.centerYAnchor.constraint(equalTo: centerYAnchor),
             chevron.widthAnchor.constraint(equalToConstant: SettingsLayout.compactChevronWidth),
@@ -343,10 +585,15 @@ private final class ConnectionRowView: AppHoverView, SettingsThemeApplying {
         detailLabel.font = SettingsLayout.valueFont
         icon.contentTintColor = AppTheme.tertiaryText
         chevron.contentTintColor = AppTheme.tertiaryText
+        statusView.applyTheme()
+    }
+
+    func update(connection: SSHConnection?, status: SSHConnectionStatus) {
+        toggle.isOn = connection?.isEnabled == true
+        statusView.status = status
     }
 
     override func hoverStateDidChange() { applyTheme() }
-    @objc private func toggleChanged() { onToggle?(toggle.state == .on) }
     @objc private func showRepositories() { onRepositories?() }
 }
 
@@ -355,15 +602,24 @@ private final class ConnectionRepositoriesView: NSView, SettingsThemeApplying {
     var onBack: (() -> Void)?
     var onBrowse: (() -> Void)?
 
+    let hostAlias: String
     private let header: ConnectionHeaderView
     private let page = SettingsSplitPageView(topPadding: SettingsLayout.detailPageTopPadding)
     private let connectionDetails: NSStackView
     private let repositoryContent = NSStackView()
     private let repositoryRows = NSStackView()
     private let browseAction: RemoteRepositoryBrowseActionView
+    private let statusView: SSHStatusView
 
-    init(host: SSHConfigHost, connection: SSHConnection?, repositories: [RegisteredRepository]) {
+    init(
+        host: SSHConfigHost,
+        connection: SSHConnection?,
+        repositories: [RegisteredRepository],
+        status: SSHConnectionStatus
+    ) {
+        hostAlias = host.alias
         header = ConnectionHeaderView(title: host.alias)
+        statusView = SSHStatusView(status: status)
         connectionDetails = settingsRowStack([
             SettingsRowView(
                 title: "Alias",
@@ -395,6 +651,13 @@ private final class ConnectionRepositoriesView: NSView, SettingsThemeApplying {
                 control: SettingsValueLabel(host.identityFile ?? "SSH default"),
                 controlHeight: nil
             ),
+            SettingsRowView(
+                title: "Status",
+                description: "Latest non-interactive SSH health check.",
+                control: statusView,
+                controlHeight: 18,
+                minimumHeight: 44
+            ),
         ])
         browseAction = RemoteRepositoryBrowseActionView(enabled: connection?.isEnabled == true)
         super.init(frame: .zero)
@@ -411,7 +674,13 @@ private final class ConnectionRepositoriesView: NSView, SettingsThemeApplying {
         header.applyTheme()
         page.applyTheme()
         browseAction.applyTheme()
+        statusView.applyTheme()
         repositoryRows.arrangedSubviews.compactMap { $0 as? SettingsThemeApplying }.forEach { $0.applyTheme() }
+    }
+
+    func update(status: SSHConnectionStatus) {
+        statusView.status = status
+        applyTheme()
     }
 
     private func installLayout(connection: SSHConnection?, repositories: [RegisteredRepository]) {
@@ -544,6 +813,7 @@ private final class ConnectionRepositoryRowView: NSView, SettingsThemeApplying {
             icon.heightAnchor.constraint(equalToConstant: SettingsLayout.compactIconSize),
             nameLabel.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: SettingsLayout.compactContentInset),
             nameLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            nameLabel.widthAnchor.constraint(equalToConstant: 180),
             metadataLabel.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: SettingsLayout.compactMetadataGap),
             metadataLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -SettingsLayout.compactContentInset),
             metadataLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -559,12 +829,17 @@ private final class ConnectionRepositoryRowView: NSView, SettingsThemeApplying {
         nameLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsHeading, weight: 600)
         metadataLabel.textColor = AppTheme.tertiaryText
         metadataLabel.font = SettingsLayout.valueFont
+        metadataLabel.alignment = .right
+        metadataLabel.lineBreakMode = .byTruncatingMiddle
+        metadataLabel.toolTip = metadataLabel.stringValue
         icon.contentTintColor = AppTheme.tertiaryText
     }
 }
 
 @MainActor
-private final class RemoteFolderPickerModal: NSView, SettingsThemeApplying {
+private final class RemoteFolderPickerModal: NSView, SettingsThemeApplying,
+    NSTableViewDataSource, NSTableViewDelegate
+{
     var onCancel: (() -> Void)?
     var onRegister: ((String) -> Void)?
     var onFolderTreeChange: (([String: [String]]) -> Void)?
@@ -576,20 +851,22 @@ private final class RemoteFolderPickerModal: NSView, SettingsThemeApplying {
     private let closeButton = AppButton(role: .hitTarget)
     private let pathField = SettingsTextField()
     private let upButton = AppButton(role: .hitTarget)
-    private let folderDocument = SettingsDocumentView()
-    private let folderRows = NSStackView()
+    private let folderTableView = NSTableView()
     private let folderScrollView = NSScrollView()
+    private let folderStatusLabel = NSTextField(wrappingLabelWithString: "")
     private let errorLabel = NSTextField(wrappingLabelWithString: "")
     private let divider = NSView()
+    private let registrationIndicator = NSProgressIndicator()
+    private let registrationStatusLabel = NSTextField(labelWithString: "")
     private let cancelButton = ModalActionButton(title: "Cancel", primary: false)
     private let registerButton = ModalActionButton(title: "Register repository", primary: true)
     private var currentPath = "~"
     private var selectedPath: String?
     private var folderCache: [String: [String]] = [:]
+    private var folderPaths: [String] = []
     private let initialRootLoad: Task<[String: [String]], Error>?
     private var loadTask: Task<Void, Never>?
     private var folderFetchTasks: [String: Task<[String: [String]], Error>] = [:]
-    private var isSizingFolderRows = false
 
     init(
         connection: SSHConnection,
@@ -622,7 +899,7 @@ private final class RemoteFolderPickerModal: NSView, SettingsThemeApplying {
 
     override func layout() {
         super.layout()
-        sizeFolderRowsToViewport()
+        sizeFolderTableToViewport()
     }
 
     func applyTheme() {
@@ -642,10 +919,14 @@ private final class RemoteFolderPickerModal: NSView, SettingsThemeApplying {
         upButton.applyTheme()
         cancelButton.applyTheme()
         registerButton.applyTheme()
-        folderRows.arrangedSubviews.compactMap { $0 as? SettingsThemeApplying }.forEach { $0.applyTheme() }
+        registrationStatusLabel.textColor = AppTheme.secondaryText
+        registrationStatusLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsBody)
         folderScrollView.backgroundColor = AppTheme.taskModalInputBackground
         folderScrollView.contentView.layer?.backgroundColor = AppTheme.taskModalInputBackground.cgColor
-        folderDocument.layer?.backgroundColor = AppTheme.taskModalInputBackground.cgColor
+        folderTableView.backgroundColor = AppTheme.taskModalInputBackground
+        folderStatusLabel.textColor = AppTheme.tertiaryText
+        folderStatusLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsBody)
+        folderTableView.reloadData()
     }
 
     private func installLayout() {
@@ -656,7 +937,7 @@ private final class RemoteFolderPickerModal: NSView, SettingsThemeApplying {
         card.layer?.borderWidth = 1
         card.layer?.masksToBounds = true
         addSubview(card)
-        [titleLabel, hostLabel, closeButton, pathField, upButton, folderScrollView, errorLabel, divider, cancelButton, registerButton].forEach {
+        [titleLabel, hostLabel, closeButton, pathField, upButton, folderScrollView, folderStatusLabel, errorLabel, divider, registrationIndicator, registrationStatusLabel, cancelButton, registerButton].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             card.addSubview($0)
         }
@@ -669,29 +950,35 @@ private final class RemoteFolderPickerModal: NSView, SettingsThemeApplying {
         pathField.delegate = self
         pathField.target = self
         pathField.action = #selector(openTypedPath)
-        folderDocument.translatesAutoresizingMaskIntoConstraints = true
-        folderDocument.wantsLayer = true
-        folderRows.translatesAutoresizingMaskIntoConstraints = false
-        folderRows.orientation = .vertical
-        folderRows.alignment = .leading
-        folderRows.spacing = 0
-        folderDocument.addSubview(folderRows)
+        pathField.placeholderString = "~/path/to/repository"
+        let column = NSTableColumn(identifier: RemoteFolderPickerRow.reuseIdentifier)
+        folderTableView.addTableColumn(column)
+        folderTableView.headerView = nil
+        folderTableView.delegate = self
+        folderTableView.dataSource = self
+        folderTableView.rowHeight = 46
+        folderTableView.intercellSpacing = .zero
+        folderTableView.selectionHighlightStyle = .none
+        folderTableView.focusRingType = .none
+        folderTableView.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
+        folderTableView.autoresizingMask = [.width]
         folderScrollView.drawsBackground = true
         folderScrollView.borderType = .noBorder
         folderScrollView.hasVerticalScroller = true
+        folderScrollView.hasHorizontalScroller = false
         folderScrollView.autohidesScrollers = true
         folderScrollView.wantsLayer = true
         folderScrollView.contentView.wantsLayer = true
-        folderScrollView.contentView.postsBoundsChangedNotifications = true
         folderScrollView.layer?.cornerRadius = SettingsLayout.compactRowCornerRadius
         folderScrollView.layer?.masksToBounds = true
-        folderScrollView.documentView = folderDocument
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(folderScrollBoundsDidChange),
-            name: NSView.boundsDidChangeNotification,
-            object: folderScrollView.contentView
-        )
+        folderScrollView.documentView = folderTableView
+        folderStatusLabel.alignment = .center
+        folderStatusLabel.isHidden = true
+        registrationIndicator.style = .spinning
+        registrationIndicator.controlSize = .small
+        registrationIndicator.isDisplayedWhenStopped = false
+        registrationIndicator.isHidden = true
+        registrationStatusLabel.isHidden = true
         cancelButton.target = self
         cancelButton.action = #selector(cancel)
         registerButton.target = self
@@ -728,6 +1015,9 @@ private final class RemoteFolderPickerModal: NSView, SettingsThemeApplying {
             folderScrollView.trailingAnchor.constraint(equalTo: pathField.trailingAnchor),
             folderScrollView.topAnchor.constraint(equalTo: pathField.bottomAnchor, constant: 14),
             folderScrollView.bottomAnchor.constraint(equalTo: errorLabel.topAnchor, constant: -10),
+            folderStatusLabel.leadingAnchor.constraint(equalTo: folderScrollView.leadingAnchor, constant: 16),
+            folderStatusLabel.trailingAnchor.constraint(equalTo: folderScrollView.trailingAnchor, constant: -16),
+            folderStatusLabel.centerYAnchor.constraint(equalTo: folderScrollView.centerYAnchor),
             errorLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             errorLabel.trailingAnchor.constraint(equalTo: pathField.trailingAnchor),
             errorLabel.bottomAnchor.constraint(equalTo: divider.topAnchor, constant: -12),
@@ -735,16 +1025,41 @@ private final class RemoteFolderPickerModal: NSView, SettingsThemeApplying {
             divider.trailingAnchor.constraint(equalTo: card.trailingAnchor),
             divider.heightAnchor.constraint(equalToConstant: 1),
             divider.bottomAnchor.constraint(equalTo: registerButton.topAnchor, constant: -12),
+            registrationIndicator.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            registrationIndicator.centerYAnchor.constraint(equalTo: registerButton.centerYAnchor),
+            registrationIndicator.widthAnchor.constraint(equalToConstant: 16),
+            registrationIndicator.heightAnchor.constraint(equalToConstant: 16),
+            registrationStatusLabel.leadingAnchor.constraint(equalTo: registrationIndicator.trailingAnchor, constant: 8),
+            registrationStatusLabel.centerYAnchor.constraint(equalTo: registerButton.centerYAnchor),
+            registrationStatusLabel.trailingAnchor.constraint(lessThanOrEqualTo: cancelButton.leadingAnchor, constant: -12),
             cancelButton.trailingAnchor.constraint(equalTo: registerButton.leadingAnchor, constant: -12),
             cancelButton.centerYAnchor.constraint(equalTo: registerButton.centerYAnchor),
             cancelButton.heightAnchor.constraint(equalToConstant: AppTheme.taskModalButtonHeight),
             registerButton.trailingAnchor.constraint(equalTo: pathField.trailingAnchor),
             registerButton.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -AppTheme.taskModalFooterBottomInset),
             registerButton.heightAnchor.constraint(equalToConstant: AppTheme.taskModalButtonHeight),
-            folderRows.leadingAnchor.constraint(equalTo: folderDocument.leadingAnchor),
-            folderRows.trailingAnchor.constraint(equalTo: folderDocument.trailingAnchor),
-            folderRows.topAnchor.constraint(equalTo: folderDocument.topAnchor),
         ])
+    }
+
+    func numberOfRows(in tableView: NSTableView) -> Int {
+        folderPaths.count
+    }
+
+    func tableView(
+        _ tableView: NSTableView,
+        viewFor tableColumn: NSTableColumn?,
+        row: Int
+    ) -> NSView? {
+        guard folderPaths.indices.contains(row) else { return nil }
+        let path = folderPaths[row]
+        let rowView = tableView.makeView(
+            withIdentifier: RemoteFolderPickerRow.reuseIdentifier,
+            owner: self
+        ) as? RemoteFolderPickerRow ?? RemoteFolderPickerRow(path: path)
+        rowView.configure(path: path, selected: path == selectedPath)
+        rowView.onSelect = { [weak self] in self?.select(path) }
+        rowView.onOpen = { [weak self] in self?.navigate(to: path) }
+        return rowView
     }
 
     private func loadFolders() {
@@ -754,6 +1069,18 @@ private final class RemoteFolderPickerModal: NSView, SettingsThemeApplying {
         let path = currentPath
         if let cached = folderCache[path] {
             showFolders(cached)
+            if path == "~", let initialRootLoad {
+                loadTask = Task { [weak self] in
+                    guard let tree = try? await initialRootLoad.value,
+                          !Task.isCancelled,
+                          let self
+                    else { return }
+                    self.store(tree, for: path)
+                    if self.currentPath == path {
+                        self.showFolders(self.folderCache[path] ?? [])
+                    }
+                }
+            }
             return
         }
         showLoading()
@@ -766,9 +1093,11 @@ private final class RemoteFolderPickerModal: NSView, SettingsThemeApplying {
                 guard self.currentPath == path else { return }
                 self.showFolders(self.folderCache[path] ?? [])
             } catch is CancellationError {
+                self?.folderFetchTasks[path] = nil
                 return
             } catch {
                 guard let self, self.currentPath == path else { return }
+                self.folderFetchTasks[path] = nil
                 self.showError(error.localizedDescription)
             }
         }
@@ -788,8 +1117,13 @@ private final class RemoteFolderPickerModal: NSView, SettingsThemeApplying {
         let worker = fetchTask(for: path)
         Task { [weak self] in
             guard let self else { return }
-            guard let tree = try? await worker.value, !Task.isCancelled else { return }
-            self.store(tree, for: path)
+            do {
+                let tree = try await worker.value
+                guard !Task.isCancelled else { return }
+                self.store(tree, for: path)
+            } catch {
+                self.folderFetchTasks[path] = nil
+            }
         }
     }
 
@@ -800,58 +1134,51 @@ private final class RemoteFolderPickerModal: NSView, SettingsThemeApplying {
     }
 
     private func showFolders(_ folders: [String]) {
-        folderRows.alphaValue = 1
-        folderRows.arrangedSubviews.forEach {
-            folderRows.removeArrangedSubview($0)
-            $0.removeFromSuperview()
-        }
-        let rows: [NSView] = folders.isEmpty
-            ? [SettingsMessageRow("No folders found here.")]
-            : folders.map { path in
-                let row = RemoteFolderPickerRow(path: path)
-                row.isSelected = path == selectedPath
-                row.onSelect = { [weak self] in
-                    self?.select(path)
-                }
-                row.onOpen = { [weak self] in
-                    self?.navigate(to: path)
-                }
-                return row
-            }
-        rows.forEach {
-            folderRows.addArrangedSubview($0)
-            $0.widthAnchor.constraint(equalTo: folderRows.widthAnchor).isActive = true
-        }
-        applyTheme()
-        layoutSubtreeIfNeeded()
-        sizeFolderRowsToViewport()
+        folderPaths = folders
+        folderStatusLabel.stringValue = folders.isEmpty ? "No folders found here." : ""
+        folderStatusLabel.isHidden = !folders.isEmpty
+        folderTableView.reloadData()
+        sizeFolderTableToViewport()
         folderScrollView.contentView.scroll(to: .zero)
         folderScrollView.reflectScrolledClipView(folderScrollView.contentView)
     }
 
     private func showLoading() {
-        guard folderRows.arrangedSubviews.isEmpty else {
-            folderRows.alphaValue = 0.45
-            return
-        }
-        replaceFolderRows(with: [SettingsMessageRow("Loading folders…")])
+        folderPaths = []
+        folderStatusLabel.stringValue = "Loading folders…"
+        folderStatusLabel.isHidden = false
+        folderTableView.reloadData()
+        sizeFolderTableToViewport()
     }
 
-    private func replaceFolderRows(with rows: [NSView]) {
-        folderRows.arrangedSubviews.forEach {
-            folderRows.removeArrangedSubview($0)
-            $0.removeFromSuperview()
-        }
-        rows.forEach {
-            folderRows.addArrangedSubview($0)
-            $0.widthAnchor.constraint(equalTo: folderRows.widthAnchor).isActive = true
-        }
-        needsLayout = true
-    }
-
-    private func navigate(to path: String) {
-        selectedPath = nil
+    func beginRegistration() {
+        errorLabel.isHidden = true
+        folderStatusLabel.isHidden = true
+        registrationStatusLabel.stringValue = "Checking repository…"
+        registrationStatusLabel.isHidden = false
+        registrationIndicator.isHidden = false
+        registrationIndicator.startAnimation(nil)
+        registerButton.title = "Registering…"
         registerButton.isEnabled = false
+        pathField.isEnabled = false
+        upButton.isEnabled = false
+        folderTableView.isEnabled = false
+    }
+
+    private func endRegistration() {
+        registrationIndicator.stopAnimation(nil)
+        registrationIndicator.isHidden = true
+        registrationStatusLabel.isHidden = true
+        registerButton.title = "Register repository"
+        registerButton.isEnabled = selectedPath != nil
+        pathField.isEnabled = true
+        upButton.isEnabled = true
+        folderTableView.isEnabled = true
+    }
+
+    private func navigate(to path: String, selecting: Bool = false) {
+        selectedPath = selecting ? path : nil
+        registerButton.isEnabled = selecting
         currentPath = path
         loadFolders()
     }
@@ -859,35 +1186,29 @@ private final class RemoteFolderPickerModal: NSView, SettingsThemeApplying {
     private func select(_ path: String) {
         selectedPath = path
         registerButton.isEnabled = true
-        folderRows.arrangedSubviews.compactMap { $0 as? RemoteFolderPickerRow }.forEach {
-            $0.isSelected = $0.path == path
-        }
+        folderTableView.reloadData()
         prefetch(path)
     }
 
-    private func sizeFolderRowsToViewport() {
-        guard !isSizingFolderRows else { return }
+    private func sizeFolderTableToViewport() {
         let viewport = folderScrollView.contentView.bounds.size
         guard viewport.width > 0, viewport.height > 0 else { return }
-        isSizingFolderRows = true
-        defer { isSizingFolderRows = false }
-        folderDocument.setFrameSize(NSSize(width: viewport.width, height: max(1, viewport.height)))
-        folderDocument.layoutSubtreeIfNeeded()
-        let height = max(folderRows.frame.maxY, viewport.height)
-        folderDocument.setFrameSize(NSSize(width: viewport.width, height: height))
-    }
+        let contentHeight = CGFloat(folderPaths.count) * folderTableView.rowHeight
+        let shouldScroll = contentHeight > viewport.height
 
-    private func refreshFolderRowHoverStates() {
-        folderRows.arrangedSubviews.compactMap { $0 as? RemoteFolderPickerRow }.forEach {
-            $0.refreshHoverState()
-        }
-    }
+        folderScrollView.hasVerticalScroller = shouldScroll
+        folderScrollView.verticalScrollElasticity = shouldScroll ? .automatic : .none
 
-    @objc private func folderScrollBoundsDidChange() {
-        refreshFolderRowHoverStates()
+        let contentWidth = folderScrollView.contentView.bounds.width
+        let height = max(folderScrollView.contentView.bounds.height, contentHeight)
+        folderTableView.setFrameSize(NSSize(width: contentWidth, height: height))
+        folderTableView.tableColumns.first?.width = contentWidth
     }
 
     func showError(_ message: String) {
+        endRegistration()
+        folderStatusLabel.isHidden = true
+        folderTableView.reloadData()
         errorLabel.stringValue = message
         errorLabel.isHidden = false
     }
@@ -900,7 +1221,7 @@ private final class RemoteFolderPickerModal: NSView, SettingsThemeApplying {
     @objc private func openTypedPath() {
         let path = pathField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !path.isEmpty else { return }
-        navigate(to: path)
+        navigate(to: path, selecting: true)
     }
 
     @objc private func registerCurrentFolder() {
@@ -919,7 +1240,9 @@ extension RemoteFolderPickerModal: NSTextFieldDelegate {
 
 @MainActor
 private final class RemoteFolderPickerRow: AppHoverView, SettingsThemeApplying {
-    let path: String
+    static let reuseIdentifier = NSUserInterfaceItemIdentifier("RemoteFolderPickerRow")
+
+    private(set) var path: String
     var onSelect: (() -> Void)?
     var onOpen: (() -> Void)?
     var isSelected = false {
@@ -928,23 +1251,29 @@ private final class RemoteFolderPickerRow: AppHoverView, SettingsThemeApplying {
     private let icon = NSImageView()
     private let nameLabel: NSTextField
     private let button = AppButton(role: .hitTarget)
+    private let openButton = AppButton(role: .hitTarget)
 
     init(path: String) {
         self.path = path
         nameLabel = NSTextField(labelWithString: URL(fileURLWithPath: path).lastPathComponent)
         super.init(frame: .zero)
+        identifier = Self.reuseIdentifier
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
         layer?.cornerRadius = SettingsLayout.compactRowCornerRadius
         toolTip = path
         icon.image = NSImage(systemSymbolName: "folder", accessibilityDescription: "Folder")
         icon.imageScaling = .scaleProportionallyDown
-        [icon, nameLabel, button].forEach {
+        openButton.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)
+        openButton.imageScaling = .scaleProportionallyDown
+        [icon, nameLabel, button, openButton].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             addSubview($0)
         }
         button.target = self
         button.action = #selector(activate)
+        openButton.target = self
+        openButton.action = #selector(openFolder)
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: 46),
             icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
@@ -953,9 +1282,13 @@ private final class RemoteFolderPickerRow: AppHoverView, SettingsThemeApplying {
             icon.heightAnchor.constraint(equalToConstant: 18),
             nameLabel.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 14),
             nameLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            nameLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            nameLabel.trailingAnchor.constraint(equalTo: openButton.leadingAnchor, constant: -8),
+            openButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            openButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            openButton.widthAnchor.constraint(equalToConstant: 28),
+            openButton.heightAnchor.constraint(equalToConstant: 32),
             button.leadingAnchor.constraint(equalTo: leadingAnchor),
-            button.trailingAnchor.constraint(equalTo: trailingAnchor),
+            button.trailingAnchor.constraint(equalTo: openButton.leadingAnchor),
             button.topAnchor.constraint(equalTo: topAnchor),
             button.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
@@ -965,6 +1298,16 @@ private final class RemoteFolderPickerRow: AppHoverView, SettingsThemeApplying {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
 
+    func configure(path: String, selected: Bool) {
+        self.path = path
+        let name = URL(fileURLWithPath: path).lastPathComponent
+        nameLabel.stringValue = name
+        toolTip = path
+        button.setAccessibilityLabel("Select \(name)")
+        openButton.setAccessibilityLabel("Open \(name)")
+        isSelected = selected
+    }
+
     func applyTheme() {
         let appearance = AppTheme.buttonAppearance(
             role: .segmented,
@@ -973,6 +1316,9 @@ private final class RemoteFolderPickerRow: AppHoverView, SettingsThemeApplying {
         )
         layer?.backgroundColor = appearance.background.cgColor
         icon.contentTintColor = AppTheme.tertiaryText
+        button.applyTheme()
+        openButton.applyTheme()
+        openButton.isVisuallySelected = isSelected
         nameLabel.textColor = isSelected ? appearance.foreground : AppTheme.primaryText
         nameLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsHeading, weight: 550)
     }
@@ -985,6 +1331,7 @@ private final class RemoteFolderPickerRow: AppHoverView, SettingsThemeApplying {
             onSelect?()
         }
     }
+    @objc private func openFolder() { onOpen?() }
 }
 
 @MainActor

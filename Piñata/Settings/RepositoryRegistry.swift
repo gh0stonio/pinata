@@ -80,6 +80,157 @@ enum RepositoryInspectionError: LocalizedError {
     }
 }
 
+private enum GitCommandError: Error {
+    case timedOut
+    case failed(String)
+}
+
+private struct GitCommandRunner {
+    let connection: SSHConnection?
+
+    func run(
+        _ arguments: [String],
+        timeout: TimeInterval? = 30,
+        onOutput: (String) -> Void = { _ in }
+    ) throws -> String {
+        try Task.checkCancellation()
+
+        let fileManager = FileManager.default
+        let outputURL = fileManager.temporaryDirectory
+            .appendingPathComponent("pinata-git-\(UUID().uuidString).stdout")
+        guard fileManager.createFile(atPath: outputURL.path, contents: nil) else {
+            throw GitCommandError.failed("Could not create command output file.")
+        }
+        defer { try? fileManager.removeItem(at: outputURL) }
+
+        let errorURL = fileManager.temporaryDirectory
+            .appendingPathComponent("pinata-git-\(UUID().uuidString).stderr")
+        guard fileManager.createFile(atPath: errorURL.path, contents: nil) else {
+            throw GitCommandError.failed("Could not create command error file.")
+        }
+        defer { try? fileManager.removeItem(at: errorURL) }
+
+        let outputHandle = try FileHandle(forWritingTo: outputURL)
+        defer { try? outputHandle.close() }
+        let errorHandle = try FileHandle(forWritingTo: errorURL)
+        defer { try? errorHandle.close() }
+        let outputReader = try FileHandle(forReadingFrom: outputURL)
+        defer { try? outputReader.close() }
+        let errorReader = try FileHandle(forReadingFrom: errorURL)
+        defer { try? errorReader.close() }
+
+        let process = Process()
+        if let connection {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+            process.arguments = SSHCommand.arguments(
+                connection: connection,
+                command: (["env", "GIT_TERMINAL_PROMPT=0", "git"] + arguments)
+                    .map(SSHCommand.shellQuote)
+                    .joined(separator: " "),
+                reuseConnection: true
+            )
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            process.arguments = arguments
+        }
+        var environment = ProcessInfo.processInfo.environment
+        environment["GIT_TERMINAL_PROMPT"] = "0"
+        process.environment = environment
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = outputHandle
+        process.standardError = errorHandle
+        try process.run()
+
+        let deadline = timeout.map { Date().addingTimeInterval($0) }
+        var standardOutput = GitCommandOutput()
+        var standardError = GitCommandOutput()
+        while process.isRunning {
+            if Task.isCancelled {
+                process.terminate()
+                process.waitUntilExit()
+                throw CancellationError()
+            }
+            if let deadline, Date() >= deadline {
+                process.terminate()
+                process.waitUntilExit()
+                throw GitCommandError.timedOut
+            }
+            try standardOutput.append(
+                readAvailable(from: outputReader),
+                onOutput: onOutput
+            )
+            try standardError.append(
+                readAvailable(from: errorReader),
+                onOutput: onOutput
+            )
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        process.waitUntilExit()
+
+        try outputHandle.synchronize()
+        try errorHandle.synchronize()
+        try standardOutput.append(
+            readAvailable(from: outputReader),
+            onOutput: onOutput
+        )
+        try standardError.append(
+            readAvailable(from: errorReader),
+            onOutput: onOutput
+        )
+        standardOutput.finish(onOutput: onOutput)
+        standardError.finish(onOutput: onOutput)
+
+        let output = standardOutput.text
+        let error = standardError.text
+        guard process.terminationStatus == 0 else {
+            throw GitCommandError.failed(
+                error.isEmpty ? (output.isEmpty ? "Git command failed." : output) : error
+            )
+        }
+        return output
+    }
+
+    private func readAvailable(from handle: FileHandle) throws -> Data {
+        let offset = try handle.offset()
+        let end = try handle.seekToEnd()
+        try handle.seek(toOffset: offset)
+        guard end > offset else { return Data() }
+        return try handle.read(upToCount: Int(end - offset)) ?? Data()
+    }
+}
+
+private struct GitCommandOutput {
+    private(set) var data = Data()
+    private var pending = ""
+
+    mutating func append(
+        _ chunk: Data,
+        onOutput: (String) -> Void
+    ) {
+        guard !chunk.isEmpty else { return }
+        data.append(chunk)
+        pending += normalized(String(decoding: chunk, as: UTF8.self))
+        let lines = pending.components(separatedBy: "\n")
+        lines.dropLast().forEach(onOutput)
+        pending = lines.last ?? ""
+    }
+
+    mutating func finish(onOutput: (String) -> Void) {
+        if !pending.isEmpty { onOutput(pending) }
+    }
+
+    var text: String {
+        normalized(String(decoding: data, as: UTF8.self))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func normalized(_ output: String) -> String {
+        output
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+    }
+}
+
 struct RepositoryInspector: Sendable {
     func inspect(directory: URL) throws -> RegisteredRepository {
         try inspect(path: directory.path)
@@ -162,7 +313,10 @@ struct RepositoryInspector: Sendable {
         connection: SSHConnection? = nil
     ) throws {
         let worktrees = parseWorktrees(
-            try gitOutput(["-C", repository.path, "worktree", "list", "--porcelain"], connection: connection)
+            try gitOutput(
+                ["-C", repository.path, "worktree", "list", "--porcelain"],
+                connection: connection
+            )
         )
         let worktree = worktrees.first {
             let pathMatches = connection == nil
@@ -205,7 +359,10 @@ struct RepositoryInspector: Sendable {
             ["-C", repository.path, "branch", "--list", branch],
             connection: connection
         )).isEmpty {
-            _ = try gitOutput(["-C", repository.path, "branch", "-D", branch], connection: connection)
+            _ = try gitOutput(
+                ["-C", repository.path, "branch", "-D", branch],
+                connection: connection
+            )
         }
     }
 
@@ -233,81 +390,21 @@ struct RepositoryInspector: Sendable {
 
     private func gitOutput(
         _ arguments: [String],
-        timeout: TimeInterval = 30,
+        timeout: TimeInterval? = 30,
         connection: SSHConnection? = nil
     ) throws -> String {
-        try Task.checkCancellation()
-
-        let fileManager = FileManager.default
-        let outputURL = fileManager.temporaryDirectory
-            .appendingPathComponent("pinata-git-\(UUID().uuidString).stdout")
-        guard fileManager.createFile(atPath: outputURL.path, contents: nil) else {
-            throw RepositoryInspectionError.gitFailed("Could not create command output file.")
-        }
-        defer { try? fileManager.removeItem(at: outputURL) }
-
-        let errorURL = fileManager.temporaryDirectory
-            .appendingPathComponent("pinata-git-\(UUID().uuidString).stderr")
-        guard fileManager.createFile(atPath: errorURL.path, contents: nil) else {
-            throw RepositoryInspectionError.gitFailed("Could not create command error file.")
-        }
-        defer { try? fileManager.removeItem(at: errorURL) }
-
-        let outputHandle = try FileHandle(forWritingTo: outputURL)
-        defer { try? outputHandle.close() }
-        let errorHandle = try FileHandle(forWritingTo: errorURL)
-        defer { try? errorHandle.close() }
-
-        let process = Process()
-        if let connection {
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-            process.arguments = [
-                "-A",
-                "-S", "none",
-                "-o", "ControlMaster=no",
-                "-o", "ClearAllForwardings=yes",
-                "-o", "BatchMode=yes", "--", connection.host,
-                (["env", "GIT_TERMINAL_PROMPT=0", "git"] + arguments)
-                    .map(SSHCommand.shellQuote)
-                    .joined(separator: " "),
-            ]
-        } else {
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-            process.arguments = arguments
-        }
-        process.standardOutput = outputHandle
-        process.standardError = errorHandle
-        try process.run()
-
-        let deadline = Date().addingTimeInterval(timeout)
-        while process.isRunning {
-            if Task.isCancelled {
-                process.terminate()
-                process.waitUntilExit()
-                throw CancellationError()
-            }
-            if Date() >= deadline {
-                process.terminate()
-                process.waitUntilExit()
-                throw RepositoryInspectionError.gitFailed("Git command timed out.")
-            }
-            Thread.sleep(forTimeInterval: 0.02)
-        }
-
-        try outputHandle.synchronize()
-        try errorHandle.synchronize()
-        let output = String(decoding: try Data(contentsOf: outputURL), as: UTF8.self)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let error = String(decoding: try Data(contentsOf: errorURL), as: UTF8.self)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard process.terminationStatus == 0 else {
+        do {
+            return try GitCommandRunner(connection: connection).run(
+                arguments,
+                timeout: timeout
+            )
+        } catch GitCommandError.timedOut {
+            throw RepositoryInspectionError.gitFailed("Git command timed out.")
+        } catch GitCommandError.failed(let message) {
             throw arguments.contains("rev-parse")
                 ? RepositoryInspectionError.invalidRepository
-                : RepositoryInspectionError.gitFailed(
-                    error.isEmpty ? (output.isEmpty ? "Git command failed." : output) : error
-                )
+                : RepositoryInspectionError.gitFailed(message)
         }
-        return output
     }
 
     private func parseWorktrees(_ output: String) -> [RepositoryWorktree] {
@@ -752,60 +849,19 @@ struct WorktreeProvisioner {
         _ arguments: [String],
         onOutput: (String) -> Void
     ) throws -> String {
-        let pipe = Pipe()
-        let process = Process()
-        if let connection {
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-            process.arguments = [
-                "-A",
-                "-S", "none",
-                "-o", "ControlMaster=no",
-                "-o", "ClearAllForwardings=yes",
-                "-o", "BatchMode=yes", "--", connection.host,
-                (["env", "GIT_TERMINAL_PROMPT=0", "git"] + arguments)
-                    .map(SSHCommand.shellQuote)
-                    .joined(separator: " "),
-            ]
-        } else {
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-            process.arguments = arguments
-        }
-        var environment = ProcessInfo.processInfo.environment
-        environment["GIT_TERMINAL_PROMPT"] = "0"
-        process.environment = environment
-        process.standardOutput = pipe
-        process.standardError = pipe
-        try process.run()
-        try pipe.fileHandleForWriting.close()
-        defer { try? pipe.fileHandleForReading.close() }
-
-        var data = Data()
-        var pending = ""
-        while let chunk = try pipe.fileHandleForReading.read(upToCount: 4_096), !chunk.isEmpty {
-            data.append(chunk)
-            pending += normalizedOutput(String(decoding: chunk, as: UTF8.self))
-            let lines = pending.components(separatedBy: "\n")
-            lines.dropLast().forEach(onOutput)
-            pending = lines.last ?? ""
-        }
-        if !pending.isEmpty { onOutput(pending) }
-        process.waitUntilExit()
-
-        let result = normalizedOutput(String(decoding: data, as: UTF8.self))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard process.terminationStatus == 0 else {
+        do {
+            return try GitCommandRunner(connection: connection).run(
+                arguments,
+                timeout: 15 * 60,
+                onOutput: onOutput
+            )
+        } catch GitCommandError.timedOut {
+            throw WorktreeProvisioningError.gitFailed("Git command timed out.")
+        } catch GitCommandError.failed(let message) {
             throw WorktreeProvisioningError.gitFailed(
-                result.isEmpty ? "Could not create worktree." : result
+                message.isEmpty ? "Could not create worktree." : message
             )
         }
-        return result
-    }
-
-    private func normalizedOutput(_ output: String) -> String {
-        output
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\r", with: "\n")
     }
 
     private func prepareDestinationParent(for path: String) throws {

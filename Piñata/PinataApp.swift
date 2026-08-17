@@ -73,6 +73,7 @@ final class PinataApp: NSObject, NSApplicationDelegate {
 
     func applicationDidBecomeActive(_ notification: Notification) {
         ghosttyRuntime?.setApplicationFocused(true)
+        workspaceViewController?.refreshSSHConnectionStatuses()
     }
 
     func applicationDidResignActive(_ notification: Notification) {

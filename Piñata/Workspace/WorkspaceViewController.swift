@@ -47,6 +47,7 @@ final class WorkspaceViewController: NSViewController {
 
         init(
             runtime: GhosttyRuntime,
+            connectionStatusMonitor: SSHConnectionStatusMonitor,
             title: String,
             workingDirectory: String,
             target: TerminalTarget = .local,
@@ -63,6 +64,7 @@ final class WorkspaceViewController: NSViewController {
                         title: title,
                         controller: TerminalViewController(
                             runtime: runtime,
+                            connectionStatusMonitor: connectionStatusMonitor,
                             workingDirectory: workingDirectory,
                             target: target
                         )
@@ -75,7 +77,11 @@ final class WorkspaceViewController: NSViewController {
             }
         }
 
-        init(runtime: GhosttyRuntime, snapshot: StoredTerminalWorkspace) {
+        init(
+            runtime: GhosttyRuntime,
+            snapshot: StoredTerminalWorkspace,
+            connectionStatusMonitor: SSHConnectionStatusMonitor
+        ) {
             title = snapshot.title
             workingDirectory = snapshot.workingDirectory
             target = snapshot.tabs.first?.terminal.panes.first?.target ?? .local
@@ -84,7 +90,11 @@ final class WorkspaceViewController: NSViewController {
                 return TerminalTab(
                     id: tab.id,
                     title: tab.title,
-                    controller: TerminalViewController(runtime: runtime, snapshot: tab.terminal)
+                    controller: TerminalViewController(
+                        runtime: runtime,
+                        snapshot: tab.terminal,
+                        connectionStatusMonitor: connectionStatusMonitor
+                    )
                 )
             }
             activeTabID = tabs.contains(where: { $0.id == snapshot.activeTabID })
@@ -124,7 +134,10 @@ final class WorkspaceViewController: NSViewController {
     private let mainColumn = NSView()
     private let terminalHost = NSView()
     private let workspaceHeader = WorkspaceHeaderView()
-    private let leftPanelController = PanelViewController()
+    private let sshConnectionStatusMonitor = SSHConnectionStatusMonitor()
+    private lazy var leftPanelController = PanelViewController(
+        connectionStatusMonitor: sshConnectionStatusMonitor
+    )
     private let rightPanelController = WorkspacePanelViewController()
     private let leftResizeHandle = PanelResizeHandle(
         indicatorOffset: AppTheme.workspaceInset
@@ -152,8 +165,10 @@ final class WorkspaceViewController: NSViewController {
     private var deleteTaskModal: DeleteTaskModalView?
     private var taskActionMenu: SidebarActionMenuView?
     private var taskActionMenuMouseMonitor: Any?
+    private var taskActionMenuTaskID: UUID?
     private var repositoryActionMenu: SidebarActionMenuView?
     private var repositoryActionMenuMouseMonitor: Any?
+    private var repositoryActionMenuScope: TaskRepositoryScope?
     private var leftResizeWindowWidth: CGFloat?
 
     private var leftWidthConstraint: NSLayoutConstraint!
@@ -213,7 +228,11 @@ final class WorkspaceViewController: NSViewController {
                 guard !snapshot.tabs.isEmpty,
                       let scope = Self.workspaceScope(from: snapshot.scope, in: loadedTasks)
                 else { continue }
-                let workspace = TerminalWorkspace(runtime: runtime, snapshot: snapshot)
+                let workspace = TerminalWorkspace(
+                    runtime: runtime,
+                    snapshot: snapshot,
+                    connectionStatusMonitor: sshConnectionStatusMonitor
+                )
                 guard !workspace.tabs.isEmpty else { continue }
                 switch scope {
                 case .task(let taskID):
@@ -331,6 +350,7 @@ final class WorkspaceViewController: NSViewController {
             if taskWorkspaces[taskID] == nil {
                 taskWorkspaces[taskID] = TerminalWorkspace(
                     runtime: runtime,
+                    connectionStatusMonitor: sshConnectionStatusMonitor,
                     title: "Terminal",
                     workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path
                 )
@@ -347,6 +367,7 @@ final class WorkspaceViewController: NSViewController {
             title: isFirstTab ? workspace.title : "\(workspace.title) \(workspace.nextTabNumber)",
             controller: TerminalViewController(
                 runtime: runtime,
+                connectionStatusMonitor: sshConnectionStatusMonitor,
                 workingDirectory: workspace.workingDirectory,
                 target: workspace.target
             )
@@ -432,7 +453,10 @@ final class WorkspaceViewController: NSViewController {
             return
         }
 
-        let controller = SettingsViewController(settings: settings)
+        let controller = SettingsViewController(
+            settings: settings,
+            connectionStatusMonitor: sshConnectionStatusMonitor
+        )
         controller.onChange = onChange
         addChild(controller)
         controller.view.translatesAutoresizingMaskIntoConstraints = false
@@ -471,6 +495,10 @@ final class WorkspaceViewController: NSViewController {
         taskActionMenu?.applyTheme()
         repositoryActionMenu?.applyTheme()
         applySidebarPresentation()
+    }
+
+    func refreshSSHConnectionStatuses() {
+        sshConnectionStatusMonitor.refresh()
     }
 
     private func configureWorkspaceCard() {
@@ -627,6 +655,24 @@ final class WorkspaceViewController: NSViewController {
         }
         leftPanelController.onToggleTaskExpansion = { [weak self] taskID in
             self?.toggleTaskExpansion(taskID)
+        }
+        leftPanelController.onSidebarTaskHover = { [weak self] taskID in
+            guard let self else { return }
+            if taskActionMenu != nil, taskActionMenuTaskID != taskID {
+                dismissTaskActionMenu()
+            }
+            if repositoryActionMenu != nil {
+                dismissRepositoryActionMenu()
+            }
+        }
+        leftPanelController.onSidebarRepositoryHover = { [weak self] scope in
+            guard let self else { return }
+            if taskActionMenu != nil {
+                dismissTaskActionMenu()
+            }
+            if repositoryActionMenu != nil, repositoryActionMenuScope != scope {
+                dismissRepositoryActionMenu()
+            }
         }
         leftPanelController.onMoveTask = { [weak self] sourceID, targetID, after, pinned in
             self?.moveTask(
@@ -1226,6 +1272,7 @@ final class WorkspaceViewController: NSViewController {
         }
         dismissRepositoryActionMenu()
         dismissTaskActionMenu()
+        taskActionMenuTaskID = taskID
         leftPanelController.setTaskMenuTask(taskID)
 
         let menu = SidebarActionMenuView(items: [
@@ -1296,6 +1343,7 @@ final class WorkspaceViewController: NSViewController {
         }
         taskActionMenu?.removeFromSuperview()
         taskActionMenu = nil
+        taskActionMenuTaskID = nil
         leftPanelController.setTaskMenuTask(nil)
     }
 
@@ -1313,6 +1361,7 @@ final class WorkspaceViewController: NSViewController {
         }
         dismissTaskActionMenu()
         dismissRepositoryActionMenu()
+        repositoryActionMenuScope = scope
         leftPanelController.setRepositoryMenuScope(scope)
         let isRemote: Bool
         if let repository = try? repositoryStore.load().first(where: { $0.id == attachment.repositoryID }),
@@ -1369,6 +1418,7 @@ final class WorkspaceViewController: NSViewController {
         }
         repositoryActionMenu?.removeFromSuperview()
         repositoryActionMenu = nil
+        repositoryActionMenuScope = nil
         leftPanelController.setRepositoryMenuScope(nil)
     }
 
@@ -1908,6 +1958,7 @@ final class WorkspaceViewController: NSViewController {
         }
         repositoryWorkspaces[scope] = TerminalWorkspace(
             runtime: runtime,
+            connectionStatusMonitor: sshConnectionStatusMonitor,
             title: "~/\(name)",
             workingDirectory: workingDirectory,
             target: target,
@@ -1979,13 +2030,19 @@ final class WorkspaceViewController: NSViewController {
     }
 
     private func updateTaskSidebar() {
-        let repositoryTargets: [UUID: RepositoryTarget]
+        sshConnectionStatusMonitor.sync((try? sshConnectionStore.load()) ?? [])
+        let registeredRepositories: [UUID: RegisteredRepository]
         do {
-            repositoryTargets = try Dictionary(
-                uniqueKeysWithValues: repositoryStore.load().map { ($0.id, $0.target) }
+            registeredRepositories = try Dictionary(
+                uniqueKeysWithValues: repositoryStore.load().map { ($0.id, $0) }
             )
         } catch {
-            repositoryTargets = [:]
+            registeredRepositories = [:]
+        }
+        let repositoryTargets = registeredRepositories.mapValues(\.target)
+        let repositoryPaths = registeredRepositories.mapValues(\.path)
+        let repositoryBranches = registeredRepositories.compactMapValues {
+            $0.currentBranch ?? $0.defaultBranch
         }
         var displayedRepositoryErrors = repositoryErrors
         for task in tasks {
@@ -2031,6 +2088,8 @@ final class WorkspaceViewController: NSViewController {
             taskActivities: taskActivities,
             repositoryActivities: repositoryActivities,
             repositoryTargets: repositoryTargets,
+            repositoryPaths: repositoryPaths,
+            repositoryBranches: repositoryBranches,
             taskErrors: taskErrors,
             repositoryErrors: displayedRepositoryErrors,
             loadError: taskLoadError
