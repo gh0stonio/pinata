@@ -14,7 +14,7 @@ The task is the product's durable unit. A repository is attached to a task, rath
 | Repository | A registered local or SSH-backed Git repository. | Yes |
 | Attachment | A repository assigned to a task. | No, it belongs to one task and repository pair. |
 | Worktree | An isolated checkout created for an attachment. | No, it is created from the attachment. |
-| Piñata branch | A Piñata-owned branch named `pinata/<task-slug>-<id>`. | No, Piñata creates and removes it with the worktree. |
+| Piñata branch | A Piñata-owned branch named `<prefix><task-slug>-<id>`, using `pinata/` by default. | No, Piñata creates and removes it with the worktree. |
 | Terminal workspace | Tabs and split panes for a selected task or attachment. | Yes, for a task with no repository it uses the task workspace. |
 | Terminal pane | One Ghostty surface attached to one durable zmx session. | No, it belongs to a terminal tab. |
 
@@ -98,7 +98,7 @@ sequenceDiagram
     U->>A: Create task and attach repository
     A->>G: Fetch origin default branch
     G-->>A: origin/default branch updated
-    A->>G: Create pinata/task-slug-id branch
+    A->>G: Create configured-prefix/task-slug-id branch
     G-->>A: Branch created
     A->>G: Add worktree at configured path
     G-->>W: Checkout files and run Git hooks
@@ -122,6 +122,8 @@ For a task ID beginning with `1234abcd`:
 Branch:    pinata/fix-sso-sign-in-1234abcd
 Worktree:  <base>/<repository-name>/fix-sso-sign-in
 ```
+
+Settings → Git controls the task branch prefix. The default is `pinata/`; for example, `antoine.leveque/` produces `antoine.leveque/fix-sso-sign-in-1234abcd`. The prefix applies only to future task branches. The configured repository default branch remains the source branch, such as `origin/main`.
 
 If that destination exists, Piñata uses a numeric suffix such as `fix-sso-sign-in-2`.
 
@@ -171,7 +173,7 @@ If cleanup fails, the task stays visible in a deleting or failed state. This kee
 
 ## Settings and appearance
 
-Piñata persists application settings locally: dark or light theme, accent color and intensity, application font size, terminal font size, editor font size, file preview behavior, file-icon color, panel widths, and worktree defaults. Colors and typography are supplied through the shared AppKit theme system so light and dark appearances use the same semantic roles.
+Piñata persists application settings locally: dark or light theme, accent color and intensity, application font size, terminal font size, editor font size, file preview behavior, file-icon color, panel widths, worktree defaults, and the task branch prefix. Colors and typography are supplied through the shared AppKit theme system so light and dark appearances use the same semantic roles.
 
 ## Current product limits
 

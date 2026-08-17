@@ -50,7 +50,7 @@ The current `main` branch includes:
 - Task sidebar with pinned tasks, drag sorting, and collapsed/transient presentation.
 - Create, rename, pin, attach repositories to, detach repositories from, and delete tasks.
 - Local repository registration, Git metadata, branches, tags, and global or per-repository worktree defaults.
-- Per-task Git worktrees with a Piñata branch, created from a freshly fetched repository default branch.
+- Per-task Git worktrees with configurable Piñata task-branch prefixes, created from a freshly fetched repository default branch.
 - Parallel worktree provisioning with current-step status, failure recovery, and retry actions.
 - Theme, accent, font-size, terminal-size, and light/dark appearance settings.
 - Worktree-aware terminals, task and repository action menus, and safe cleanup of Piñata-owned worktrees and branches.

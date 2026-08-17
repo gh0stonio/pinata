@@ -16,14 +16,14 @@ Piñata uses `ssh -o BatchMode=yes`. Interactive password prompts are deliberate
 flowchart LR
   C[Saved SSH alias] --> R[Remote registered repository]
   R --> F[Fetch remote base branch]
-  F --> B[Create pinata branch]
+  F --> B[Create configured-prefix branch]
   B --> W[Create remote worktree]
   W --> T[SSH-backed terminal]
 ```
 
 Worktrees use the same configured global or repository-specific base path. `~/` remains a remote path and is expanded by the remote shell, never by the Mac.
 
-Removing an attached remote repository removes its verified `pinata/` worktree and branch on that same host. Piñata will not remove an unverified remote path.
+Removing an attached remote repository removes its verified Piñata worktree and task branch on that same host, using the configured task branch prefix. Piñata will not remove an unverified remote path.
 
 ## Durable terminals
 

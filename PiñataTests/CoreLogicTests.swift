@@ -777,8 +777,14 @@ final class CoreLogicTests: XCTestCase {
             repositoryDefaults.loadWorktreeBasePath(),
             RepositoryDefaultsStore.defaultWorktreeBasePath
         )
+        XCTAssertEqual(
+            repositoryDefaults.loadTaskBranchPrefix(),
+            RepositoryDefaultsStore.defaultTaskBranchPrefix
+        )
         repositoryDefaults.saveWorktreeBasePath("/tmp/worktrees")
         XCTAssertEqual(repositoryDefaults.loadWorktreeBasePath(), "/tmp/worktrees")
+        repositoryDefaults.saveTaskBranchPrefix("antoine.leveque")
+        XCTAssertEqual(repositoryDefaults.loadTaskBranchPrefix(), "antoine.leveque/")
     }
 
     @MainActor
@@ -893,6 +899,10 @@ final class CoreLogicTests: XCTestCase {
             ),
             "Use a single-line path."
         )
+        XCTAssertEqual(TaskBranchName.normalizedPrefix("antoine.leveque"), "antoine.leveque/")
+        XCTAssertNil(TaskBranchName.error(for: "feature/team/"))
+        XCTAssertNotNil(TaskBranchName.error(for: "feature//"))
+        XCTAssertNotNil(TaskBranchName.error(for: "feature name"))
     }
 
     func testRepositoryInspectionRefreshAndContext() throws {
@@ -1171,7 +1181,8 @@ final class CoreLogicTests: XCTestCase {
         let updates = WorktreeUpdates()
         let taskID = UUID()
         let provisioner = WorktreeProvisioner(
-            globalBasePath: directoryURL.appendingPathComponent("worktrees").path
+            globalBasePath: directoryURL.appendingPathComponent("worktrees").path,
+            branchPrefix: "antoine.leveque"
         )
         let report = provisioner.provision(
             repository: repository,
@@ -1210,9 +1221,14 @@ final class CoreLogicTests: XCTestCase {
         try RepositoryInspector().removeWorktree(
             at: path,
             branchHint: report.branch,
+            taskID: taskID,
             from: repository
         )
         XCTAssertFalse(FileManager.default.fileExists(atPath: path))
+        XCTAssertEqual(
+            report.branch,
+            "antoine.leveque/fix-api-ui-" + String(taskID.uuidString.prefix(8).lowercased())
+        )
         XCTAssertEqual(try runGit(["-C", repository.path, "branch", "--list", report.branch]), "")
 
         let retry = provisioner.provision(
@@ -1224,6 +1240,7 @@ final class CoreLogicTests: XCTestCase {
         try RepositoryInspector().removeWorktree(
             at: retry.path,
             branchHint: retry.branch,
+            taskID: taskID,
             from: repository
         )
     }
