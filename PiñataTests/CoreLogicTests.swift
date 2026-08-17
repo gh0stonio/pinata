@@ -726,6 +726,17 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertNotEqual(ZmxSession.name(for: first), ZmxSession.name(for: second))
     }
 
+    func testZmxReconnectBackoffIsBounded() {
+        XCTAssertEqual(
+            (0...6).map { ZmxReconnectPolicy.delay(for: $0) },
+            [1, 2, 4, 8, 16, 30, 30]
+        )
+    }
+
+    func testZmxReconnectBackoffNormalizesNegativeAttempts() {
+        XCTAssertEqual(ZmxReconnectPolicy.delay(for: -1), 1)
+    }
+
     func testRemoteZmxInstallUsesPinnedArchives() {
         let script = RemoteZmxInstaller.installScript()
 

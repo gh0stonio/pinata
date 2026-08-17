@@ -26,7 +26,7 @@ flowchart LR
     P --> G[Ghostty terminal]
 ```
 
-Piñata manages local and SSH-backed repositories, worktrees, file browsing, and terminals. GitHub workflows, diffs, reviews, Pi discussions, and remote process recovery are not available yet.
+Piñata manages local and SSH-backed repositories, worktrees, file browsing, and terminals. GitHub workflows, diffs, reviews, Pi discussions, and remote process recovery after host restarts are not available yet.
 
 ## How to use these documents
 
