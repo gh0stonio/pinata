@@ -96,6 +96,10 @@ final class PinataApp: NSObject, NSApplicationDelegate {
         workspaceViewController?.createTerminalTab(sender)
     }
 
+    @objc private func reopenTerminalTab(_ sender: Any?) {
+        workspaceViewController?.reopenTerminalTab(sender)
+    }
+
     @objc private func splitTerminalVertically(_ sender: Any?) {
         workspaceViewController?.splitTerminalVertically(sender)
     }
@@ -211,6 +215,13 @@ final class PinataApp: NSObject, NSApplicationDelegate {
             keyEquivalent: "t"
         )
         newTabItem.target = self
+        let reopenTabItem = terminalMenu.addItem(
+            withTitle: "Reopen Closed Terminal Tab",
+            action: #selector(reopenTerminalTab(_:)),
+            keyEquivalent: "t"
+        )
+        reopenTabItem.keyEquivalentModifierMask = [.command, .shift]
+        reopenTabItem.target = self
         terminalMenu.addItem(.separator())
         let splitVerticalItem = terminalMenu.addItem(
             withTitle: "Split Vertically",

@@ -3,6 +3,66 @@ import AppKit
 @testable import Pinata
 
 final class CoreLogicTests: XCTestCase {
+    func testPullRequestStatusSummarizesChecksAndIssues() {
+        let pullRequest = PullRequestSummary(
+            number: 42,
+            title: "Ship sidebar PR status",
+            state: "OPEN",
+            isDraft: false,
+            baseBranch: "main",
+            headBranch: "feature/pr-status",
+            headRepositoryOwner: "gh0stonio",
+            mergeable: "CONFLICTING",
+            mergeStateStatus: "DIRTY",
+            reviewDecision: "APPROVED",
+            checks: [
+                PullRequestCheck(name: "Build", status: .passed),
+                PullRequestCheck(name: "Lint", status: .failed),
+                PullRequestCheck(name: "Tests", status: .pending),
+            ],
+            url: "https://github.com/gh0stonio/pinata/pull/42"
+        )
+
+        XCTAssertEqual(pullRequest.displayStatus, .issue)
+        XCTAssertEqual(
+            pullRequest.checkCountsLabel,
+            "3 total, 1 passed, 1 failed, 1 pending"
+        )
+        XCTAssertEqual(pullRequest.checkSummary, "✓ Build, ✕ Lint, ◷ Tests")
+    }
+
+    func testPullRequestStackFindsParentChildAndSharedHeadPRs() {
+        func makePR(_ number: Int, head: String, base: String) -> PullRequestSummary {
+            PullRequestSummary(
+                number: number,
+                title: "PR \(number)",
+                state: "OPEN",
+                isDraft: false,
+                baseBranch: base,
+                headBranch: head,
+                headRepositoryOwner: "gh0stonio",
+                mergeable: "MERGEABLE",
+                mergeStateStatus: "CLEAN",
+                reviewDecision: "APPROVED",
+                checks: [],
+                url: nil
+            )
+        }
+
+        let pullRequests = [
+            makePR(2, head: "feature/base", base: "main"),
+            makePR(3, head: "feature/stack", base: "feature/base"),
+            makePR(4, head: "feature/stack", base: "main"),
+            makePR(5, head: "feature/child", base: "feature/stack"),
+            makePR(99, head: "unrelated", base: "main"),
+        ]
+
+        let related = PullRequestStack.related(to: "feature/stack", in: pullRequests)
+
+        XCTAssertEqual(Set(related.map(\.number)), Set([2, 3, 4, 5]))
+        XCTAssertFalse(related.contains { $0.number == 99 })
+    }
+
     func testEditorLanguageUsesFileExtension() {
         XCTAssertEqual(EditorLanguage(path: "/tmp/app.swift"), .swift)
         XCTAssertEqual(EditorLanguage(path: "/tmp/README.md"), .markdown)
@@ -624,7 +684,12 @@ final class CoreLogicTests: XCTestCase {
                     activeTabID: tabID,
                     nextTabNumber: 2
                 ),
-            ]
+            ],
+            recentlyClosedTerminalTab: StoredClosedTerminalTab(
+                scope: .task(taskID),
+                index: 0,
+                tab: StoredTerminalTab(id: tabID, title: "Terminal", terminal: terminal)
+            )
         )
         let store = AppSessionStore(fileURL: directoryURL.appendingPathComponent("session.json"))
 
@@ -712,8 +777,14 @@ final class CoreLogicTests: XCTestCase {
             repositoryDefaults.loadWorktreeBasePath(),
             RepositoryDefaultsStore.defaultWorktreeBasePath
         )
+        XCTAssertEqual(
+            repositoryDefaults.loadTaskBranchPrefix(),
+            RepositoryDefaultsStore.defaultTaskBranchPrefix
+        )
         repositoryDefaults.saveWorktreeBasePath("/tmp/worktrees")
         XCTAssertEqual(repositoryDefaults.loadWorktreeBasePath(), "/tmp/worktrees")
+        repositoryDefaults.saveTaskBranchPrefix("antoine.leveque")
+        XCTAssertEqual(repositoryDefaults.loadTaskBranchPrefix(), "antoine.leveque/")
     }
 
     @MainActor
@@ -828,6 +899,10 @@ final class CoreLogicTests: XCTestCase {
             ),
             "Use a single-line path."
         )
+        XCTAssertEqual(TaskBranchName.normalizedPrefix("antoine.leveque"), "antoine.leveque/")
+        XCTAssertNil(TaskBranchName.error(for: "feature/team/"))
+        XCTAssertNotNil(TaskBranchName.error(for: "feature//"))
+        XCTAssertNotNil(TaskBranchName.error(for: "feature name"))
     }
 
     func testRepositoryInspectionRefreshAndContext() throws {
@@ -1106,7 +1181,8 @@ final class CoreLogicTests: XCTestCase {
         let updates = WorktreeUpdates()
         let taskID = UUID()
         let provisioner = WorktreeProvisioner(
-            globalBasePath: directoryURL.appendingPathComponent("worktrees").path
+            globalBasePath: directoryURL.appendingPathComponent("worktrees").path,
+            branchPrefix: "antoine.leveque"
         )
         let report = provisioner.provision(
             repository: repository,
@@ -1145,9 +1221,14 @@ final class CoreLogicTests: XCTestCase {
         try RepositoryInspector().removeWorktree(
             at: path,
             branchHint: report.branch,
+            taskID: taskID,
             from: repository
         )
         XCTAssertFalse(FileManager.default.fileExists(atPath: path))
+        XCTAssertEqual(
+            report.branch,
+            "antoine.leveque/fix-api-ui-" + String(taskID.uuidString.prefix(8).lowercased())
+        )
         XCTAssertEqual(try runGit(["-C", repository.path, "branch", "--list", report.branch]), "")
 
         let retry = provisioner.provision(
@@ -1159,6 +1240,7 @@ final class CoreLogicTests: XCTestCase {
         try RepositoryInspector().removeWorktree(
             at: retry.path,
             branchHint: retry.branch,
+            taskID: taskID,
             from: repository
         )
     }

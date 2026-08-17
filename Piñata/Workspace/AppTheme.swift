@@ -193,6 +193,7 @@ enum AppTheme {
     static private(set) var tertiaryText = color(0xA6AEB2)
     static private(set) var error = color(0xF25555)
     static private(set) var success = color(0x31C971)
+    static private(set) var pullRequestMerged = color(0xA371F7)
     static private(set) var accent = color(0xFF746B)
     static private(set) var panelAccentIcon = color(0xFF746B)
     static private(set) var panelAccentBackground = color(0xFF746B).withAlphaComponent(0.14)
@@ -212,6 +213,15 @@ enum AppTheme {
         case .checking: panelAccentIcon
         case .connected: success
         case .disconnected: error
+        }
+    }
+
+    static func pullRequestColor(_ status: PullRequestDisplayStatus) -> NSColor {
+        switch status {
+        case .draft: tertiaryText
+        case .ready: success
+        case .issue: error
+        case .merged: pullRequestMerged
         }
     }
 
