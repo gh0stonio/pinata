@@ -501,6 +501,9 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard window?.firstResponder === self else {
+            return super.performKeyEquivalent(with: event)
+        }
         if event.modifierFlags.contains(.command) {
             switch event.charactersIgnoringModifiers?.lowercased() {
             case "c" where ghostty_surface_has_selection(surface):
