@@ -149,6 +149,11 @@ final class WorkspaceViewController: NSViewController {
     private let sshConnectionStore = SSHConnectionStore()
     private var taskWorkspaces: [UUID: TerminalWorkspace] = [:]
     private var repositoryWorkspaces: [TaskRepositoryScope: TerminalWorkspace] = [:]
+    private var recentlyClosedTerminalTab: (
+        scope: StoredWorkspaceScope,
+        index: Int,
+        tab: TerminalTab
+    )?
     private var tasks: [WorkspaceTask]
     private var activeScope: WorkspaceScope?
     private var expandedTaskIDs = Set<UUID>()
@@ -258,6 +263,23 @@ final class WorkspaceViewController: NSViewController {
             )
         }
         super.init(nibName: nil, bundle: nil)
+        if let storedTab = restoredSession?.recentlyClosedTerminalTab,
+           storedTab.tab.terminal.isValid,
+           Self.workspaceScope(from: storedTab.scope, in: loadedTasks) != nil {
+            recentlyClosedTerminalTab = (
+                scope: storedTab.scope,
+                index: storedTab.index,
+                tab: TerminalTab(
+                    id: storedTab.tab.id,
+                    title: storedTab.tab.title,
+                    controller: TerminalViewController(
+                        runtime: runtime,
+                        snapshot: storedTab.tab.terminal,
+                        connectionStatusMonitor: sshConnectionStatusMonitor
+                    )
+                )
+            )
+        }
     }
 
     @available(*, unavailable)
@@ -381,6 +403,40 @@ final class WorkspaceViewController: NSViewController {
         if isViewLoaded {
             installActiveWorkspace()
         }
+    }
+
+    @objc func reopenTerminalTab(_ sender: Any?) {
+        guard settingsController == nil, newTaskModal == nil else { return }
+        guard activeTaskDeletionState == nil, activeRepositoryRemovalState == nil else { return }
+        guard let recentlyClosedTerminalTab else { return }
+        if recentlyClosedTerminalTab.scope != storedScope(from: activeScope) {
+            switch recentlyClosedTerminalTab.scope {
+            case .task(let taskID):
+                selectTask(taskID)
+            case .repository(let taskID, let repositoryID):
+                selectRepository(TaskRepositoryScope(taskID: taskID, repositoryID: repositoryID))
+            }
+        }
+        guard recentlyClosedTerminalTab.scope == storedScope(from: activeScope),
+              activeTaskDeletionState == nil,
+              activeRepositoryRemovalState == nil else { return }
+        let workspace: TerminalWorkspace
+        if let activeTerminalWorkspace {
+            workspace = activeTerminalWorkspace
+        } else {
+            guard let restoredWorkspace = restoreWorkspace(for: recentlyClosedTerminalTab) else {
+                return
+            }
+            workspace = restoredWorkspace
+        }
+        self.recentlyClosedTerminalTab = nil
+        workspace.tabs.insert(
+            recentlyClosedTerminalTab.tab,
+            at: min(recentlyClosedTerminalTab.index, workspace.tabs.count)
+        )
+        workspace.activeTabID = recentlyClosedTerminalTab.tab.id
+        scheduleSessionSave()
+        installActiveWorkspace()
     }
 
     @objc func presentNewTask(_ sender: Any?) {
@@ -733,6 +789,50 @@ final class WorkspaceViewController: NSViewController {
         }
     }
 
+    private func restoreWorkspace(
+        for recentlyClosedTerminalTab: (
+            scope: StoredWorkspaceScope,
+            index: Int,
+            tab: TerminalTab
+        )
+    ) -> TerminalWorkspace? {
+        guard let pane = recentlyClosedTerminalTab.tab.controller.sessionSnapshot.panes.first else {
+            return nil
+        }
+        switch recentlyClosedTerminalTab.scope {
+        case .task(let taskID):
+            guard tasks.contains(where: { $0.id == taskID }), taskErrors[taskID] == nil else {
+                return nil
+            }
+            let workspace = TerminalWorkspace(
+                runtime: runtime,
+                connectionStatusMonitor: sshConnectionStatusMonitor,
+                title: "Terminal",
+                workingDirectory: pane.workingDirectory,
+                target: pane.target,
+                startsWithTab: false
+            )
+            taskWorkspaces[taskID] = workspace
+            return workspace
+        case .repository(let taskID, let repositoryID):
+            guard let attachment = tasks.first(where: { $0.id == taskID })?.repositories.first(where: {
+                $0.repositoryID == repositoryID
+            }) else {
+                return nil
+            }
+            let workspace = TerminalWorkspace(
+                runtime: runtime,
+                connectionStatusMonitor: sshConnectionStatusMonitor,
+                title: "~/\(attachment.name)",
+                workingDirectory: pane.workingDirectory,
+                target: pane.target,
+                startsWithTab: false
+            )
+            repositoryWorkspaces[TaskRepositoryScope(taskID: taskID, repositoryID: repositoryID)] = workspace
+            return workspace
+        }
+    }
+
     private var allTerminalWorkspaces: [TerminalWorkspace] {
         Array(taskWorkspaces.values) + Array(repositoryWorkspaces.values)
     }
@@ -1029,8 +1129,10 @@ final class WorkspaceViewController: NSViewController {
             return
         }
         guard let index = workspace.tabs.firstIndex(where: { $0.id == id }) else { return }
+        guard let scope = storedScope(from: activeScope) else { return }
         let tab = workspace.tabs.remove(at: index)
-        tab.controller.terminateSessions()
+        recentlyClosedTerminalTab?.tab.controller.terminateSessions()
+        recentlyClosedTerminalTab = (scope: scope, index: index, tab: tab)
         tab.controller.view.removeFromSuperview()
         tab.controller.removeFromParent()
         if workspace.activeTabID == id {
@@ -1672,6 +1774,10 @@ final class WorkspaceViewController: NSViewController {
             await Task.yield()
             guard let self else { return }
             view.window?.makeFirstResponder(nil)
+            discardRecentlyClosedTerminalTab(for: .repository(
+                taskID: scope.taskID,
+                repositoryID: scope.repositoryID
+            ))
             if let workspace = repositoryWorkspaces.removeValue(forKey: scope) {
                 closeTerminals(in: workspace)
             }
@@ -1749,6 +1855,7 @@ final class WorkspaceViewController: NSViewController {
 
     private func closeTerminalWorkspaces(for taskID: UUID) {
         view.window?.makeFirstResponder(nil)
+        discardRecentlyClosedTerminalTab(forTaskID: taskID)
         if let workspace = taskWorkspaces.removeValue(forKey: taskID) {
             closeTerminals(in: workspace)
         }
@@ -1776,6 +1883,30 @@ final class WorkspaceViewController: NSViewController {
         workspace.activeTabID = nil
     }
 
+    private func discardRecentlyClosedTerminalTab() {
+        recentlyClosedTerminalTab?.tab.controller.terminateSessions()
+        recentlyClosedTerminalTab = nil
+    }
+
+    private func discardRecentlyClosedTerminalTab(for scope: StoredWorkspaceScope) {
+        guard recentlyClosedTerminalTab?.scope == scope else { return }
+        discardRecentlyClosedTerminalTab()
+    }
+
+    private func discardRecentlyClosedTerminalTab(forTaskID taskID: UUID) {
+        guard let scope = recentlyClosedTerminalTab?.scope else { return }
+        let belongsToTask: Bool
+        switch scope {
+        case .task(let id):
+            belongsToTask = id == taskID
+        case .repository(let id, _):
+            belongsToTask = id == taskID
+        }
+        if belongsToTask {
+            discardRecentlyClosedTerminalTab()
+        }
+    }
+
     private func failTaskDeletion(_ taskID: UUID, message: String) {
         taskDeletionStates[taskID] = .failed(message)
         taskErrors[taskID] = "Deletion failed"
@@ -1800,6 +1931,10 @@ final class WorkspaceViewController: NSViewController {
     ) {
         do {
             try storeWorktreeProvisioning(report, for: scope)
+            discardRecentlyClosedTerminalTab(for: .repository(
+                taskID: scope.taskID,
+                repositoryID: scope.repositoryID
+            ))
             if let workspace = repositoryWorkspaces.removeValue(forKey: scope) {
                 closeTerminals(in: workspace)
             }
@@ -2310,7 +2445,8 @@ final class WorkspaceViewController: NSViewController {
             try sessionStore.save(AppSession(
                 activeScope: storedScope(from: activeScope),
                 expandedTaskIDs: expandedTaskIDs,
-                terminalWorkspaces: storedTerminalWorkspaces
+                terminalWorkspaces: storedTerminalWorkspaces,
+                recentlyClosedTerminalTab: storedRecentlyClosedTerminalTab
             ))
         } catch {
             NSLog("Could not persist app session: \(error.localizedDescription)")
@@ -2344,6 +2480,21 @@ final class WorkspaceViewController: NSViewController {
                 ))
             }
         return taskSnapshots + repositorySnapshots
+    }
+
+    private var storedRecentlyClosedTerminalTab: StoredClosedTerminalTab? {
+        guard let recentlyClosedTerminalTab else { return nil }
+        let terminal = recentlyClosedTerminalTab.tab.controller.sessionSnapshot
+        guard terminal.isValid else { return nil }
+        return StoredClosedTerminalTab(
+            scope: recentlyClosedTerminalTab.scope,
+            index: recentlyClosedTerminalTab.index,
+            tab: StoredTerminalTab(
+                id: recentlyClosedTerminalTab.tab.id,
+                title: recentlyClosedTerminalTab.tab.title,
+                terminal: terminal
+            )
+        )
     }
 
     private func storedScope(from scope: WorkspaceScope?) -> StoredWorkspaceScope? {

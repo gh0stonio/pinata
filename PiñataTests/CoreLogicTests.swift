@@ -624,7 +624,12 @@ final class CoreLogicTests: XCTestCase {
                     activeTabID: tabID,
                     nextTabNumber: 2
                 ),
-            ]
+            ],
+            recentlyClosedTerminalTab: StoredClosedTerminalTab(
+                scope: .task(taskID),
+                index: 0,
+                tab: StoredTerminalTab(id: tabID, title: "Terminal", terminal: terminal)
+            )
         )
         let store = AppSessionStore(fileURL: directoryURL.appendingPathComponent("session.json"))
 
