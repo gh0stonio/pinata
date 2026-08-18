@@ -62,7 +62,7 @@ The current `main` branch includes:
 - Pinata syntax highlighting for common programming and configuration languages, including full Markdown token support.
 - Editor font-size settings and a loading state while file contents are read.
 
-Sidebar pull request status and check results are available through local or remote `gh`; diffs, reviews, check actions, pull request workflows, and Pi discussion/daemon support are not implemented yet.
+Sidebar pull request status and check results are available through local or remote `gh`. Each repository can select its `gh` profile, defaulting to the active profile. Diffs, reviews, check actions, pull request workflows, and Pi discussion/daemon support are not implemented yet.
 
 ## Project Structure
 

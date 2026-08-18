@@ -129,6 +129,7 @@ final class WorkspaceViewController: NSViewController {
     private static let exitRevealGracePeriod: TimeInterval = 0.75
     private static let revealAnimationDuration: TimeInterval = 0.12
     private static let dismissAnimationDuration: TimeInterval = 0.10
+    private static let pullRequestRefreshInterval: TimeInterval = 60
 
     private let runtime: GhosttyRuntime
     private let workspaceCard = NSView()
@@ -176,6 +177,9 @@ final class WorkspaceViewController: NSViewController {
     private var repositoryActionMenu: SidebarActionMenuView?
     private var repositoryActionMenuMouseMonitor: Any?
     private var repositoryActionMenuScope: TaskRepositoryScope?
+    private var pullRequestRefreshTimer: Timer?
+    private var worktreeBranchRefreshTask: Task<Void, Never>?
+    private var applicationIsActive = true
     private var leftResizeWindowWidth: CGFloat?
     private var leftResizeStartWidth: CGFloat?
     private var rightResizeStartWidth: CGFloat?
@@ -223,6 +227,7 @@ final class WorkspaceViewController: NSViewController {
             loadError = "Could not load tasks: \(error.localizedDescription)"
         }
         tasks = loadedTasks
+        pullRequestStatusStore.seed(loadedTasks)
         taskRegistryLoaded = didLoadTaskRegistry
         taskLoadError = loadError
         let restoredSession = try? sessionStore.load()
@@ -268,8 +273,10 @@ final class WorkspaceViewController: NSViewController {
             )
         }
         super.init(nibName: nil, bundle: nil)
-        pullRequestStatusStore.onChange = { [weak self] in
-            self?.updateTaskSidebar()
+        pullRequestStatusStore.onChange = { [weak self] repositoryIDs in
+            guard let self else { return }
+            self.persistPullRequestMetadata(for: repositoryIDs)
+            self.leftPanelController.updatePullRequestStatuses(self.pullRequestStatusStore.statuses)
         }
         if let storedTab = restoredSession?.recentlyClosedTerminalTab,
            storedTab.tab.terminal.isValid,
@@ -316,6 +323,7 @@ final class WorkspaceViewController: NSViewController {
         super.viewDidAppear()
         observeWindowIfNeeded()
         installKeyEventMonitorIfNeeded()
+        installPullRequestRefreshTimerIfNeeded()
         fullScreen = view.window?.styleMask.contains(.fullScreen) == true
         applySidebarPresentation()
         activeTerminalController?.focusActiveTerminal()
@@ -326,6 +334,10 @@ final class WorkspaceViewController: NSViewController {
         cancelScheduledTransitions()
         dismissTaskActionMenu()
         dismissRepositoryActionMenu()
+        worktreeBranchRefreshTask?.cancel()
+        worktreeBranchRefreshTask = nil
+        pullRequestRefreshTimer?.invalidate()
+        pullRequestRefreshTimer = nil
         NotificationCenter.default.removeObserver(self)
         if let keyEventMonitor {
             NSEvent.removeMonitor(keyEventMonitor)
@@ -602,6 +614,7 @@ final class WorkspaceViewController: NSViewController {
         rootView.addSubview(leftResizeHandle)
         workspaceCard.addSubview(rightPanel)
         rootView.addSubview(rightResizeHandle)
+        refreshRenamedWorktreeBranches()
         updateTaskSidebar()
     }
 
@@ -2035,12 +2048,15 @@ final class WorkspaceViewController: NSViewController {
             return
         }
         let attachment = attachments[attachmentIndex]
+        let branch = report.succeeded ? report.branch : attachment.branch
         attachments[attachmentIndex] = TaskRepositoryAttachment(
             repositoryID: attachment.repositoryID,
             name: attachment.name,
             worktreePath: report.succeeded ? report.path : nil,
             worktreeProvisioning: report.succeeded ? nil : report,
-            branch: report.succeeded ? report.branch : attachment.branch
+            branch: branch,
+            pullRequests: branch == attachment.branch ? attachment.pullRequests : [],
+            pullRequestsFetchedAt: branch == attachment.branch ? attachment.pullRequestsFetchedAt : nil
         )
         var updatedTasks = tasks
         updatedTasks[taskIndex] = WorkspaceTask(
@@ -2204,7 +2220,7 @@ final class WorkspaceViewController: NSViewController {
         updateTaskSidebar()
     }
 
-    private func updateTaskSidebar() {
+    private func updateTaskSidebar(rebuild: Bool = true) {
         let connections = (try? sshConnectionStore.load()) ?? []
         sshConnectionStatusMonitor.sync(connections)
         let connectionsByID = Dictionary(uniqueKeysWithValues: connections.map { ($0.id, $0) })
@@ -2218,27 +2234,47 @@ final class WorkspaceViewController: NSViewController {
         }
         let repositoryTargets = registeredRepositories.mapValues(\.target)
         let repositoryPaths = registeredRepositories.mapValues(\.path)
+        let repositoryRemoteURLs = registeredRepositories.compactMapValues(\.remoteURL)
         let repositoryBranches = registeredRepositories.compactMapValues {
             $0.currentBranch ?? $0.defaultBranch
+        }
+        let pullRequestBranches = tasks.reduce(into: [UUID: Set<String>]()) { result, task in
+            for repository in task.repositories {
+                let branch = repository.branch
+                    ?? repository.worktreeProvisioning?.branch
+                    ?? repositoryBranches[repository.repositoryID]
+                guard let branch, !branch.isEmpty else { continue }
+                result[repository.repositoryID, default: []].insert(branch)
+            }
         }
         let repositoryIDs = Set(tasks.flatMap { $0.repositories.map(\.repositoryID) })
         let pullRequestContexts = repositoryIDs.reduce(into: [UUID: PullRequestQueryContext]()) { result, repositoryID in
             guard let repository = registeredRepositories[repositoryID] else { return }
+            let branches = (pullRequestBranches[repositoryID] ?? [])
+                .sorted()
             switch repository.target {
             case .local:
                 result[repositoryID] = PullRequestQueryContext(
                     path: repository.path,
-                    target: .local
+                    target: .local,
+                    branches: branches,
+                    ghProfile: repository.ghProfile
                 )
             case .ssh(let connectionID):
                 guard let connection = connectionsByID[connectionID], connection.isEnabled else { return }
                 result[repositoryID] = PullRequestQueryContext(
                     path: repository.path,
-                    target: .ssh(connection)
+                    target: .ssh(connection),
+                    branches: branches,
+                    ghProfile: repository.ghProfile
                 )
             }
         }
         pullRequestStatusStore.refresh(pullRequestContexts)
+        guard rebuild else {
+            leftPanelController.updatePullRequestStatuses(pullRequestStatusStore.statuses)
+            return
+        }
         var displayedRepositoryErrors = repositoryErrors
         for task in tasks {
             for repository in task.repositories {
@@ -2285,11 +2321,183 @@ final class WorkspaceViewController: NSViewController {
             repositoryTargets: repositoryTargets,
             repositoryPaths: repositoryPaths,
             repositoryBranches: repositoryBranches,
+            repositoryRemoteURLs: repositoryRemoteURLs,
             pullRequestStatuses: pullRequestStatusStore.statuses,
             taskErrors: taskErrors,
             repositoryErrors: displayedRepositoryErrors,
             loadError: taskLoadError
         )
+    }
+
+    private struct WorktreeBranchProbe: Sendable {
+        let scope: TaskRepositoryScope
+        let path: String
+        let branch: String
+        let connection: SSHConnection?
+    }
+
+    private func refreshRenamedWorktreeBranches() {
+        guard worktreeBranchRefreshTask == nil else { return }
+        let registeredRepositories = (try? repositoryStore.load()) ?? []
+        let repositoriesByID = Dictionary(uniqueKeysWithValues: registeredRepositories.map { ($0.id, $0) })
+        let connectionsByID = Dictionary(
+            uniqueKeysWithValues: ((try? sshConnectionStore.load()) ?? []).map { ($0.id, $0) }
+        )
+        var probes: [WorktreeBranchProbe] = []
+        var seen = Set<TaskRepositoryScope>()
+        for task in tasks {
+            for attachment in task.repositories {
+                let scope = TaskRepositoryScope(taskID: task.id, repositoryID: attachment.repositoryID)
+                guard seen.insert(scope).inserted,
+                      let path = attachment.worktreePath ?? attachment.worktreeProvisioning?.path,
+                      let branch = attachment.branch ?? attachment.worktreeProvisioning?.branch,
+                      let repository = repositoriesByID[attachment.repositoryID]
+                else { continue }
+                let connection: SSHConnection?
+                switch repository.target {
+                case .local:
+                    connection = nil
+                case .ssh(let connectionID):
+                    guard let value = connectionsByID[connectionID], value.isEnabled else { continue }
+                    connection = value
+                }
+                probes.append(WorktreeBranchProbe(
+                    scope: scope,
+                    path: path,
+                    branch: branch,
+                    connection: connection
+                ))
+            }
+        }
+        guard !probes.isEmpty else { return }
+        let probesToInspect = probes
+        worktreeBranchRefreshTask = Task { [weak self] in
+            let observed = await Task.detached(priority: .utility) { [probesToInspect] in
+                probesToInspect.compactMap { probe -> (TaskRepositoryScope, String)? in
+                    guard let branch = try? RepositoryInspector().renamedBranch(
+                        at: probe.path,
+                        from: probe.branch,
+                        connection: probe.connection
+                    ) else { return nil }
+                    return (probe.scope, branch)
+                }
+            }.value
+            guard let self, !Task.isCancelled else { return }
+            self.worktreeBranchRefreshTask = nil
+            self.applyRenamedWorktreeBranches(observed)
+        }
+    }
+
+    private func applyRenamedWorktreeBranches(_ observed: [(TaskRepositoryScope, String)]) {
+        guard !observed.isEmpty else { return }
+        let observedByScope = Dictionary(uniqueKeysWithValues: observed)
+        var updatedTasks = tasks
+        var didChange = false
+        for taskIndex in updatedTasks.indices {
+            var attachments = updatedTasks[taskIndex].repositories
+            var taskChanged = false
+            for attachmentIndex in attachments.indices {
+                let attachment = attachments[attachmentIndex]
+                let scope = TaskRepositoryScope(
+                    taskID: updatedTasks[taskIndex].id,
+                    repositoryID: attachment.repositoryID
+                )
+                guard let branch = observedByScope[scope], branch != attachment.branch else { continue }
+                attachments[attachmentIndex].branch = branch
+                attachments[attachmentIndex].pullRequests = []
+                attachments[attachmentIndex].pullRequestsFetchedAt = nil
+                taskChanged = true
+            }
+            guard taskChanged else { continue }
+            let task = updatedTasks[taskIndex]
+            updatedTasks[taskIndex] = WorkspaceTask(
+                id: task.id,
+                title: task.title,
+                repositories: attachments,
+                createdAt: task.createdAt,
+                isPinned: task.isPinned
+            )
+            didChange = true
+        }
+        guard didChange else { return }
+        tasks = updatedTasks
+        try? taskStore.save(updatedTasks)
+        updateTaskSidebar()
+    }
+
+    func refreshPullRequestStatuses() {
+        refreshRenamedWorktreeBranches()
+        updateTaskSidebar(rebuild: false)
+    }
+
+    func setApplicationActive(_ isActive: Bool) {
+        applicationIsActive = isActive
+        if isActive {
+            refreshPullRequestStatuses()
+        }
+    }
+
+    private func persistPullRequestMetadata(for repositoryIDs: Set<UUID>) {
+        guard !repositoryIDs.isEmpty,
+              let repositories = try? repositoryStore.load()
+        else { return }
+        let repositoryBranches = repositories.reduce(into: [UUID: String]()) { result, repository in
+            result[repository.id] = repository.currentBranch ?? repository.defaultBranch
+        }
+        let fetchedAt = Date()
+        var updatedTasks = tasks
+        var didChange = false
+        for taskIndex in updatedTasks.indices {
+            var attachments = updatedTasks[taskIndex].repositories
+            var taskChanged = false
+            for attachmentIndex in attachments.indices {
+                let attachment = attachments[attachmentIndex]
+                guard repositoryIDs.contains(attachment.repositoryID),
+                      let status = pullRequestStatusStore.statuses[attachment.repositoryID],
+                      status.availability == .loaded,
+                      let branch = attachment.branch
+                          ?? attachment.worktreeProvisioning?.branch
+                          ?? repositoryBranches[attachment.repositoryID],
+                      !branch.isEmpty
+                else { continue }
+                let pullRequests = status.related(to: branch)
+                guard attachment.pullRequests != pullRequests
+                    || attachment.pullRequestsFetchedAt == nil else { continue }
+                attachments[attachmentIndex].pullRequests = pullRequests
+                attachments[attachmentIndex].pullRequestsFetchedAt = fetchedAt
+                taskChanged = true
+            }
+            guard taskChanged else { continue }
+            let task = updatedTasks[taskIndex]
+            updatedTasks[taskIndex] = WorkspaceTask(
+                id: task.id,
+                title: task.title,
+                repositories: attachments,
+                createdAt: task.createdAt,
+                isPinned: task.isPinned
+            )
+            didChange = true
+        }
+        guard didChange else { return }
+        guard (try? taskStore.save(updatedTasks)) != nil else { return }
+        tasks = updatedTasks
+    }
+
+    private func installPullRequestRefreshTimerIfNeeded() {
+        guard pullRequestRefreshTimer == nil else { return }
+        pullRequestRefreshTimer = Timer.scheduledTimer(
+            withTimeInterval: Self.pullRequestRefreshInterval,
+            repeats: true
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.refreshPullRequestStatusesIfActive()
+            }
+        }
+    }
+
+    private func refreshPullRequestStatusesIfActive() {
+        guard applicationIsActive else { return }
+        refreshPullRequestStatuses()
     }
 
     private func dismissNewTaskModal() {
@@ -2713,6 +2921,7 @@ final class WorkspaceViewController: NSViewController {
         settingsController?.removeFromParent()
         settingsController = nil
         installActiveWorkspace()
+        refreshPullRequestStatuses()
         applySidebarPresentation()
         activeTerminalController?.focusActiveTerminal()
     }
@@ -3772,7 +3981,16 @@ private final class PanelResizeHandle: NSView {
     override func resetCursorRects() {
         super.resetCursorRects()
         guard enabled else { return }
-        addCursorRect(bounds, cursor: .resizeLeftRight)
+        let cursorWidth = min(AppTheme.resizeIndicatorWidth, bounds.width)
+        addCursorRect(
+            NSRect(
+                x: bounds.midX - cursorWidth / 2,
+                y: bounds.minY,
+                width: cursorWidth,
+                height: bounds.height
+            ),
+            cursor: .resizeLeftRight
+        )
     }
 
     override func mouseDown(with event: NSEvent) {

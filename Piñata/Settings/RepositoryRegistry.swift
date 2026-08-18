@@ -11,6 +11,7 @@ struct RegisteredRepository: Codable, Equatable, Identifiable, Sendable {
     let organization: String?
     var worktreeBasePath: String?
     var target: RepositoryTarget
+    var ghProfile: String?
 
     init(
         id: UUID = UUID(),
@@ -22,7 +23,8 @@ struct RegisteredRepository: Codable, Equatable, Identifiable, Sendable {
         remoteURL: String?,
         organization: String?,
         worktreeBasePath: String? = nil,
-        target: RepositoryTarget = .local
+        target: RepositoryTarget = .local,
+        ghProfile: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -34,11 +36,12 @@ struct RegisteredRepository: Codable, Equatable, Identifiable, Sendable {
         self.organization = organization
         self.worktreeBasePath = worktreeBasePath
         self.target = target
+        self.ghProfile = ghProfile
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, path, branches, defaultBranch, currentBranch, remoteURL, organization
-        case worktreeBasePath, target
+        case worktreeBasePath, target, ghProfile
     }
 
     init(from decoder: Decoder) throws {
@@ -53,6 +56,7 @@ struct RegisteredRepository: Codable, Equatable, Identifiable, Sendable {
         organization = try container.decodeIfPresent(String.self, forKey: .organization)
         worktreeBasePath = try container.decodeIfPresent(String.self, forKey: .worktreeBasePath)
         target = try container.decodeIfPresent(RepositoryTarget.self, forKey: .target) ?? .local
+        ghProfile = try container.decodeIfPresent(String.self, forKey: .ghProfile)
     }
 }
 
@@ -286,7 +290,8 @@ struct RepositoryInspector: Sendable {
             remoteURL: inspected.remoteURL,
             organization: inspected.organization,
             worktreeBasePath: repository.worktreeBasePath,
-            target: repository.target
+            target: repository.target,
+            ghProfile: repository.ghProfile
         )
     }
 
@@ -306,6 +311,20 @@ struct RepositoryInspector: Sendable {
 
     func currentBranch(at path: String, connection: SSHConnection? = nil) throws -> String {
         try gitOutput(["-C", path, "branch", "--show-current"], connection: connection)
+    }
+
+    func renamedBranch(
+        at path: String,
+        from branch: String,
+        connection: SSHConnection? = nil
+    ) throws -> String? {
+        let current = try currentBranch(at: path, connection: connection)
+        guard !current.isEmpty, current != branch else { return nil }
+        let original = try gitOutput(
+            ["-C", path, "branch", "--list", branch],
+            connection: connection
+        )
+        return original.isEmpty ? current : nil
     }
 
     func removeWorktree(
@@ -329,7 +348,17 @@ struct RepositoryInspector: Sendable {
             return pathMatches
         }
             ?? ownedWorktree(in: worktrees, taskID: taskID, repository: repository, connection: connection)
-        let branch = worktree?.branch ?? branchHint
+        let branch: String?
+        if let branchHint,
+           !(try gitOutput(
+               ["-C", repository.path, "branch", "--list", branchHint],
+               connection: connection
+           )).isEmpty
+        {
+            branch = branchHint
+        } else {
+            branch = worktree?.branch ?? branchHint
+        }
         let pathExists = connection == nil && FileManager.default.fileExists(atPath: path)
         guard worktree != nil || !pathExists else {
             throw RepositoryInspectionError.gitFailed(

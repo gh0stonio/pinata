@@ -110,7 +110,7 @@ sequenceDiagram
 
 Piñata fetches the registered repository's configured default branch first. The new branch is then created from the updated `origin/<default-branch>` reference. This avoids basing new worktrees on a stale local branch.
 
-After creation, the task attachment keeps its provisioned branch as its source context. A terminal can temporarily check out another branch without changing the task attachment or its pull request context.
+After creation, the task attachment keeps its provisioned branch as its source context. Piñata follows a rename when that branch disappears and the worktree points to its replacement. A temporary checkout leaves the owned branch intact, so it does not change the task attachment or its pull request context.
 
 ### Naming
 
@@ -173,12 +173,12 @@ If cleanup fails, the task stays visible in a deleting or failed state. This kee
 
 ## Settings and appearance
 
-Piñata persists application settings locally: dark or light theme, accent color and intensity, application font size, terminal font size, editor font size, file preview behavior, file-icon color, panel widths, worktree defaults, and the task branch prefix. Colors and typography are supplied through the shared AppKit theme system so light and dark appearances use the same semantic roles.
+Piñata persists application settings locally: dark or light theme, accent color and intensity, application font size, terminal font size, editor font size, file preview behavior, file-icon color, panel widths, worktree defaults, the task branch prefix, and the optional GitHub CLI profile selected for each repository. Colors and typography are supplied through the shared AppKit theme system so light and dark appearances use the same semantic roles.
 
 ## Current product limits
 
 - SSH uses an existing OpenSSH alias and non-interactive key authentication. Piñata does not manage keys, passwords, host verification, tunnels, or port forwarding.
-- Sidebar pull request status and check results are read-only and depend on local or remote `gh` availability. Diff, review, check actions, and pull request workflows remain placeholders.
+- Sidebar pull request status and check results are read-only and depend on local or remote `gh` availability. Each repository can select one discovered `gh` profile, defaulting to the active profile. Piñata fetches pull request branches once per repository checkout and profile, then reconciles task branches in the app and loads full details only for matches. Refresh runs at workspace load, app activation, and every 60 seconds while active. Diff, review, check actions, and pull request workflows remain placeholders.
 - No Pi discussion UI, Pi daemon, or agent-specific persistence.
 - No recovery of a local shell after macOS restarts, or a remote process after its host restarts.
 
