@@ -111,7 +111,7 @@ flowchart LR
     AppSupport --> Repos[repositories.json]
     AppSupport --> Connections[ssh-connections.json]
     AppSupport --> Session[app-session.json]
-    AppSupport --> FileTree[file-tree-cache-v1.json]
+    AppSupport --> FileTree[file-tree-cache-v2.json]
     Defaults[UserDefaults] --> Appearance[appearance and typography]
     Defaults --> Panels[sidebar presentation and panel widths]
     Defaults --> WorktreeDefault[global worktree base]
@@ -124,7 +124,7 @@ flowchart LR
 | Registered repositories and overrides | `repositories.json` | Repository registration or settings edit. |
 | SSH connection names, aliases, and enabled state | `ssh-connections.json` | Connection edit or enable change. |
 | UI and terminal layout snapshot | `app-session.json` | Relevant workspace change, with a short coalescing delay, and app termination. |
-| File-tree listings and expanded paths | `file-tree-cache-v1.json` | Workspace change, right-panel close, and app termination. |
+| File-tree listings and expanded paths | `file-tree-cache-v2.json` | Workspace change, right-panel close, and app termination. |
 | Appearance and small UI preferences | `UserDefaults` | Settings or panel presentation change, including editor font size, file preview behavior, worktree base, and task branch prefix. |
 
 JSON writes use atomic replacement. Session files use a version number. An unsupported version is ignored rather than decoded as a partially compatible layout.

@@ -124,6 +124,7 @@ final class WorkspaceViewController: NSViewController {
     private static let sidebarDefaultsKey = "pinata.sidebar.presentation.v1"
     private static let leftPanelWidthDefaultsKey = "pinata.panel.left.width.v1"
     private static let rightPanelWidthDefaultsKey = "pinata.panel.right.width.v1"
+    private static let rightPanelVisibilityDefaultsKey = "pinata.panel.right.visible.v1"
     private static let dismissDelay: TimeInterval = 0.30
     private static let exitRevealGracePeriod: TimeInterval = 0.75
     private static let revealAnimationDuration: TimeInterval = 0.12
@@ -176,6 +177,8 @@ final class WorkspaceViewController: NSViewController {
     private var repositoryActionMenuMouseMonitor: Any?
     private var repositoryActionMenuScope: TaskRepositoryScope?
     private var leftResizeWindowWidth: CGFloat?
+    private var leftResizeStartWidth: CGFloat?
+    private var rightResizeStartWidth: CGFloat?
 
     private var leftWidthConstraint: NSLayoutConstraint!
     private var rightWidthConstraint: NSLayoutConstraint!
@@ -251,6 +254,7 @@ final class WorkspaceViewController: NSViewController {
         let stored = UserDefaults.standard.string(forKey: Self.sidebarDefaultsKey)
         sidebarPresentation = stored == SidebarPresentation.hidden.rawValue ? .hidden : .docked
         let defaults = UserDefaults.standard
+        rightPanelVisible = defaults.bool(forKey: Self.rightPanelVisibilityDefaultsKey)
         if defaults.object(forKey: Self.leftPanelWidthDefaultsKey) != nil {
             leftPanelWidth = min(
                 max(CGFloat(defaults.double(forKey: Self.leftPanelWidthDefaultsKey)), AppTheme.leftPanelRange.lowerBound),
@@ -346,6 +350,10 @@ final class WorkspaceViewController: NSViewController {
 
     @objc func toggleRightPanel(_ sender: Any?) {
         rightPanelVisible.toggle()
+        UserDefaults.standard.set(
+            rightPanelVisible,
+            forKey: Self.rightPanelVisibilityDefaultsKey
+        )
         applySidebarPresentation()
     }
 
@@ -593,7 +601,7 @@ final class WorkspaceViewController: NSViewController {
         rootView.addSubview(leftPanel)
         rootView.addSubview(leftResizeHandle)
         workspaceCard.addSubview(rightPanel)
-        workspaceCard.addSubview(rightResizeHandle)
+        rootView.addSubview(rightResizeHandle)
         updateTaskSidebar()
     }
 
@@ -760,19 +768,29 @@ final class WorkspaceViewController: NSViewController {
             }
         }
         leftResizeHandle.onDrag = { [weak self] delta in
-            self?.resizeLeftPanel(by: delta)
+            guard let self, let startWidth = self.leftResizeStartWidth else { return }
+            self.resizeLeftPanel(to: startWidth + delta)
         }
         leftResizeHandle.onDragBegan = { [weak self] in
             self?.leftResizeWindowWidth = self?.view.bounds.width
+            self?.leftResizeStartWidth = self?.leftWidthConstraint.constant
         }
         leftResizeHandle.onDragEnded = { [weak self] in
             self?.leftResizeWindowWidth = nil
+            self?.leftResizeStartWidth = nil
         }
         leftResizeHandle.onKeyboardResize = { [weak self] command in
             self?.resizeLeftPanel(with: command)
         }
         rightResizeHandle.onDrag = { [weak self] delta in
-            self?.resizeRightPanel(by: -delta)
+            guard let self, let startWidth = self.rightResizeStartWidth else { return }
+            self.resizeRightPanel(to: startWidth - delta)
+        }
+        rightResizeHandle.onDragBegan = { [weak self] in
+            self?.rightResizeStartWidth = self?.rightWidthConstraint.constant
+        }
+        rightResizeHandle.onDragEnded = { [weak self] in
+            self?.rightResizeStartWidth = nil
         }
         rightResizeHandle.onKeyboardResize = { [weak self] command in
             self?.resizeRightPanel(with: command)
@@ -2725,7 +2743,7 @@ final class WorkspaceViewController: NSViewController {
         }
     }
 
-    private func resizeLeftPanel(by delta: CGFloat) {
+    private func resizeLeftPanel(to width: CGFloat) {
         guard sidebarPresentation == .docked else { return }
         let maximumFromWindow = (leftResizeWindowWidth ?? view.bounds.width)
             - AppTheme.minimumCenterWidth
@@ -2735,13 +2753,17 @@ final class WorkspaceViewController: NSViewController {
             min(AppTheme.leftPanelRange.upperBound, maximumFromWindow)
         )
         leftPanelWidth = min(
-            max(leftWidthConstraint.constant + delta, AppTheme.leftPanelRange.lowerBound),
+            max(width, AppTheme.leftPanelRange.lowerBound),
             maximum
         )
         leftWidthConstraint.constant = leftPanelWidth
         UserDefaults.standard.set(Double(leftPanelWidth), forKey: Self.leftPanelWidthDefaultsKey)
         view.layoutSubtreeIfNeeded()
         updateWindowMinimumSize()
+    }
+
+    private func resizeLeftPanel(by delta: CGFloat) {
+        resizeLeftPanel(to: leftWidthConstraint.constant + delta)
     }
 
     private func resizeLeftPanel(with command: PanelResizeHandle.KeyboardCommand) {
@@ -2757,16 +2779,20 @@ final class WorkspaceViewController: NSViewController {
         }
     }
 
-    private func resizeRightPanel(by delta: CGFloat) {
+    private func resizeRightPanel(to width: CGFloat) {
         guard rightPanelVisible, settingsController == nil else { return }
         rightPanelWidth = min(
-            max(rightWidthConstraint.constant + delta, AppTheme.rightPanelRange.lowerBound),
+            max(width, AppTheme.rightPanelRange.lowerBound),
             AppTheme.rightPanelRange.upperBound
         )
         rightWidthConstraint.constant = rightPanelWidth
         UserDefaults.standard.set(Double(rightPanelWidth), forKey: Self.rightPanelWidthDefaultsKey)
         view.layoutSubtreeIfNeeded()
         updateWindowMinimumSize()
+    }
+
+    private func resizeRightPanel(by delta: CGFloat) {
+        resizeRightPanel(to: rightWidthConstraint.constant + delta)
     }
 
     private func resizeRightPanel(with command: PanelResizeHandle.KeyboardCommand) {
@@ -3751,17 +3777,20 @@ private final class PanelResizeHandle: NSView {
 
     override func mouseDown(with event: NSEvent) {
         guard enabled else { return }
+        let dragStartX = event.locationInWindow.x
         onDragBegan?()
-        super.mouseDown(with: event)
-    }
-
-    override func mouseDragged(with event: NSEvent) {
-        guard enabled else { return }
-        onDrag?(event.deltaX)
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        super.mouseUp(with: event)
+        while let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
+            switch next.type {
+            case .leftMouseDragged:
+                guard enabled else { continue }
+                onDrag?(next.locationInWindow.x - dragStartX)
+            case .leftMouseUp:
+                onDragEnded?()
+                return
+            default:
+                break
+            }
+        }
         onDragEnded?()
     }
 

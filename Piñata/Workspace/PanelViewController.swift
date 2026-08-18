@@ -2738,6 +2738,7 @@ final class WorkspacePanelViewController: NSViewController, NSOutlineViewDataSou
     private var deferredReloadPaths = Set<String>()
     private var isFileTreeLiveScrolling = false
     private var isRestoringExpandedPaths = false
+    private var isReloadingFileTree = false
     private var isCollapsingFileBranch = false
     private var isPanelVisible = false
     private var localRootWatcher: FileTreeRootWatcher?
@@ -2927,7 +2928,13 @@ final class WorkspacePanelViewController: NSViewController, NSOutlineViewDataSou
         touchFileEntries(fileEntries.keys)
         fileErrors = [:]
         fileRoot = root
-        expandedPaths = cached?.expandedPaths ?? root.map { [$0.path] } ?? []
+        expandedPaths = root.map {
+            normalizedExpandedPaths(
+                cached?.expandedPaths ?? [$0.path],
+                root: $0,
+                cachedEntries: cached?.entries ?? [:]
+            )
+        } ?? []
         let loadedDirectoryCount = fileEntries.count
         trimInactiveFileEntries()
         if fileEntries.count != loadedDirectoryCount { fileCacheDirty = true }
@@ -3166,8 +3173,8 @@ final class WorkspacePanelViewController: NSViewController, NSOutlineViewDataSou
 
     func outlineView(_ outlineView: NSOutlineView, shouldCollapseItem item: Any) -> Bool {
         guard let node = item as? FileTreeNode, let entry = node.entry else { return false }
-        if isCollapsingFileBranch { return true }
-        expandedPaths.remove(entry.path)
+        if isCollapsingFileBranch || isReloadingFileTree { return true }
+        expandedPaths = expandedPaths.filter { !contains($0, in: entry.path) }
         saveCurrentFileCache()
         DispatchQueue.main.async { [weak self] in
             self?.updateFileTreeWidth()
@@ -3223,6 +3230,30 @@ final class WorkspacePanelViewController: NSViewController, NSOutlineViewDataSou
         path.split(separator: "/").count
     }
 
+    private func normalizedExpandedPaths(
+        _ paths: Set<String>,
+        root: FileRoot,
+        cachedEntries: [String: [FileTreeEntry]]
+    ) -> Set<String> {
+        var normalized: Set<String> = [root.path]
+        let rootChildren = Set(
+            (cachedEntries[root.path] ?? [])
+                .filter(\.isDirectory)
+                .map(\.path)
+        )
+        for path in paths.sorted(by: { pathDepth($0) < pathDepth($1) }) {
+            guard path != root.path else { continue }
+            let isRootChild = rootChildren.contains(path)
+            let hasExpandedParent = RemoteDirectoryInspector
+                .parent(of: path)
+                .map { normalized.contains($0) } ?? false
+            if isRootChild || hasExpandedParent {
+                normalized.insert(path)
+            }
+        }
+        return normalized
+    }
+
     private func reloadDirectory(_ path: String) {
         reloadDirectories([path])
     }
@@ -3233,20 +3264,26 @@ final class WorkspacePanelViewController: NSViewController, NSOutlineViewDataSou
             deferredReloadPaths.formUnion(paths)
             return
         }
-        let pathsToRestore: Set<String> = Set(fileNodes.compactMap { path, node -> String? in
-            guard fileOutline.isItemExpanded(node),
-                  paths.contains(where: { contains(path, in: $0) })
-            else { return nil }
-            return path
-        })
+        let pathsToRestore = expandedPaths.filter { expandedPath in
+            paths.contains(where: { changedPath in
+                contains(expandedPath, in: changedPath)
+            })
+        }
         var didReload = false
+        isReloadingFileTree = true
         for path in paths {
             guard let node = fileNodes[path] ?? rootNode(for: path) else { continue }
             fileOutline.reloadItem(node, reloadChildren: true)
             didReload = true
         }
-        if didReload { restoreExpandedPaths(pathsToRestore) }
-        if didReload { updateFileTreeWidth() }
+        isReloadingFileTree = false
+        if didReload {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.restoreExpandedPaths(pathsToRestore)
+                self.updateFileTreeWidth()
+            }
+        }
     }
 
     private func updateFileTreeWidth() {
@@ -3380,10 +3417,12 @@ final class WorkspacePanelViewController: NSViewController, NSOutlineViewDataSou
     private func captureCurrentFileCache() {
         guard let root = fileRoot, fileEntries[root.path] != nil else { return }
         let key = FileTreeCacheKey(path: root.path, target: root.target)
+        let activeExpandedPaths = activeExpandedPaths()
+        expandedPaths = activeExpandedPaths
         fileCaches[key] = FileTreeCache(
             key: key,
             entries: limitedFileEntries(),
-            expandedPaths: expandedPaths,
+            expandedPaths: activeExpandedPaths,
             updatedAt: Date()
         )
         let retainedKeys = Set(
@@ -3425,7 +3464,7 @@ final class WorkspacePanelViewController: NSViewController, NSOutlineViewDataSou
 
     private func activeExpandedPaths() -> Set<String> {
         Set(fileNodes.compactMap { path, node in
-            fileOutline.isItemExpanded(node) ? path : nil
+            fileOutline.row(forItem: node) >= 0 && fileOutline.isItemExpanded(node) ? path : nil
         })
     }
 

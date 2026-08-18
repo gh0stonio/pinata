@@ -107,7 +107,7 @@ The settings shell uses the same content gutter, section rhythm, and label/contr
 | Registered repositories | `repositories.json` | Includes local or SSH target and worktree override. |
 | SSH connections | `ssh-connections.json` | Stores display name, OpenSSH alias, and enabled state only. |
 | Workspace and terminal layout | `app-session.json` | Restores valid task, attachment, tab, and split references. |
-| File-tree cache | `file-tree-cache-v1.json` | Bounded local and SSH listings plus expanded paths, keyed by root and target. |
+| File-tree cache | `file-tree-cache-v2.json` | Bounded local and SSH listings plus expanded paths, keyed by root and target. |
 | Appearance and panel preferences | `UserDefaults` | Theme, accent, application, terminal, and editor typography, preview behavior, icon color, sidebar presentation, panel widths, global worktree base, and task branch prefix. |
 
 All files are per-user under Application Support, except `UserDefaults`. zmx owns live terminal state and scrollback outside Piñata's stores.

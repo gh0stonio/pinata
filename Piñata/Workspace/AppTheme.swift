@@ -71,7 +71,7 @@ enum AppTheme {
     static let panelContentInset: CGFloat = 14
     static let fullScreenSidebarWidth: CGFloat = 320
     static let leftPanelRange: ClosedRange<CGFloat> = 200...440
-    static let rightPanelRange: ClosedRange<CGFloat> = 350...550
+    static let rightPanelRange: ClosedRange<CGFloat> = 320...500
     static let workspaceHeaderHeight: CGFloat = 36
     static let mainHeaderHeight: CGFloat = 44
     static let workspaceContentInset: CGFloat = 10
