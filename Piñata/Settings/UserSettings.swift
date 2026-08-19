@@ -12,7 +12,6 @@ struct ThemePalette {
     let controlBackground: UInt32
     let controlSelection: UInt32
     let border: UInt32
-    let subtleBorder: UInt32
     let primaryText: UInt32
     let secondaryText: UInt32
     let tertiaryText: UInt32
@@ -31,7 +30,6 @@ extension ThemePreference {
                 controlBackground: 0x343B47,
                 controlSelection: 0x252A33,
                 border: 0x353A3C,
-                subtleBorder: 0x2A2F31,
                 primaryText: 0xFFFFFF,
                 secondaryText: 0xB6BDC0,
                 tertiaryText: 0xA6AEB2,
@@ -46,7 +44,6 @@ extension ThemePreference {
                 controlBackground: 0xE5E9EC,
                 controlSelection: 0xFFFFFF,
                 border: 0xCCD1D6,
-                subtleBorder: 0xDEE3E7,
                 primaryText: 0x1A1F23,
                 secondaryText: 0x39424A,
                 tertiaryText: 0x4A5259,
@@ -80,8 +77,9 @@ enum AppFontSize: String, Codable, CaseIterable {
     case large
 }
 
-
 enum TerminalFontSize: String, Codable, CaseIterable {
+    case tiny
+    case extraSmall
     case small
     case regular
     case large
@@ -91,6 +89,8 @@ enum TerminalFontSize: String, Codable, CaseIterable {
 extension TerminalFontSize {
     var points: Float {
         switch self {
+        case .tiny: 10
+        case .extraSmall: 11
         case .small: 12
         case .regular: 13
         case .large: 14

@@ -38,7 +38,7 @@ final class PinataApp: NSObject, NSApplicationDelegate {
         ghosttyRuntime = runtime
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 960, height: 640),
+            contentRect: NSRect(x: 0, y: 0, width: AppTheme.minimumWindowWidth, height: 640),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -48,7 +48,7 @@ final class PinataApp: NSObject, NSApplicationDelegate {
         window.titlebarAppearsTransparent = true
         window.titlebarSeparatorStyle = .none
         window.backgroundColor = AppTheme.background
-        window.minSize = NSSize(width: 900, height: 600)
+        window.minSize = NSSize(width: AppTheme.minimumWindowWidth, height: 600)
         let workspaceViewController = WorkspaceViewController(runtime: runtime)
         window.contentViewController = workspaceViewController
         self.workspaceViewController = workspaceViewController
@@ -71,13 +71,8 @@ final class PinataApp: NSObject, NSApplicationDelegate {
         ghosttyRuntime?.setApplicationFocused(false)
     }
 
-
     @objc private func toggleLeftPanel(_ sender: Any?) {
         workspaceViewController?.toggleLeftPanel(sender)
-    }
-
-    @objc private func toggleRightPanel(_ sender: Any?) {
-        workspaceViewController?.toggleRightPanel(sender)
     }
 
     @objc private func createTerminalTab(_ sender: Any?) {
@@ -161,13 +156,6 @@ final class PinataApp: NSObject, NSApplicationDelegate {
             keyEquivalent: "b"
         )
         leftPanelItem.target = self
-        let rightPanelItem = viewMenu.addItem(
-            withTitle: "Toggle Right Panel",
-            action: #selector(toggleRightPanel(_:)),
-            keyEquivalent: "l"
-        )
-        rightPanelItem.target = self
-        viewMenu.addItem(.separator())
         let fullScreenItem = viewMenu.addItem(
             withTitle: "Toggle Full Screen",
             action: #selector(NSWindow.toggleFullScreen(_:)),

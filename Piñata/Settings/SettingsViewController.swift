@@ -3,27 +3,52 @@ import AppKit
 @MainActor
 final class SettingsViewController: NSViewController {
     var onChange: ((UserSettings) -> Bool)?
-    var onClose: (() -> Void)?
 
     private var settings: UserSettings
     private let rail = NSView()
+    private let railSeparator = NSView()
     private let content = NSView()
-    private let titleLabel = NSTextField(labelWithString: "Appearance")
-    private let backButton = NSButton(title: " Back to app", target: nil, action: nil)
-    private let sectionLabels = [
-        NSTextField(labelWithString: "THEME"),
-        NSTextField(labelWithString: "TEXT"),
-    ]
-    private let personalLabel = NSTextField(labelWithString: "PERSONAL")
-    private let appearanceRow = SettingsNavigationRow(title: "Appearance", symbolName: "sun.max")
-    private let themeControl = FlatChoiceControl(labels: ["Piñata Dark", "Piñata Light"])
+    private var navigationGroupViews: [SettingsNavigationGroupView] = []
+    private var selectedPageIndex = 0
+    private let themeControl = FlatChoiceControl(labels: ["dark", "light"])
     private let accentControl = AccentChoiceControl()
-    private let intensityControl = FlatChoiceControl(labels: ["Transparent", "Balanced", "Vibrant"])
-    private let appFontControl = FlatChoiceControl(labels: ["Small", "Default", "Large"])
-    private let terminalFontControl = FlatChoiceControl(labels: ["12px", "13px", "14px", "15px"])
-    private var primaryLabels: [NSTextField] = []
-    private var secondaryLabels: [NSTextField] = []
-    private var cards: [NSView] = []
+    private let intensityControl = FlatChoiceControl(labels: ["transparent", "balanced", "vibrant"])
+    private let appFontControl = FlatChoiceControl(labels: ["small", "default", "large"])
+    private let terminalFontControl = FontStepperControl()
+    private lazy var appearanceContent = AppearanceSettingsContentView(
+        themeControl: themeControl,
+        accentControl: accentControl,
+        intensityControl: intensityControl,
+        appFontControl: appFontControl,
+        terminalFontControl: terminalFontControl
+    )
+    private let gitContent = RepositorySettingsView()
+    private lazy var navigationGroups = [
+        SettingsNavigationGroup(
+            title: "PERSONAL",
+            pages: [
+                SettingsPageItem(
+                    title: "Appearance",
+                    image: NSImage(
+                        systemSymbolName: "sun.max",
+                        accessibilityDescription: nil
+                    ) ?? NSImage(),
+                    content: appearanceContent
+                ),
+            ]
+        ),
+        SettingsNavigationGroup(
+            title: "CODING",
+            pages: [
+                SettingsPageItem(
+                    title: "Git & PR",
+                    image: GitPullRequestIcon.image,
+                    content: gitContent
+                ),
+            ]
+        ),
+    ]
+    private var pages: [SettingsPageItem] { navigationGroups.flatMap(\.pages) }
 
     init(settings: UserSettings) {
         self.settings = settings
@@ -40,16 +65,11 @@ final class SettingsViewController: NSViewController {
         root.wantsLayer = true
         view = root
 
-        for panel in [rail, content] {
+        for panel in [rail, railSeparator, content] {
             panel.translatesAutoresizingMaskIntoConstraints = false
             panel.wantsLayer = true
             root.addSubview(panel)
         }
-        content.layer?.cornerRadius = AppTheme.workspaceCornerRadius
-        content.layer?.cornerCurve = .continuous
-        content.layer?.borderWidth = 1
-        content.layer?.masksToBounds = true
-
         installRail()
         installContent()
         selectCurrentValues()
@@ -57,252 +77,104 @@ final class SettingsViewController: NSViewController {
     }
 
     func applyTheme() {
-        view.layer?.backgroundColor = AppTheme.chromeBackground.cgColor
-        rail.layer?.backgroundColor = AppTheme.chromeBackground.cgColor
+        view.layer?.backgroundColor = AppTheme.background.cgColor
+        rail.layer?.backgroundColor = AppTheme.background.cgColor
+        railSeparator.layer?.backgroundColor = AppTheme.border.cgColor
         content.layer?.backgroundColor = AppTheme.background.cgColor
-        content.layer?.borderColor = AppTheme.border.cgColor
-        titleLabel.textColor = AppTheme.primaryText
-        titleLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsDisplay, weight: 550)
-        backButton.contentTintColor = AppTheme.secondaryText
-        backButton.font = AppTheme.font(ofSize: AppTheme.typography.settingsHeading, weight: 600)
-        applySectionLabelStyle(personalLabel)
-        appearanceRow.applyTheme()
-        sectionLabels.forEach(applySectionLabelStyle)
-        primaryLabels.forEach {
-            $0.textColor = AppTheme.primaryText
-            $0.font = AppTheme.font(ofSize: AppTheme.typography.settingsHeading, weight: 550)
-        }
-        secondaryLabels.forEach {
-            $0.textColor = AppTheme.tertiaryText
-            $0.font = AppTheme.font(ofSize: AppTheme.typography.settingsBody)
-        }
-        cards.forEach {
-            $0.layer?.backgroundColor = AppTheme.surface.cgColor
-            $0.layer?.borderColor = AppTheme.subtleBorder.cgColor
-        }
-        themeControl.applyTheme()
-        accentControl.applyTheme()
-        intensityControl.applyTheme()
-        appFontControl.applyTheme()
-        terminalFontControl.applyTheme()
-    }
-
-    private func applySectionLabelStyle(_ label: NSTextField) {
-        let fontSize = AppTheme.typography.settingsLabel
-        label.attributedStringValue = NSAttributedString(
-            string: label.stringValue,
-            attributes: [
-                .font: AppTheme.font(ofSize: fontSize, weight: 600),
-                .foregroundColor: AppTheme.tertiaryText,
-                .kern: fontSize * 0.08,
-            ]
-        )
+        navigationGroupViews.forEach { $0.applyTheme() }
+        pages.forEach { $0.content.applyTheme() }
     }
 
     private func installRail() {
-        backButton.translatesAutoresizingMaskIntoConstraints = false
-        backButton.isBordered = false
-        backButton.alignment = .left
-        backButton.image = NSImage(systemSymbolName: "arrow.left", accessibilityDescription: nil)
-        backButton.imagePosition = .imageLeading
-        backButton.imageHugsTitle = true
-        backButton.target = self
-        backButton.action = #selector(closeSettings)
-
-        personalLabel.translatesAutoresizingMaskIntoConstraints = false
-        personalLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsLabel, weight: 600)
-        appearanceRow.translatesAutoresizingMaskIntoConstraints = false
-
-        rail.addSubview(backButton)
-        rail.addSubview(personalLabel)
-        rail.addSubview(appearanceRow)
+        let pageItems = pages
+        for (index, page) in pageItems.enumerated() {
+            page.row.isSelected = index == selectedPageIndex
+            page.row.onSelect = { [weak self] in
+                self?.selectPage(at: index)
+                self?.pages[index].row.focus()
+            }
+            page.row.onMove = { [weak self] direction in
+                self?.moveSelection(from: index, by: direction)
+            }
+        }
+        navigationGroupViews = navigationGroups.map {
+            SettingsNavigationGroupView(title: $0.title, rows: $0.pages.map(\.row))
+        }
+        let navigationStack = NSStackView(views: navigationGroupViews)
+        navigationStack.translatesAutoresizingMaskIntoConstraints = false
+        navigationStack.orientation = .vertical
+        navigationStack.alignment = .leading
+        navigationStack.spacing = SettingsLayout.navigationSectionGap
+        rail.addSubview(navigationStack)
 
         NSLayoutConstraint.activate([
             rail.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             rail.topAnchor.constraint(equalTo: view.topAnchor),
             rail.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            rail.widthAnchor.constraint(equalToConstant: AppTheme.leftPanelWidth),
-
-            backButton.leadingAnchor.constraint(equalTo: rail.leadingAnchor, constant: 20),
-            backButton.trailingAnchor.constraint(equalTo: rail.trailingAnchor, constant: -20),
-            backButton.topAnchor.constraint(equalTo: rail.topAnchor, constant: 62),
-            backButton.heightAnchor.constraint(equalToConstant: 28),
-
-            personalLabel.leadingAnchor.constraint(equalTo: backButton.leadingAnchor),
-            personalLabel.topAnchor.constraint(equalTo: backButton.bottomAnchor, constant: 32),
-
-            appearanceRow.leadingAnchor.constraint(equalTo: rail.leadingAnchor, constant: 12),
-            appearanceRow.trailingAnchor.constraint(equalTo: rail.trailingAnchor, constant: -12),
-            appearanceRow.topAnchor.constraint(equalTo: personalLabel.bottomAnchor, constant: 10),
-            appearanceRow.heightAnchor.constraint(equalToConstant: 35),
+            rail.widthAnchor.constraint(equalToConstant: AppTheme.settingsRailWidth),
+            railSeparator.leadingAnchor.constraint(equalTo: rail.trailingAnchor),
+            railSeparator.topAnchor.constraint(equalTo: rail.topAnchor),
+            railSeparator.bottomAnchor.constraint(equalTo: rail.bottomAnchor),
+            railSeparator.widthAnchor.constraint(equalToConstant: SettingsLayout.dividerThickness),
+            navigationStack.leadingAnchor.constraint(
+                equalTo: rail.leadingAnchor,
+                constant: AppTheme.workspaceContentInset
+            ),
+            navigationStack.trailingAnchor.constraint(
+                equalTo: rail.trailingAnchor,
+                constant: -AppTheme.workspaceContentInset
+            ),
+            navigationStack.topAnchor.constraint(
+                equalTo: rail.topAnchor,
+                constant: AppTheme.workspaceContentInset
+            ),
         ])
+        navigationGroupViews.forEach {
+            $0.widthAnchor.constraint(equalTo: navigationStack.widthAnchor).isActive = true
+        }
     }
 
     private func installContent() {
-        content.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(
-                equalTo: rail.trailingAnchor,
-                constant: AppTheme.workspaceInset
-            ),
-            content.trailingAnchor.constraint(
-                equalTo: view.trailingAnchor,
-                constant: -AppTheme.workspaceInset
-            ),
-            content.topAnchor.constraint(
-                equalTo: view.topAnchor,
-                constant: AppTheme.workspaceInset
-            ),
-            content.bottomAnchor.constraint(
-                equalTo: view.bottomAnchor,
-                constant: -AppTheme.workspaceInset
-            ),
+            content.leadingAnchor.constraint(equalTo: railSeparator.trailingAnchor),
+            content.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            content.topAnchor.constraint(equalTo: view.topAnchor),
+            content.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
 
-        let column = NSView()
-        column.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(column)
-
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        sectionLabels.forEach { $0.translatesAutoresizingMaskIntoConstraints = false }
-
-        let themeCard = makeCard(rows: [
-            makeRow(
-                title: "Color theme",
-                description: "Piñata dark, or a matched light variant",
-                control: themeControl,
-                controlWidth: 210
-            ),
-            makeRow(
-                title: "Accent color",
-                description: "Highlights, active tabs and primary actions",
-                control: accentControl,
-                controlWidth: 210
-            ),
-            makeRow(
-                title: "Accent intensity",
-                description: "How loud accent surfaces should feel across the app",
-                control: intensityControl,
-                controlWidth: 250
-            ),
-        ])
-        let textCard = makeCard(rows: [
-            makeRow(
-                title: "App font size",
-                description: "Side panels, settings and task dialogs",
-                control: appFontControl,
-                controlWidth: 174
-            ),
-            makeRow(
-                title: "Terminal font size",
-                description: "Embedded terminal text only",
-                control: terminalFontControl,
-                controlWidth: 204
-            ),
-        ])
-
-        for item in [titleLabel, sectionLabels[0], themeCard, sectionLabels[1], textCard] {
-            column.addSubview(item)
+        for (index, page) in pages.enumerated() {
+            let pageView = page.content.settingsView
+            pageView.translatesAutoresizingMaskIntoConstraints = false
+            pageView.isHidden = index != selectedPageIndex
+            content.addSubview(pageView)
+            NSLayoutConstraint.activate([
+                pageView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+                pageView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+                pageView.topAnchor.constraint(equalTo: content.topAnchor),
+                pageView.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            ])
         }
 
-        let responsiveWidth = column.widthAnchor.constraint(
-            equalTo: content.widthAnchor,
-            multiplier: 0.88
-        )
-        responsiveWidth.priority = .defaultHigh
-
-        NSLayoutConstraint.activate([
-            column.topAnchor.constraint(equalTo: content.topAnchor, constant: 40),
-            column.centerXAnchor.constraint(equalTo: content.centerXAnchor),
-            responsiveWidth,
-            column.widthAnchor.constraint(lessThanOrEqualToConstant: 1_100),
-            column.leadingAnchor.constraint(greaterThanOrEqualTo: content.leadingAnchor, constant: 40),
-            column.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor, constant: -40),
-
-            titleLabel.leadingAnchor.constraint(equalTo: column.leadingAnchor),
-            titleLabel.topAnchor.constraint(equalTo: column.topAnchor),
-
-            sectionLabels[0].leadingAnchor.constraint(equalTo: column.leadingAnchor),
-            sectionLabels[0].topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 24),
-            themeCard.leadingAnchor.constraint(equalTo: column.leadingAnchor),
-            themeCard.trailingAnchor.constraint(equalTo: column.trailingAnchor),
-            themeCard.topAnchor.constraint(equalTo: sectionLabels[0].bottomAnchor, constant: 12),
-
-            sectionLabels[1].leadingAnchor.constraint(equalTo: column.leadingAnchor),
-            sectionLabels[1].topAnchor.constraint(equalTo: themeCard.bottomAnchor, constant: 22),
-            textCard.leadingAnchor.constraint(equalTo: column.leadingAnchor),
-            textCard.trailingAnchor.constraint(equalTo: column.trailingAnchor),
-            textCard.topAnchor.constraint(equalTo: sectionLabels[1].bottomAnchor, constant: 12),
-            textCard.bottomAnchor.constraint(equalTo: column.bottomAnchor),
-        ])
-
-        for control in [themeControl, intensityControl, appFontControl, terminalFontControl] {
-            control.onChange = { [weak self] _ in self?.settingChanged() }
-        }
+        themeControl.onChange = { [weak self] _ in self?.settingChanged() }
+        intensityControl.onChange = { [weak self] _ in self?.settingChanged() }
+        appFontControl.onChange = { [weak self] _ in self?.settingChanged() }
+        terminalFontControl.onChange = { [weak self] _ in self?.settingChanged() }
         accentControl.onChange = { [weak self] _ in self?.settingChanged() }
     }
 
-    private func makeCard(rows: [NSView]) -> NSView {
-        let card = NSView()
-        card.translatesAutoresizingMaskIntoConstraints = false
-        card.wantsLayer = true
-        card.layer?.cornerRadius = AppTheme.workspaceCornerRadius
-        card.layer?.cornerCurve = .continuous
-        card.layer?.borderWidth = 1
-        card.layer?.masksToBounds = true
-        cards.append(card)
-
-        let stack = NSStackView(views: rows)
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.orientation = .vertical
-        stack.spacing = 0
-        stack.distribution = .fillEqually
-        card.addSubview(stack)
-
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: card.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor),
-            card.heightAnchor.constraint(equalToConstant: CGFloat(rows.count * 68)),
-        ])
-        return card
-    }
-
-    private func makeRow(
-        title: String,
-        description: String,
-        control: NSView,
-        controlWidth: CGFloat
-    ) -> NSView {
-        let row = NSView()
-        row.translatesAutoresizingMaskIntoConstraints = false
-
-        let titleLabel = NSTextField(labelWithString: title)
-        let descriptionLabel = NSTextField(labelWithString: description)
-        primaryLabels.append(titleLabel)
-        secondaryLabels.append(descriptionLabel)
-
-        let labels = NSStackView(views: [titleLabel, descriptionLabel])
-        labels.translatesAutoresizingMaskIntoConstraints = false
-        labels.orientation = .vertical
-        labels.alignment = .leading
-        labels.spacing = 4
-
-        control.translatesAutoresizingMaskIntoConstraints = false
-        row.addSubview(labels)
-        row.addSubview(control)
-
-        NSLayoutConstraint.activate([
-            labels.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 24),
-            labels.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-            labels.trailingAnchor.constraint(lessThanOrEqualTo: control.leadingAnchor, constant: -18),
-            control.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -22),
-            control.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-            control.widthAnchor.constraint(equalToConstant: controlWidth),
-            control.heightAnchor.constraint(equalToConstant: 30),
-        ])
-        return row
+    private func selectPage(at index: Int) {
+        let pageItems = pages
+        guard pageItems.indices.contains(index) else { return }
+        if pageItems.indices.contains(selectedPageIndex), selectedPageIndex != index {
+            pageItems[selectedPageIndex].content.didDeselect()
+        }
+        selectedPageIndex = index
+        for (pageIndex, page) in pageItems.enumerated() {
+            page.row.isSelected = pageIndex == index
+            page.content.settingsView.isHidden = pageIndex != index
+        }
+        view.layoutSubtreeIfNeeded()
+        pageItems[index].content.scrollToTop()
     }
 
     private func selectCurrentValues() {
@@ -311,6 +183,18 @@ final class SettingsViewController: NSViewController {
         intensityControl.selectedIndex = AccentIntensity.allCases.firstIndex(of: settings.accentIntensity) ?? 0
         appFontControl.selectedIndex = AppFontSize.allCases.firstIndex(of: settings.appFontSize) ?? 0
         terminalFontControl.selectedIndex = TerminalFontSize.allCases.firstIndex(of: settings.terminalFontSize) ?? 0
+    }
+
+    func focusInitialSection() {
+        pages.first?.row.focus()
+    }
+
+    private func moveSelection(from index: Int, by direction: Int) {
+        let pageItems = pages
+        guard !pageItems.isEmpty else { return }
+        let nextIndex = min(max(index + direction, 0), pageItems.count - 1)
+        selectPage(at: nextIndex)
+        pageItems[nextIndex].row.focus()
     }
 
     private func settingChanged() {
@@ -327,38 +211,54 @@ final class SettingsViewController: NSViewController {
             settings = next
         }
     }
-
-    @objc private func closeSettings() {
-        onClose?()
-    }
 }
 
 @MainActor
-private final class SettingsNavigationRow: NSView {
-    private let icon = NSImageView()
+private final class SettingsPageItem {
+    let content: any SettingsPageContent
+    let row: SettingsNavigationRow
+
+    init(title: String, image: NSImage, content: any SettingsPageContent) {
+        self.content = content
+        row = SettingsNavigationRow(title: title, image: image)
+    }
+}
+
+private struct SettingsNavigationGroup {
+    let title: String
+    let pages: [SettingsPageItem]
+}
+
+private final class SettingsNavigationGroupView: NSView, SettingsThemeApplying {
     private let label: NSTextField
+    private let rows: [SettingsNavigationRow]
 
-    init(title: String, symbolName: String) {
+    init(title: String, rows: [SettingsNavigationRow]) {
         label = NSTextField(labelWithString: title)
+        self.rows = rows
         super.init(frame: .zero)
-        wantsLayer = true
-        layer?.cornerRadius = 9
-
-        icon.translatesAutoresizingMaskIntoConstraints = false
-        icon.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
-        icon.symbolConfiguration = .init(pointSize: 14, weight: .medium)
+        translatesAutoresizingMaskIntoConstraints = false
         label.translatesAutoresizingMaskIntoConstraints = false
-
-        addSubview(icon)
-        addSubview(label)
+        let stack = NSStackView(views: [label] + rows)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 0
+        stack.setCustomSpacing(SettingsLayout.navigationLabelGap, after: label)
+        addSubview(stack)
         NSLayoutConstraint.activate([
-            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            icon.centerYAnchor.constraint(equalTo: centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 18),
-            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 10),
-            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
-        setAccessibilityLabel(title)
+        rows.forEach {
+            $0.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+            $0.heightAnchor.constraint(
+                equalToConstant: SettingsLayout.navigationRowHeight
+            ).isActive = true
+        }
+        applyTheme()
     }
 
     @available(*, unavailable)
@@ -367,11 +267,118 @@ private final class SettingsNavigationRow: NSView {
     }
 
     func applyTheme() {
-        layer?.backgroundColor = AppTheme.surface.cgColor
-        icon.contentTintColor = AppTheme.secondaryText
-        label.textColor = AppTheme.primaryText
+        SettingsLayout.applySectionLabelStyle(label)
+        rows.forEach { $0.applyTheme() }
+    }
+}
+
+@MainActor
+private final class SettingsNavigationRow: SettingsHoverView {
+    var onSelect: (() -> Void)?
+    var onMove: ((Int) -> Void)?
+    var isSelected = true {
+        didSet { applyTheme() }
+    }
+
+    private let icon = NSImageView()
+    private let label: NSTextField
+    private let button = SettingsNavigationButton()
+
+    init(title: String, image: NSImage) {
+        label = NSTextField(labelWithString: title)
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = SettingsLayout.navigationCornerRadius
+
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.image = image
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        label.translatesAutoresizingMaskIntoConstraints = false
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.title = ""
+        button.isBordered = false
+        button.bezelStyle = .shadowlessSquare
+        button.focusRingType = .none
+        button.target = self
+        button.action = #selector(selectRow)
+        button.onMove = { [weak self] direction in self?.onMove?(direction) }
+        button.setAccessibilityLabel(title)
+        addSubview(icon)
+        addSubview(label)
+        addSubview(button)
+        NSLayoutConstraint.activate([
+            icon.leadingAnchor.constraint(
+                equalTo: leadingAnchor,
+                constant: SettingsLayout.navigationItemGap
+            ),
+            icon.centerYAnchor.constraint(equalTo: centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: SettingsLayout.navigationIconSize),
+            icon.heightAnchor.constraint(equalToConstant: SettingsLayout.navigationIconSize),
+            label.leadingAnchor.constraint(
+                equalTo: icon.trailingAnchor,
+                constant: SettingsLayout.navigationItemGap
+            ),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            button.leadingAnchor.constraint(equalTo: leadingAnchor),
+            button.trailingAnchor.constraint(equalTo: trailingAnchor),
+            button.topAnchor.constraint(equalTo: topAnchor),
+            button.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is unavailable")
+    }
+
+    func applyTheme() {
+        let foreground = isSelected ? AppTheme.panelAccentIcon : AppTheme.secondaryText
+        let background = isSelected
+            ? AppTheme.panelAccentBackground
+            : isHovering ? AppTheme.controlBackground : .clear
+        layer?.backgroundColor = background.cgColor
+        icon.contentTintColor = foreground
+        label.textColor = foreground
         label.font = AppTheme.font(ofSize: AppTheme.typography.settingsHeading, weight: 550)
     }
+
+    func focus() {
+        window?.makeFirstResponder(button)
+    }
+
+    override func hoverStateDidChange() {
+        applyTheme()
+    }
+
+    @objc private func selectRow() {
+        onSelect?()
+    }
+}
+
+@MainActor
+private final class SettingsNavigationButton: NSButton {
+    var onMove: ((Int) -> Void)?
+
+    override func keyDown(with event: NSEvent) {
+        switch event.keyCode {
+        case 126:
+            onMove?(-1)
+        case 125:
+            onMove?(1)
+        default:
+            super.keyDown(with: event)
+        }
+    }
+}
+private enum GitPullRequestIcon {
+    static let image: NSImage = {
+        let image = Bundle.main.url(forResource: "git-pull-request", withExtension: "png")
+            .flatMap(NSImage.init(contentsOf:))
+            ?? NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: nil)
+            ?? NSImage()
+        image.isTemplate = true
+        return image
+    }()
 }
 
 @MainActor
@@ -386,9 +393,7 @@ private final class FlatChoiceControl: NSView {
     init(labels: [String]) {
         buttons = labels.enumerated().map { FlatChoiceButton(title: $0.element, index: $0.offset) }
         super.init(frame: .zero)
-        wantsLayer = true
-        layer?.cornerRadius = 7
-        layer?.masksToBounds = true
+        SettingsLayout.applyControlSurface(self, clipsContents: true)
 
         let stack = NSStackView(views: buttons)
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -398,10 +403,10 @@ private final class FlatChoiceControl: NSView {
         stack.distribution = .fillProportionally
         addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2),
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 2),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: SettingsLayout.choiceInset),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -SettingsLayout.choiceInset),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: SettingsLayout.choiceInset),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -SettingsLayout.choiceInset),
         ])
         buttons.forEach {
             $0.heightAnchor.constraint(equalTo: stack.heightAnchor).isActive = true
@@ -419,7 +424,7 @@ private final class FlatChoiceControl: NSView {
     }
 
     func applyTheme() {
-        layer?.backgroundColor = AppTheme.controlBackground.cgColor
+        SettingsLayout.applyControlSurface(self, clipsContents: true)
         for button in buttons {
             button.applyTheme(selected: button.tag == selectedIndex)
         }
@@ -439,7 +444,7 @@ private final class FlatChoiceButton: NSButton {
         tag = index
         isBordered = false
         wantsLayer = true
-        layer?.cornerRadius = 5
+        layer?.cornerRadius = SettingsLayout.choiceCornerRadius
         setAccessibilityLabel(title)
     }
 
@@ -482,7 +487,7 @@ private final class AccentChoiceControl: NSView {
         let stack = NSStackView(views: buttons)
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.orientation = .horizontal
-        stack.spacing = 7
+        stack.spacing = SettingsLayout.colorChoiceGap
         stack.distribution = .fillEqually
         addSubview(stack)
         NSLayoutConstraint.activate([
@@ -522,11 +527,11 @@ private final class AccentChoiceButton: NSButton {
         tag = index
         isBordered = false
         wantsLayer = true
-        layer?.cornerRadius = 12
+        layer?.cornerRadius = SettingsLayout.colorChoiceDiameter / 2
         setAccessibilityLabel(accent.rawValue.capitalized)
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: 24),
-            heightAnchor.constraint(equalToConstant: 24),
+            widthAnchor.constraint(equalToConstant: SettingsLayout.colorChoiceDiameter),
+            heightAnchor.constraint(equalToConstant: SettingsLayout.colorChoiceDiameter),
         ])
     }
 
@@ -546,5 +551,186 @@ private final class AccentChoiceButton: NSButton {
             ]
         )
         setAccessibilityValue(selected)
+    }
+}
+
+@MainActor
+private final class FontStepperControl: NSView {
+    var onChange: ((Int) -> Void)?
+    var selectedIndex = 0 {
+        didSet { applyTheme() }
+    }
+
+    private let decreaseButton = NSButton(title: "−", target: nil, action: nil)
+    private let valueLabel = NSTextField(labelWithString: "")
+    private let increaseButton = NSButton(title: "+", target: nil, action: nil)
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        SettingsLayout.applyControlSurface(self, clipsContents: true)
+        [decreaseButton, valueLabel, increaseButton].forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+            addSubview($0)
+        }
+        decreaseButton.isBordered = false
+        increaseButton.isBordered = false
+        decreaseButton.target = self
+        decreaseButton.action = #selector(decrease)
+        increaseButton.target = self
+        increaseButton.action = #selector(increase)
+        decreaseButton.setAccessibilityLabel("Decrease terminal font size")
+        increaseButton.setAccessibilityLabel("Increase terminal font size")
+        valueLabel.setAccessibilityLabel("Terminal font size")
+        NSLayoutConstraint.activate([
+            decreaseButton.leadingAnchor.constraint(equalTo: leadingAnchor),
+            decreaseButton.topAnchor.constraint(equalTo: topAnchor),
+            decreaseButton.bottomAnchor.constraint(equalTo: bottomAnchor),
+            decreaseButton.widthAnchor.constraint(
+                equalToConstant: SettingsLayout.stepperButtonWidth
+            ),
+            valueLabel.leadingAnchor.constraint(equalTo: decreaseButton.trailingAnchor),
+            valueLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            increaseButton.leadingAnchor.constraint(equalTo: valueLabel.trailingAnchor),
+            increaseButton.trailingAnchor.constraint(equalTo: trailingAnchor),
+            increaseButton.topAnchor.constraint(equalTo: topAnchor),
+            increaseButton.bottomAnchor.constraint(equalTo: bottomAnchor),
+            increaseButton.widthAnchor.constraint(
+                equalToConstant: SettingsLayout.stepperButtonWidth
+            ),
+        ])
+        applyTheme()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is unavailable")
+    }
+
+    func applyTheme() {
+        SettingsLayout.applyControlSurface(self, clipsContents: true)
+        let font = AppTheme.font(ofSize: AppTheme.typography.settingsBody, weight: 600)
+        valueLabel.stringValue = "\(TerminalFontSize.allCases[selectedIndex].points.formatted(.number.precision(.fractionLength(0))))px"
+        valueLabel.textColor = AppTheme.primaryText
+        valueLabel.font = font
+        valueLabel.alignment = .center
+        valueLabel.setAccessibilityValue(valueLabel.stringValue)
+        for button in [decreaseButton, increaseButton] {
+            button.contentTintColor = AppTheme.secondaryText
+            button.font = font
+        }
+        decreaseButton.isEnabled = selectedIndex > 0
+        increaseButton.isEnabled = selectedIndex < TerminalFontSize.allCases.count - 1
+    }
+
+    @objc private func decrease() {
+        guard selectedIndex > 0 else { return }
+        selectedIndex -= 1
+        onChange?(selectedIndex)
+    }
+
+    @objc private func increase() {
+        guard selectedIndex < TerminalFontSize.allCases.count - 1 else { return }
+        selectedIndex += 1
+        onChange?(selectedIndex)
+    }
+}
+
+@MainActor
+private final class AppearanceSettingsContentView: NSView, SettingsPageContent {
+    private let page = SettingsSplitPageView()
+
+    init(
+        themeControl: FlatChoiceControl,
+        accentControl: AccentChoiceControl,
+        intensityControl: FlatChoiceControl,
+        appFontControl: FlatChoiceControl,
+        terminalFontControl: FontStepperControl
+    ) {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        installLayout(
+            themeControl: themeControl,
+            accentControl: accentControl,
+            intensityControl: intensityControl,
+            appFontControl: appFontControl,
+            terminalFontControl: terminalFontControl
+        )
+        applyTheme()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is unavailable")
+    }
+
+    func scrollToTop() {
+        page.scrollToTop()
+    }
+
+    func applyTheme() {
+        layer?.backgroundColor = AppTheme.background.cgColor
+        page.applyTheme()
+    }
+
+    private func installLayout(
+        themeControl: FlatChoiceControl,
+        accentControl: AccentChoiceControl,
+        intensityControl: FlatChoiceControl,
+        appFontControl: FlatChoiceControl,
+        terminalFontControl: FontStepperControl
+    ) {
+        addSubview(page)
+        NSLayoutConstraint.activate([
+            page.leadingAnchor.constraint(equalTo: leadingAnchor),
+            page.trailingAnchor.constraint(equalTo: trailingAnchor),
+            page.topAnchor.constraint(equalTo: topAnchor),
+            page.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+
+        let themeRows = [
+            SettingsRowView(
+                title: "Color theme",
+                description: "Piñata dark, or a matched light variant",
+                control: themeControl,
+                controlWidth: 122
+            ),
+            SettingsRowView(
+                title: "Accent color",
+                description: "Highlights, active tabs and primary actions",
+                control: accentControl,
+                controlWidth: 170
+            ),
+            SettingsRowView(
+                title: "Accent intensity",
+                description: "How loud accent surfaces feel",
+                control: intensityControl,
+                controlWidth: 272
+            ),
+        ]
+        let textRows = [
+            SettingsRowView(
+                title: "App font size",
+                description: "Side panels, settings and task dialogs",
+                control: appFontControl,
+                controlWidth: 180
+            ),
+            SettingsRowView(
+                title: "Terminal font size",
+                description: "Embedded terminal text only",
+                control: terminalFontControl,
+                controlWidth: 82
+            ),
+        ]
+        page.addSection(
+            title: "Theme",
+            detail: "Colour of the chrome and how strongly the accent is used.",
+            content: settingsRowStack(themeRows)
+        )
+        page.addSection(
+            title: "Text",
+            detail: "Type sizes for the app chrome and the embedded terminal.",
+            content: settingsRowStack(textRows)
+        )
     }
 }
