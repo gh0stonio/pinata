@@ -7,6 +7,15 @@ enum ZmxSession {
     }
 }
 
+enum ZmxReconnectPolicy {
+    static let maximumDelay: TimeInterval = 30
+
+    static func delay(for attempt: Int) -> TimeInterval {
+        let exponent = min(max(attempt, 0), 5)
+        return min(maximumDelay, TimeInterval(1 << exponent))
+    }
+}
+
 final class ZmxTerminalClient: @unchecked Sendable {
     private let id: UUID
     private let launchConfiguration: ZmxLaunchConfiguration
@@ -22,6 +31,8 @@ final class ZmxTerminalClient: @unchecked Sendable {
     private var started = false
     private var columns: UInt16 = 0
     private var rows: UInt16 = 0
+    private var reconnectWorkItem: DispatchWorkItem?
+    private var reconnectAttempt = 0
 
     var onOutput: ((Data) -> Void)?
 
@@ -61,13 +72,19 @@ final class ZmxTerminalClient: @unchecked Sendable {
     }
 
     func disconnect() {
-        queue.async { [weak self] in self?.terminateAttachedClient() }
+        queue.async { [weak self] in
+            guard let self else { return }
+            closed = true
+            cancelReconnect()
+            terminateAttachedClient()
+        }
     }
 
     func close() {
         queue.async { [weak self] in
-            guard let self, !closed else { return }
+            guard let self else { return }
             closed = true
+            cancelReconnect()
             killSession()
             terminateAttachedClient()
         }
@@ -102,10 +119,15 @@ final class ZmxTerminalClient: @unchecked Sendable {
         var masterFD: Int32 = -1
         let pid = forkpty(&masterFD, nil, nil, nil)
         guard pid >= 0 else {
+            started = false
             report("Could not start zmx.")
+            scheduleReconnect()
             return
         }
         if pid == 0 {
+            var signals = sigset_t()
+            sigemptyset(&signals)
+            _ = pthread_sigmask(SIG_SETMASK, &signals, nil)
             launchConfiguration.exec()
         }
 
@@ -187,13 +209,34 @@ final class ZmxTerminalClient: @unchecked Sendable {
 
     private func clientExited() {
         let pid = childPID
+        started = false
         terminateAttachedClient()
         if pid > 0 {
             var status: Int32 = 0
             _ = waitpid(pid, &status, 0)
         }
-        // ponytail: reconnect on app relaunch; live retries need backoff and state.
-        if !closed { report("Terminal connection closed.") }
+        if !closed {
+            report("Terminal connection closed. Reconnecting automatically.")
+            scheduleReconnect()
+        }
+    }
+
+    private func scheduleReconnect() {
+        guard !closed, reconnectWorkItem == nil else { return }
+        let delay = ZmxReconnectPolicy.delay(for: reconnectAttempt)
+        reconnectAttempt += 1
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self, !closed else { return }
+            reconnectWorkItem = nil
+            startIfNeeded()
+        }
+        reconnectWorkItem = workItem
+        queue.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    private func cancelReconnect() {
+        reconnectWorkItem?.cancel()
+        reconnectWorkItem = nil
     }
 
     private func terminateAttachedClient() {

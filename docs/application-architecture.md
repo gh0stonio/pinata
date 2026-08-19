@@ -16,6 +16,8 @@ flowchart TB
     Workspace --> RepositoryStore[RepositoryRegistryStore]
     Workspace --> ConnectionStore[SSHConnectionStore]
     Workspace --> SessionStore[AppSessionStore]
+    Workspace --> PRStore[PullRequestStatusStore]
+    PRStore --> GH[Local or SSH gh]
     Terminals --> TerminalVC[TerminalViewController]
     TerminalVC --> Ghostty[GhosttySurfaceView]
     Ghostty --> Zmx[zmx session]
@@ -29,12 +31,13 @@ flowchart TB
 | Owner | Owns | Does not own |
 | --- | --- | --- |
 | `PinataApp` | App lifecycle, menu installation, root workspace. | Task persistence or terminal pane layout. |
-| `WorkspaceViewController` | Selected scope, task actions, provisioning coordination, terminal workspaces, ephemeral file tabs, and app-session persistence. | Ghostty rendering or PTY I/O. |
+| `WorkspaceViewController` | Selected scope, task actions, provisioning coordination, terminal workspaces, ephemeral file tabs, pull request refresh, and app-session persistence. | Ghostty rendering or PTY I/O. |
 | `PanelViewController` | Left task sidebar presentation and user gestures. | Right workspace-panel layout or file browsing. |
 | `WorkspacePanelViewController` | Right panel tabs, file-tree loading, caching, and refresh. | Left sidebar presentation or registry data source of truth. |
 | `TerminalViewController` | Terminal tab's split tree, panes, active pane, and pane actions. | Durable PTY process. |
 | `GhosttySurfaceView` | Terminal rendering, keyboard encoding, terminal scrolling. | Shell process or output history. |
 | `ZmxTerminalClient` | Attaches one pane to its named zmx session. | AppKit views, layout, or terminal persistence. |
+| `PullRequestStatusStore` | In-memory pull request query grouping, refresh state, and cached display state. | Durable task or repository settings. |
 | Registry stores | Codable local data. | UI state or long-lived process state. |
 
 The central rule is simple: UI controllers project persisted task data and live terminal data, but do not become the durable owner of shell processes.
@@ -55,6 +58,8 @@ classDiagram
         String name
         String worktreePath
         String branch
+        PullRequestSummary[] pullRequests
+        Date pullRequestsFetchedAt
         WorktreeProvisioningReport worktreeProvisioning
     }
     class RegisteredRepository {
@@ -63,6 +68,7 @@ classDiagram
         String path
         String defaultBranch
         String worktreeBasePath
+        String ghProfile
         RepositoryTarget target
     }
     class SSHConnection {
@@ -91,7 +97,7 @@ classDiagram
     AppSession --> StoredTerminalWorkspace
 ```
 
-`TaskRepositoryAttachment` intentionally stores the attachment name, worktree path, branch, and latest provisioning report. This lets the sidebar and failure state remain understandable even while repository inspection is unavailable or a worktree operation fails.
+`TaskRepositoryAttachment` intentionally stores the attachment name, worktree path, branch, latest provisioning report, and last successful pull request summaries. This lets the sidebar remain useful while repository inspection or GitHub is unavailable. `RegisteredRepository.ghProfile` selects an optional `gh` account without changing the globally active account.
 
 ## File editor
 
@@ -111,7 +117,7 @@ flowchart LR
     AppSupport --> Repos[repositories.json]
     AppSupport --> Connections[ssh-connections.json]
     AppSupport --> Session[app-session.json]
-    AppSupport --> FileTree[file-tree-cache-v1.json]
+    AppSupport --> FileTree[file-tree-cache-v2.json]
     Defaults[UserDefaults] --> Appearance[appearance and typography]
     Defaults --> Panels[sidebar presentation and panel widths]
     Defaults --> WorktreeDefault[global worktree base]
@@ -120,11 +126,11 @@ flowchart LR
 
 | Data | Store | Written when |
 | --- | --- | --- |
-| Tasks, attachment order, pins, worktree metadata | `tasks.json` | Task create, edit, reorder, provision, detach, delete. |
-| Registered repositories and overrides | `repositories.json` | Repository registration or settings edit. |
+| Tasks, attachment order, pins, worktree metadata, pull request summaries | `tasks.json` | Task create, edit, reorder, provision, pull request refresh, detach, delete. |
+| Registered repositories, overrides, and GitHub CLI profile | `repositories.json` | Repository registration or settings edit. |
 | SSH connection names, aliases, and enabled state | `ssh-connections.json` | Connection edit or enable change. |
 | UI and terminal layout snapshot | `app-session.json` | Relevant workspace change, with a short coalescing delay, and app termination. |
-| File-tree listings and expanded paths | `file-tree-cache-v1.json` | Workspace change, right-panel close, and app termination. |
+| File-tree listings and expanded paths | `file-tree-cache-v2.json` | Workspace change, right-panel close, and app termination. |
 | Appearance and small UI preferences | `UserDefaults` | Settings or panel presentation change, including editor font size, file preview behavior, worktree base, and task branch prefix. |
 
 JSON writes use atomic replacement. Session files use a version number. An unsupported version is ignored rather than decoded as a partially compatible layout.
@@ -173,6 +179,8 @@ The snapshot preserves UI topology, not process memory. See [Terminal session ar
 - AppKit views and user interaction stay on the main actor.
 - Git provisioning runs away from the UI, while each report update returns to the main UI before mutation.
 - Remote Git provisioning uses the registered OpenSSH alias with non-interactive authentication. SSH credentials remain outside Piñata.
+- Pull request metadata is grouped by repository checkout, execution target, and `gh` profile. Branch matching runs in the app, then full details and checks load only for related pull requests.
+- Pull request refresh runs away from the UI at workspace load, app activation, and 60-second intervals while active. Persisted summaries remain visible during refresh and transient GitHub failures.
 - Local file changes use one recursive, coalesced FSEvents stream while the Files panel is visible.
 - SSH file changes use foreground-only signature polling and only relist changed visible directories.
 - File-tree enumeration, prefetch, and cache writes run away from scrolling and remain bounded.
@@ -190,6 +198,7 @@ Piñata keeps error state with the resource that failed:
 | Missing zmx session | zmx creates a fresh named shell session. | Start a new shell. |
 | SSH terminal connection | The pane stays open with the SSH failure and a disconnected header. | Reconnect. |
 | Local or SSH folder load | The affected folder shows an error and retry action. | Retry the folder load. |
+| Missing, unauthenticated, inaccessible, or unavailable `gh` | The pull request section shows the error, or keeps its last successful cached data. | Install or authenticate `gh`, select an accessible profile, or wait for GitHub recovery. |
 | Invalid session snapshot | Ignore unsupported or stale entries. | Restore the remaining valid UI. |
 
 The app does not treat a failed attachment as a failed task. It only marks the affected attachment as failed.
@@ -199,9 +208,10 @@ The app does not treat a failed attachment as a failed task. It only marks the a
 Do not put the following in current production code until the feature exists:
 
 - Pi worker management or agent transcript storage.
-- GitHub API workflows.
+- GitHub write workflows, including pull request creation, review, merge, and check actions.
 - A replacement terminal renderer or custom terminal scrollback.
 
 Those proposed future capabilities live under [`docs/incoming/`](incoming/). Keeping them separate prevents current local behavior from depending on future infrastructure.
 
 See [File browser architecture](file-browser-architecture.md) for the file-tree ownership and performance contract.
+See [Pull request status](pull-request-status.md) for the GitHub CLI query, branch matching, and cache contract.

@@ -9,6 +9,7 @@ flowchart LR
     App[Piñata window] --> Sidebar[Sidebar]
     Sidebar --> Task[Task workspace]
     Sidebar --> Attachment[Repository workspace]
+    Sidebar --> PRStatus[Pull request hover card]
     Task --> Terminal[Terminal tabs and splits]
     Attachment --> Terminal
     Task --> Files[Right Files panel]
@@ -24,7 +25,8 @@ flowchart LR
 
 | Surface | Purpose | Primary action |
 | --- | --- | --- |
-| Sidebar | Browse pinned and unpinned tasks, then their attachments. | Select, reorder, open task actions. |
+| Sidebar | Browse pinned and unpinned tasks, their attachments, and read-only pull request status. | Select, reorder, open task actions, or open a matched pull request. |
+| Pull request hover card | Shows related pull requests and check results for one attachment. | Open a pull request or inspect its checks. |
 | Right workspace panel | Browse files for the selected task or attachment. | Open Files, expand folders, open a file, or resize the panel. |
 | File editor tabs | Edit local or SSH text files in the active workspace. | Preview with a single click, open permanently with a double click, and save with `Cmd+S`. |
 | Task workspace | Owns a task's terminal layout. | Open a task terminal or select an attachment. |
@@ -34,7 +36,7 @@ flowchart LR
 | Editor | Changes file preview behavior and editor font size. | Persist `UserSettings`. |
 | Git | Sets the default worktree base and manages registered repositories. | Open repository details. |
 | Connections | Reads SSH aliases from OpenSSH configuration and enables hosts. | Browse and register remote Git folders. |
-| Repository details | Shows inspected Git metadata and repository overrides. | Change default branch or worktree base, remove registration. |
+| Repository details | Shows inspected Git metadata, repository overrides, and available GitHub CLI profiles. | Change default branch, worktree base, or pull request profile, or remove registration. |
 
 ## Source map
 
@@ -93,6 +95,7 @@ flowchart TB
     Menu --> Connections[Connections]
     Git --> Repositories[Repository list]
     Repositories --> Details[Repository details]
+    Details --> GHProfile[GitHub CLI profile]
     Connections --> Hosts[Enabled SSH hosts]
     Hosts --> Browser[Remote folder browser]
 ```
@@ -103,13 +106,14 @@ The settings shell uses the same content gutter, section rhythm, and label/contr
 
 | Data | Local store | Notes |
 | --- | --- | --- |
-| Tasks and attachments | `tasks.json` | Includes worktree path, branch, and latest provisioning report. |
-| Registered repositories | `repositories.json` | Includes local or SSH target and worktree override. |
+| Tasks and attachments | `tasks.json` | Includes worktree path, tracked branch, latest provisioning report, and cached pull request summaries. |
+| Registered repositories | `repositories.json` | Includes local or SSH target, worktree override, and optional GitHub CLI profile. |
 | SSH connections | `ssh-connections.json` | Stores display name, OpenSSH alias, and enabled state only. |
 | Workspace and terminal layout | `app-session.json` | Restores valid task, attachment, tab, and split references. |
-| File-tree cache | `file-tree-cache-v1.json` | Bounded local and SSH listings plus expanded paths, keyed by root and target. |
+| File-tree cache | `file-tree-cache-v2.json` | Bounded local and SSH listings plus expanded paths, keyed by root and target. |
 | Appearance and panel preferences | `UserDefaults` | Theme, accent, application, terminal, and editor typography, preview behavior, icon color, sidebar presentation, panel widths, global worktree base, and task branch prefix. |
 
 All files are per-user under Application Support, except `UserDefaults`. zmx owns live terminal state and scrollback outside Piñata's stores.
 
 See [File browser architecture](file-browser-architecture.md) for cache, refresh, and performance behavior.
+See [Pull request status](pull-request-status.md) for GitHub profile, refresh, branch matching, and sidebar behavior.

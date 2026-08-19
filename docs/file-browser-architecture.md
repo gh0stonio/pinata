@@ -41,7 +41,7 @@ One prefetch run is capped at `64` directories and `5,000` entries. Cached but i
 
 ## Persistent cache
 
-File-tree state is stored at `Application Support/<bundle-id>/file-tree-cache-v1.json`.
+File-tree state is stored at `Application Support/<bundle-id>/file-tree-cache-v2.json`.
 
 The cache key combines the root path with its target. Local and SSH roots with the same path cannot share data, and an SSH key includes the connection identity and host. Each cache stores directory listings, expanded paths, and its update time.
 

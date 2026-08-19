@@ -782,7 +782,7 @@ struct FileTreeCacheStore: Sendable {
                         Bundle.main.bundleIdentifier ?? "dev.pinata.app",
                         isDirectory: true
                     )
-            self.fileURL = directory.appendingPathComponent("file-tree-cache-v1.json")
+            self.fileURL = directory.appendingPathComponent("file-tree-cache-v2.json")
         }
     }
 

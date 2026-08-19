@@ -95,7 +95,8 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
         ioBridge.session = terminalSession
         terminalSession.onOutput = { [weak self] data in
             guard let self else { return }
-            if !receivedTerminalOutput {
+            let isStatusMessage = data.starts(with: Data("\r\n[Piñata]".utf8))
+            if !receivedTerminalOutput, !isStatusMessage {
                 receivedTerminalOutput = true
                 didConnect?()
             }
@@ -228,46 +229,58 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
             return
         }
         remoteStartTask?.cancel()
-        connectionStatusMonitor?.beginExternalCheck(for: connection)
-        remoteStartTask = Task { [weak self] in
-            do {
-                try await Task.detached {
-                    try SSHCommand.test(connection: connection)
-                }.value
-                guard !Task.isCancelled, let self else { return }
-                self.connectionStatusMonitor?.completeExternalCheck(
-                    for: connection,
-                    status: .connected
-                )
-                guard await RemoteZmxInstallCoordinator.shared.ensureInstalled(on: connection) else {
+        let connectionStatusMonitor = self.connectionStatusMonitor
+        let terminalSession = self.terminalSession
+        remoteStartTask = Task { [weak self, connectionStatusMonitor, terminalSession] in
+            var attempt = 0
+            var reportedFailure = false
+            while !Task.isCancelled {
+                connectionStatusMonitor?.beginExternalCheck(for: connection)
+                do {
+                    try await Task.detached {
+                        try SSHCommand.test(connection: connection)
+                    }.value
+                    guard !Task.isCancelled else { return }
+                    connectionStatusMonitor?.completeExternalCheck(
+                        for: connection,
+                        status: .connected
+                    )
+                    guard await RemoteZmxInstallCoordinator.shared.ensureInstalled(on: connection) else {
+                        return
+                    }
+                    terminalSession.start()
+                    return
+                } catch is CancellationError {
+                    return
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    connectionStatusMonitor?.completeExternalCheck(
+                        for: connection,
+                        status: .disconnected
+                    )
+                    if !reportedFailure {
+                        self?.presentConnectionFailure(error.localizedDescription)
+                        reportedFailure = true
+                    }
+                }
+
+                do {
+                    try await Task.sleep(
+                        nanoseconds: UInt64(ZmxReconnectPolicy.delay(for: attempt) * 1_000_000_000)
+                    )
+                } catch {
                     return
                 }
-                self.terminalSession.start()
-            } catch is CancellationError {
-                return
-            } catch {
-                guard !Task.isCancelled else { return }
-                self?.connectionStatusMonitor?.completeExternalCheck(
-                    for: connection,
-                    status: .disconnected
-                )
-                self?.presentConnectionFailure(error.localizedDescription)
+                attempt += 1
             }
         }
     }
 
     private func presentConnectionFailure(_ message: String) {
         didFailToConnect?(message)
-        processTerminalOutput(Data("\r\n[Piñata] \(message)\r\n".utf8))
-
-        let alert = NSAlert()
-        alert.messageText = "SSH connection failed"
-        alert.informativeText = message
-        alert.addButton(withTitle: "Reconnect")
-        alert.addButton(withTitle: "Cancel")
-        if alert.runModal() == .alertFirstButtonReturn {
-            startTerminalSession()
-        }
+        processTerminalOutput(Data(
+            "\r\n[Piñata] \(message)\r\n[Piñata] Retrying automatically when the connection returns.\r\n".utf8
+        ))
     }
 
     private var currentDisplayID: UInt32? {
@@ -555,7 +568,7 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
         guard let surface else { return }
         value.withCString {
             ghostty_surface_preedit(surface, "", 0)
-            ghostty_surface_text(surface, $0, UInt(value.utf8.count))
+            ghostty_surface_text_input(surface, $0, UInt(value.utf8.count))
         }
     }
 

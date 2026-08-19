@@ -62,7 +62,7 @@ The current `main` branch includes:
 - Pinata syntax highlighting for common programming and configuration languages, including full Markdown token support.
 - Editor font-size settings and a loading state while file contents are read.
 
-Sidebar pull request status and check results are available through local or remote `gh`; diffs, reviews, check actions, pull request workflows, and Pi discussion/daemon support are not implemented yet.
+Sidebar pull request status and check results are available through local or remote `gh`. Each repository can select its `gh` profile, defaulting to the active profile. Diffs, reviews, check actions, pull request workflows, and Pi discussion/daemon support are not implemented yet.
 
 ## Project Structure
 
@@ -80,7 +80,7 @@ DerivedData/            Generated local Xcode output, ignored by Git
 
 Xcode generates the application bundle, `Info.plist`, compiled assets, and local development signature. Build settings such as the bundle identifier, version, deployment target, and Swift language mode live in `Piñata.xcodeproj/project.pbxproj`.
 
-See the [documentation map](docs/README.md) for the product workflow, current architecture, file browser, terminal sessions, and incoming Pi proposal.
+See the [documentation map](docs/README.md) for the product workflow, current architecture, pull request status, file browser, terminal sessions, and incoming Pi proposal.
 
 ## Development
 

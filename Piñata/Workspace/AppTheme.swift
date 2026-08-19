@@ -71,7 +71,7 @@ enum AppTheme {
     static let panelContentInset: CGFloat = 14
     static let fullScreenSidebarWidth: CGFloat = 320
     static let leftPanelRange: ClosedRange<CGFloat> = 200...440
-    static let rightPanelRange: ClosedRange<CGFloat> = 350...550
+    static let rightPanelRange: ClosedRange<CGFloat> = 320...500
     static let workspaceHeaderHeight: CGFloat = 36
     static let mainHeaderHeight: CGFloat = 44
     static let workspaceContentInset: CGFloat = 10
@@ -193,6 +193,7 @@ enum AppTheme {
     static private(set) var tertiaryText = color(0xA6AEB2)
     static private(set) var error = color(0xF25555)
     static private(set) var success = color(0x31C971)
+    static private(set) var warning = color(0xE5C07B)
     static private(set) var pullRequestMerged = color(0xA371F7)
     static private(set) var accent = color(0xFF746B)
     static private(set) var panelAccentIcon = color(0xFF746B)
@@ -602,6 +603,10 @@ class AppHoverView: NSView {
     private var trackingAreaReference: NSTrackingArea?
     private(set) var isHovering = false
 
+    var hoverTrackingOptions: NSTrackingArea.Options {
+        [.activeInKeyWindow, .mouseEnteredAndExited, .inVisibleRect]
+    }
+
     func hoverStateDidChange() {}
 
     override func updateTrackingAreas() {
@@ -609,7 +614,7 @@ class AppHoverView: NSView {
         if let trackingAreaReference { removeTrackingArea(trackingAreaReference) }
         let trackingArea = NSTrackingArea(
             rect: bounds,
-            options: [.activeInKeyWindow, .mouseEnteredAndExited, .inVisibleRect],
+            options: hoverTrackingOptions,
             owner: self
         )
         addTrackingArea(trackingArea)

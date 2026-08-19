@@ -74,10 +74,12 @@ final class PinataApp: NSObject, NSApplicationDelegate {
     func applicationDidBecomeActive(_ notification: Notification) {
         ghosttyRuntime?.setApplicationFocused(true)
         workspaceViewController?.refreshSSHConnectionStatuses()
+        workspaceViewController?.setApplicationActive(true)
     }
 
     func applicationDidResignActive(_ notification: Notification) {
         ghosttyRuntime?.setApplicationFocused(false)
+        workspaceViewController?.setApplicationActive(false)
     }
 
     @objc private func toggleLeftPanel(_ sender: Any?) {
