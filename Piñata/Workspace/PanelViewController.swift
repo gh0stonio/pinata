@@ -1749,7 +1749,7 @@ enum SidebarHoverCorridor {
 private final class SidebarHoverPopover: NSPanel {
     private static weak var activePopover: SidebarHoverPopover?
     private static let handoffDelay: TimeInterval = 0.2
-    private static let closeDelay: TimeInterval = 0.12
+    private static let closeDelay: TimeInterval = 0.25
     private static let corridorDuration: TimeInterval = 0.45
     private static let pointerPollInterval: TimeInterval = 0.04
     private let chromeView: SidebarHoverPopoverView

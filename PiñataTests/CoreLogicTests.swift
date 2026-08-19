@@ -105,6 +105,13 @@ final class CoreLogicTests: XCTestCase {
                 to: popoverFrame
             )
         )
+        XCTAssertTrue(
+            SidebarHoverCorridor.contains(
+                NSPoint(x: popoverFrame.minX, y: 200),
+                from: origin,
+                to: popoverFrame
+            )
+        )
         XCTAssertFalse(
             SidebarHoverCorridor.contains(
                 NSPoint(x: 356, y: 100),
