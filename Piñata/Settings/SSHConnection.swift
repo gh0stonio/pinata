@@ -17,6 +17,108 @@ enum SSHConnectionStatus: Equatable, Sendable {
 }
 
 @MainActor
+private final class SSHStatusSpinnerView: NSView {
+    var color: NSColor = .labelColor {
+        didSet { ringLayer.strokeColor = color.cgColor }
+    }
+
+    private let ringLayer = CAShapeLayer()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        ringLayer.fillColor = NSColor.clear.cgColor
+        ringLayer.lineCap = .round
+        ringLayer.lineWidth = 1.5
+        ringLayer.strokeStart = 0.08
+        ringLayer.strokeEnd = 0.82
+        layer?.addSublayer(ringLayer)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+
+    override func layout() {
+        super.layout()
+        ringLayer.frame = bounds
+        let inset = ringLayer.lineWidth / 2
+        ringLayer.path = CGPath(
+            ellipseIn: bounds.insetBy(dx: inset, dy: inset),
+            transform: nil
+        )
+    }
+
+    func startAnimating() {
+        guard ringLayer.animation(forKey: "spin") == nil else { return }
+        let animation = CABasicAnimation(keyPath: "transform.rotation")
+        animation.fromValue = 0
+        animation.toValue = 2 * Double.pi
+        animation.duration = 0.8
+        animation.repeatCount = .infinity
+        ringLayer.add(animation, forKey: "spin")
+    }
+
+    func stopAnimating() {
+        ringLayer.removeAnimation(forKey: "spin")
+    }
+}
+
+@MainActor
+final class SSHConnectionStatusIndicator: NSView {
+    var status: SSHConnectionStatus {
+        didSet { update() }
+    }
+
+    private let dot = NSView()
+    private let spinner = SSHStatusSpinnerView(frame: .zero)
+
+    init(status: SSHConnectionStatus) {
+        self.status = status
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        dot.translatesAutoresizingMaskIntoConstraints = false
+        dot.wantsLayer = true
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(dot)
+        addSubview(spinner)
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: 8),
+            heightAnchor.constraint(equalToConstant: 8),
+            dot.leadingAnchor.constraint(equalTo: leadingAnchor),
+            dot.trailingAnchor.constraint(equalTo: trailingAnchor),
+            dot.topAnchor.constraint(equalTo: topAnchor),
+            dot.bottomAnchor.constraint(equalTo: bottomAnchor),
+            spinner.leadingAnchor.constraint(equalTo: leadingAnchor),
+            spinner.trailingAnchor.constraint(equalTo: trailingAnchor),
+            spinner.topAnchor.constraint(equalTo: topAnchor),
+            spinner.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        setAccessibilityRole(.group)
+        setAccessibilityLabel("SSH connection status")
+        update()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+
+    private func update() {
+        let color = AppTheme.connectionStatusColor(status)
+        dot.layer?.backgroundColor = color.cgColor
+        dot.layer?.cornerRadius = 4
+        dot.isHidden = status == .checking
+        spinner.color = AppTheme.tertiaryText
+        spinner.isHidden = status != .checking
+        if status == .checking {
+            spinner.startAnimating()
+        } else {
+            spinner.stopAnimating()
+        }
+        setAccessibilityValue(status.label)
+        toolTip = status.label
+    }
+}
+
+@MainActor
 final class SSHConnectionStatusMonitor {
     private(set) var statuses: [UUID: SSHConnectionStatus] = [:]
     private var connections: [UUID: SSHConnection] = [:]
@@ -78,6 +180,22 @@ final class SSHConnectionStatusMonitor {
         }
     }
 
+    func beginExternalCheck(for connection: SSHConnection) {
+        guard connection.isEnabled, connections[connection.id] == connection else { return }
+        checkTasks[connection.id]?.cancel()
+        checkTasks[connection.id] = nil
+        setStatus(.checking, for: connection.id)
+    }
+
+    func completeExternalCheck(
+        for connection: SSHConnection,
+        status: SSHConnectionStatus
+    ) {
+        guard connection.isEnabled, connections[connection.id] == connection else { return }
+        checkTasks[connection.id] = nil
+        setStatus(status, for: connection.id)
+    }
+
     func status(for connectionID: UUID) -> SSHConnectionStatus {
         statuses[connectionID] ?? .disabled
     }
@@ -92,7 +210,7 @@ final class SSHConnectionStatusMonitor {
         let task = Task { [weak self] in
             let status = await Task.detached(priority: .utility) {
                 do {
-                    try SSHCommand.test(connection: connection, reuseConnection: true)
+                    try SSHCommand.test(connection: connection)
                     return SSHConnectionStatus.connected
                 } catch is CancellationError {
                     return SSHConnectionStatus.checking
@@ -928,13 +1046,7 @@ struct RemoteDirectoryInspector: Sendable {
 
         let process = SSHCommand.makeProcess(
             connection: connection,
-            command: [
-                "find", path,
-                "-mindepth", "1",
-                "-maxdepth", "1",
-                "-type", "d",
-                "-print0",
-            ],
+            command: ["sh", "-lc", Self.directoryListingScript(path: path)],
             reuseConnection: true
         )
         process.standardOutput = output
@@ -973,10 +1085,16 @@ struct RemoteDirectoryInspector: Sendable {
         return [path: directories]
     }
 
+    static func directoryListingScript(path: String) -> String {
+        let root = SSHCommand.shellQuote(path)
+        return "root=\(root); if [ ! -d \"$root\" ]; then printf 'Remote folder is unavailable.\\n' >&2; exit 1; fi; for entry in \"$root\"/* \"$root\"/.[!.]* \"$root\"/..?*; do [ -d \"$entry\" ] && [ ! -L \"$entry\" ] || continue; printf '%s\\0' \"$entry\"; done"
+    }
+
     static func parseDirectories(_ output: String) -> [String] {
-        sortDirectories(output.split { $0 == "\0" || $0.isNewline }
-            .map(String.init)
-            .filter { !$0.isEmpty })
+        let paths = output.contains("\0")
+            ? output.split(separator: "\0", omittingEmptySubsequences: true).map(String.init)
+            : output.split(whereSeparator: \.isNewline).map(String.init)
+        return sortDirectories(paths.filter { !$0.isEmpty })
     }
 
     static func parseDirectoryTree(_ output: String, root: String) -> [String: [String]] {

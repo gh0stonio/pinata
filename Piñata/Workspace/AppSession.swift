@@ -7,17 +7,20 @@ struct AppSession: Codable, Equatable, Sendable {
     var activeScope: StoredWorkspaceScope?
     var expandedTaskIDs: Set<UUID>
     var terminalWorkspaces: [StoredTerminalWorkspace]
+    var recentlyClosedTerminalTab: StoredClosedTerminalTab?
 
     init(
         version: Int = Self.currentVersion,
         activeScope: StoredWorkspaceScope? = nil,
         expandedTaskIDs: Set<UUID> = [],
-        terminalWorkspaces: [StoredTerminalWorkspace] = []
+        terminalWorkspaces: [StoredTerminalWorkspace] = [],
+        recentlyClosedTerminalTab: StoredClosedTerminalTab? = nil
     ) {
         self.version = version
         self.activeScope = activeScope
         self.expandedTaskIDs = expandedTaskIDs
         self.terminalWorkspaces = terminalWorkspaces
+        self.recentlyClosedTerminalTab = recentlyClosedTerminalTab
     }
 }
 
@@ -39,6 +42,12 @@ struct StoredTerminalTab: Codable, Equatable, Sendable {
     var id: UUID
     var title: String
     var terminal: TerminalSessionSnapshot
+}
+
+struct StoredClosedTerminalTab: Codable, Equatable, Sendable {
+    var scope: StoredWorkspaceScope
+    var index: Int
+    var tab: StoredTerminalTab
 }
 
 struct AppSessionStore {

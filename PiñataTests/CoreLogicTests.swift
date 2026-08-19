@@ -238,6 +238,10 @@ final class CoreLogicTests: XCTestCase {
             ["/srv/api", "/srv/Apps"]
         )
         XCTAssertEqual(
+            RemoteDirectoryInspector.parseDirectories("/srv/name\nwith-newline\0"),
+            ["/srv/name\nwith-newline"]
+        )
+        XCTAssertEqual(
             RemoteDirectoryInspector.parseDirectoryTree(
                 "/srv/.cache\n/srv/api\n/srv/Apps\n",
                 root: "/srv"
@@ -276,6 +280,9 @@ final class CoreLogicTests: XCTestCase {
             FileTreeInspector.remoteListingScript(paths: ["/srv"])
                 .contains("printf 'r\\0%s\\0%s\\0' 0")
         )
+        let remoteDirectoryScript = RemoteDirectoryInspector.directoryListingScript(path: "/srv")
+        XCTAssertFalse(remoteDirectoryScript.contains("find"))
+        XCTAssertTrue(remoteDirectoryScript.contains("\"$root\"/*"))
 
         let process = SSHCommand.makeProcess(
             connection: SSHConnection(name: "Build", host: "build"),
@@ -617,7 +624,12 @@ final class CoreLogicTests: XCTestCase {
                     activeTabID: tabID,
                     nextTabNumber: 2
                 ),
-            ]
+            ],
+            recentlyClosedTerminalTab: StoredClosedTerminalTab(
+                scope: .task(taskID),
+                index: 0,
+                tab: StoredTerminalTab(id: tabID, title: "Terminal", terminal: terminal)
+            )
         )
         let store = AppSessionStore(fileURL: directoryURL.appendingPathComponent("session.json"))
 

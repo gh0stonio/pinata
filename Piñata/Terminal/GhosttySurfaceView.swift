@@ -52,6 +52,7 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
     private let runtime: GhosttyRuntime
     private let terminalSession: ZmxTerminalClient
     private let ioBridge: GhosttyIOBridge
+    private let connectionStatusMonitor: SSHConnectionStatusMonitor?
     private var markedTextStorage = NSMutableAttributedString()
     private var suppressFocusMouseUp = false
     private var trackingAreaToken: NSTrackingArea?
@@ -77,11 +78,13 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
         runtime: GhosttyRuntime,
         workingDirectory: String = FileManager.default.homeDirectoryForCurrentUser.path,
         target: TerminalTarget = .local,
-        sessionID: UUID
+        sessionID: UUID,
+        connectionStatusMonitor: SSHConnectionStatusMonitor? = nil
     ) {
         self.runtime = runtime
         self.workingDirectory = workingDirectory
         self.target = target
+        self.connectionStatusMonitor = connectionStatusMonitor
         terminalSession = ZmxTerminalClient(
             id: sessionID,
             workingDirectory: workingDirectory,
@@ -225,19 +228,29 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
             return
         }
         remoteStartTask?.cancel()
+        connectionStatusMonitor?.beginExternalCheck(for: connection)
         remoteStartTask = Task { [weak self] in
             do {
                 try await Task.detached {
                     try SSHCommand.test(connection: connection)
                 }.value
-                guard !Task.isCancelled,
-                      let self,
-                      await RemoteZmxInstallCoordinator.shared.ensureInstalled(on: connection)
-                else { return }
+                guard !Task.isCancelled, let self else { return }
+                self.connectionStatusMonitor?.completeExternalCheck(
+                    for: connection,
+                    status: .connected
+                )
+                guard await RemoteZmxInstallCoordinator.shared.ensureInstalled(on: connection) else {
+                    return
+                }
                 self.terminalSession.start()
             } catch is CancellationError {
                 return
             } catch {
+                guard !Task.isCancelled else { return }
+                self?.connectionStatusMonitor?.completeExternalCheck(
+                    for: connection,
+                    status: .disconnected
+                )
                 self?.presentConnectionFailure(error.localizedDescription)
             }
         }
@@ -391,7 +404,7 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
     @discardableResult
     private func sendKey(_ event: NSEvent, action: ghostty_input_action_e) -> Bool {
         guard let surface else { return false }
-        let text = event.characters ?? ""
+        let text = terminalText(for: event) ?? ""
         return text.withCString { pointer in
             var key = ghostty_input_key_s()
             key.action = action
@@ -403,6 +416,15 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
             key.composing = hasMarkedText()
             return ghostty_surface_key(surface, key)
         }
+    }
+
+    private func terminalText(for event: NSEvent) -> String? {
+        guard let text = event.characters else { return nil }
+        guard text.count == 1, let scalar = text.unicodeScalars.first else { return text }
+        if scalar.value < 0x20 {
+            return event.characters(byApplyingModifiers: event.modifierFlags.subtracting(.control))
+        }
+        return scalar.value >= 0xF700 && scalar.value <= 0xF8FF ? nil : text
     }
 
     private func physicalKey(_ event: NSEvent) -> ghostty_input_key_e? {
@@ -479,6 +501,9 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard window?.firstResponder === self else {
+            return super.performKeyEquivalent(with: event)
+        }
         if event.modifierFlags.contains(.command) {
             switch event.charactersIgnoringModifiers?.lowercased() {
             case "c" where ghostty_surface_has_selection(surface):
