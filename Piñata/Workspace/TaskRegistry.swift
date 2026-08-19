@@ -5,23 +5,53 @@ struct TaskRepositoryAttachment: Codable, Equatable, Identifiable, Sendable {
     let name: String
     let worktreePath: String?
     let worktreeProvisioning: WorktreeProvisioningReport?
-    let branch: String?
+    var branch: String?
+    var pullRequests: [PullRequestSummary]
+    var pullRequestNumbers: [Int]
+    var pullRequestsFetchedAt: Date?
 
     init(
         repositoryID: UUID,
         name: String,
         worktreePath: String? = nil,
         worktreeProvisioning: WorktreeProvisioningReport? = nil,
-        branch: String? = nil
+        branch: String? = nil,
+        pullRequests: [PullRequestSummary] = [],
+        pullRequestNumbers: [Int]? = nil,
+        pullRequestsFetchedAt: Date? = nil
     ) {
         self.repositoryID = repositoryID
         self.name = name
         self.worktreePath = worktreePath
         self.worktreeProvisioning = worktreeProvisioning
         self.branch = branch
+        self.pullRequests = pullRequests
+        self.pullRequestNumbers = pullRequestNumbers ?? pullRequests.map(\.number)
+        self.pullRequestsFetchedAt = pullRequestsFetchedAt
     }
 
     var id: UUID { repositoryID }
+
+    private enum CodingKeys: String, CodingKey {
+        case repositoryID, name, worktreePath, worktreeProvisioning, branch
+        case pullRequests, pullRequestNumbers, pullRequestsFetchedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        repositoryID = try values.decode(UUID.self, forKey: .repositoryID)
+        name = try values.decode(String.self, forKey: .name)
+        worktreePath = try values.decodeIfPresent(String.self, forKey: .worktreePath)
+        worktreeProvisioning = try values.decodeIfPresent(
+            WorktreeProvisioningReport.self,
+            forKey: .worktreeProvisioning
+        )
+        branch = try values.decodeIfPresent(String.self, forKey: .branch)
+        pullRequests = try values.decodeIfPresent([PullRequestSummary].self, forKey: .pullRequests) ?? []
+        pullRequestNumbers = try values.decodeIfPresent([Int].self, forKey: .pullRequestNumbers)
+            ?? pullRequests.map(\.number)
+        pullRequestsFetchedAt = try values.decodeIfPresent(Date.self, forKey: .pullRequestsFetchedAt)
+    }
 }
 
 struct WorkspaceTask: Codable, Equatable, Identifiable, Sendable {

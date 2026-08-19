@@ -14,7 +14,7 @@ The task is the product's durable unit. A repository is attached to a task, rath
 | Repository | A registered local or SSH-backed Git repository. | Yes |
 | Attachment | A repository assigned to a task. | No, it belongs to one task and repository pair. |
 | Worktree | An isolated checkout created for an attachment. | No, it is created from the attachment. |
-| Piñata branch | A Piñata-owned branch named `pinata/<task-slug>-<id>`. | No, Piñata creates and removes it with the worktree. |
+| Piñata branch | A Piñata-owned branch named `<prefix><task-slug>-<id>`, using `pinata/` by default. | No, Piñata creates and removes it with the worktree. |
 | Terminal workspace | Tabs and split panes for a selected task or attachment. | Yes, for a task with no repository it uses the task workspace. |
 | Terminal pane | One Ghostty surface attached to one durable zmx session. | No, it belongs to a terminal tab. |
 
@@ -74,6 +74,16 @@ The independently resizable right panel contains Files, Review, and PR tabs. Fil
 
 The left task sidebar and right workspace panel have separate controllers, visibility state, constraints, resize handles, and persisted widths. Changes to one side must not alter the other side's spacing or behavior.
 
+## Pull request status
+
+Repository attachments can show one pull request or a related stack in the sidebar. Piñata uses local `gh` for local repositories and the remote host's `gh` for SSH repositories. Each repository can use the active profile or a specific discovered profile.
+
+Pull request summaries are saved with the task attachment and displayed immediately after an app restart. Piñata refreshes them when the workspace loads, when the app becomes active, and every 60 seconds while active. A failed refresh keeps the last successful data visible.
+
+The attachment's saved branch is the matching source. A real branch rename updates that value, while a temporary checkout does not. Closed, unmerged pull requests are hidden. Related open and merged pull requests are ordered from the main base toward the stack tip.
+
+See [Pull request status](pull-request-status.md) for profile selection, query grouping, stack matching, status colors, and failure behavior.
+
 ## Create a task
 
 1. The user chooses **New task** and gives the work a title.
@@ -98,7 +108,7 @@ sequenceDiagram
     U->>A: Create task and attach repository
     A->>G: Fetch origin default branch
     G-->>A: origin/default branch updated
-    A->>G: Create pinata/task-slug-id branch
+    A->>G: Create configured-prefix/task-slug-id branch
     G-->>A: Branch created
     A->>G: Add worktree at configured path
     G-->>W: Checkout files and run Git hooks
@@ -110,6 +120,8 @@ sequenceDiagram
 
 Piñata fetches the registered repository's configured default branch first. The new branch is then created from the updated `origin/<default-branch>` reference. This avoids basing new worktrees on a stale local branch.
 
+After creation, the task attachment keeps its provisioned branch as its source context. Piñata follows a rename when that branch disappears and the worktree points to its replacement. A temporary checkout leaves the owned branch intact, so it does not change the task attachment or its pull request context.
+
 ### Naming
 
 The task title is serialized to lowercase words separated by hyphens. For example, `Fix SSO sign in` becomes `fix-sso-sign-in`.
@@ -120,6 +132,8 @@ For a task ID beginning with `1234abcd`:
 Branch:    pinata/fix-sso-sign-in-1234abcd
 Worktree:  <base>/<repository-name>/fix-sso-sign-in
 ```
+
+Settings → Git controls the task branch prefix. The default is `pinata/`; for example, `antoine.leveque/` produces `antoine.leveque/fix-sso-sign-in-1234abcd`. The prefix applies only to future task branches. The configured repository default branch remains the source branch, such as `origin/main`.
 
 If that destination exists, Piñata uses a numeric suffix such as `fix-sso-sign-in-2`.
 
@@ -169,12 +183,12 @@ If cleanup fails, the task stays visible in a deleting or failed state. This kee
 
 ## Settings and appearance
 
-Piñata persists application settings locally: dark or light theme, accent color and intensity, application font size, terminal font size, editor font size, file preview behavior, file-icon color, panel widths, and worktree defaults. Colors and typography are supplied through the shared AppKit theme system so light and dark appearances use the same semantic roles.
+Piñata persists application settings locally: dark or light theme, accent color and intensity, application font size, terminal font size, editor font size, file preview behavior, file-icon color, panel widths, worktree defaults, the task branch prefix, and the optional GitHub CLI profile selected for each repository. Colors and typography are supplied through the shared AppKit theme system so light and dark appearances use the same semantic roles.
 
 ## Current product limits
 
 - SSH uses an existing OpenSSH alias and non-interactive key authentication. Piñata does not manage keys, passwords, host verification, tunnels, or port forwarding.
-- No diff, review, checks, or pull request workflow. Review and PR tabs are placeholders.
+- Sidebar pull request status and check results are read-only and depend on local or remote `gh` availability. Pull request actions, diffs, reviews, and the right-panel PR workflow remain placeholders.
 - No Pi discussion UI, Pi daemon, or agent-specific persistence.
 - No recovery of a local shell after macOS restarts, or a remote process after its host restarts.
 

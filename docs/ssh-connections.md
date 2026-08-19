@@ -16,18 +16,18 @@ Piñata uses `ssh -o BatchMode=yes`. Interactive password prompts are deliberate
 flowchart LR
   C[Saved SSH alias] --> R[Remote registered repository]
   R --> F[Fetch remote base branch]
-  F --> B[Create pinata branch]
+  F --> B[Create configured-prefix branch]
   B --> W[Create remote worktree]
   W --> T[SSH-backed terminal]
 ```
 
 Worktrees use the same configured global or repository-specific base path. `~/` remains a remote path and is expanded by the remote shell, never by the Mac.
 
-Removing an attached remote repository removes its verified `pinata/` worktree and branch on that same host. Piñata will not remove an unverified remote path.
+Removing an attached remote repository removes its verified Piñata worktree and task branch on that same host, using the configured task branch prefix. Piñata will not remove an unverified remote path.
 
 ## Durable terminals
 
-An SSH terminal attaches directly to `zmx` on the remote host: `ssh -tt <alias> zmx attach <pane-id>`. Closing Piñata disconnects the SSH client, while zmx retains the remote shell and terminal state. Reopening Piñata attaches to the same session.
+An SSH terminal attaches directly to `zmx` on the remote host: `ssh -tt <alias> zmx attach <pane-id>`. Closing Piñata disconnects the SSH client, while zmx retains the remote shell and terminal state. Reopening Piñata attaches to the same session. A dropped SSH connection is retried automatically against that same session.
 
 If the Mac restarts, remote zmx sessions remain available. If the remote host restarts, no terminal process can be recovered exactly. Piñata restores the pane and starts a fresh remote session.
 
@@ -43,4 +43,6 @@ Cached descendants are exposed only after the current remote root is validated. 
 
 ## Limits
 
-Piñata bundles zmx locally. Before opening a remote terminal, it checks the host for zmx and offers to install pinned zmx `0.7.0` in `~/.local/bin`. The installer supports macOS and Linux on arm64 and x86_64, requires `curl`, and verifies the archive checksum. Piñata supports existing SSH aliases, remote Git inspection, file browsing, worktree provisioning and cleanup, and durable SSH terminal panes. Connection editing, interactive SSH authentication, port forwarding, and remote-host process recovery are intentionally out of scope.
+Piñata bundles zmx locally. Before opening a remote terminal, it checks the host for zmx and offers to install pinned zmx `0.7.0` in `~/.local/bin`. The installer supports macOS and Linux on arm64 and x86_64, requires `curl`, and verifies the archive checksum. Piñata supports existing SSH aliases, remote Git inspection, file browsing, worktree provisioning and cleanup, durable SSH terminal panes, and remote pull request lookup through `gh`. A repository can select one of the profiles available on that host, defaulting to the active profile. Profile discovery, token lookup, pull request metadata, and checks all run on the remote host. Connection editing, interactive SSH authentication, and port forwarding are intentionally out of scope.
+
+See [Pull request status](pull-request-status.md) for profile selection, caching, and query behavior.

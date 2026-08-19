@@ -258,14 +258,24 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
             installInspectionError(for: repository, error: error)
             return
         }
-        let worker = Task.detached(priority: .userInitiated) { () throws -> (RegisteredRepository, RepositoryContext) in
+        let worker = Task.detached(priority: .userInitiated) { () throws -> (RegisteredRepository, RepositoryContext, GitHubCLIProfileResult) in
             let inspector = RepositoryInspector()
             let refreshedRepository = try inspector.refresh(repository, connection: connection)
-            return (refreshedRepository, try inspector.context(for: refreshedRepository, connection: connection))
+            let context = try inspector.context(for: refreshedRepository, connection: connection)
+            let target = connection.map(TerminalTarget.ssh) ?? .local
+            let profiles = GitHubCLIProfileInspector.inspect(
+                context: PullRequestQueryContext(
+                    path: refreshedRepository.path,
+                    target: target,
+                    branches: [],
+                    ghProfile: nil
+                )
+            )
+            return (refreshedRepository, context, profiles)
         }
         contextTask = Task { [weak self] in
             do {
-                let (refreshedRepository, context) = try await withTaskCancellationHandler {
+                let (refreshedRepository, context, profiles) = try await withTaskCancellationHandler {
                     try await worker.value
                 } onCancel: {
                     worker.cancel()
@@ -275,7 +285,11 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
                     let self,
                     self.selectedRepositoryID == repositoryID
                 else { return }
-                self.installDetails(for: refreshedRepository, context: context)
+                self.installDetails(
+                    for: refreshedRepository,
+                    context: context,
+                    profiles: profiles
+                )
             } catch is CancellationError {
                 return
             } catch {
@@ -291,11 +305,13 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
 
     private func installDetails(
         for repository: RegisteredRepository,
-        context: RepositoryContext
+        context: RepositoryContext,
+        profiles: GitHubCLIProfileResult
     ) {
         let details = RepositoryDetailView(
             repository: repository,
-            context: context
+            context: context,
+            profiles: profiles
         )
         details.onSave = { [weak self] repository in self?.save(repository) ?? false }
         showDetails(details)
@@ -661,6 +677,10 @@ private enum RepositoryDetailText {
         title: "Origin",
         detail: "Primary Git remote"
     )
+    static let ghProfile = RepositoryDetailCopy(
+        title: "GitHub CLI profile",
+        detail: "Account used for pull request data"
+    )
     static let currentBranch = RepositoryDetailCopy(
         title: "Current branch",
         detail: "Checked out in the source repo"
@@ -696,19 +716,24 @@ private final class RepositoryDetailView: NSView, NSTextFieldDelegate, SettingsT
     private var repository: RegisteredRepository
     private let context: RepositoryContext?
     private let errorMessage: String?
+    private let profiles: GitHubCLIProfileResult?
     private let breadcrumb: RepositoryBreadcrumbView
     private let page = SettingsSplitPageView(topPadding: SettingsLayout.detailPageTopPadding)
     private let branchPopup = SettingsPopupButton()
+    private let ghProfilePopup = SettingsPopupButton()
     private let worktreeField = SettingsTextField()
+    private var ghProfileChoices: [String?] = []
 
     init(
         repository: RegisteredRepository,
         context: RepositoryContext? = nil,
-        errorMessage: String? = nil
+        errorMessage: String? = nil,
+        profiles: GitHubCLIProfileResult? = nil
     ) {
         self.repository = repository
         self.context = context
         self.errorMessage = errorMessage
+        self.profiles = profiles
         breadcrumb = RepositoryBreadcrumbView(repositoryName: repository.name)
         super.init(frame: .zero)
         installLayout()
@@ -786,6 +811,7 @@ private final class RepositoryDetailView: NSView, NSTextFieldDelegate, SettingsT
             detail: RepositoryDetailText.source.detail,
             content: settingsRowStack(sourceRows)
         )
+        installGitHubProfileSection()
 
         branchPopup.addItems(withTitles: repository.branches)
         if !repository.branches.contains(repository.defaultBranch) {
@@ -871,6 +897,11 @@ private final class RepositoryDetailView: NSView, NSTextFieldDelegate, SettingsT
             ])
         )
         page.addSection(
+            title: "GitHub CLI",
+            detail: "Choose the account used for pull request data.",
+            content: makeSkeletonRow(RepositoryDetailText.ghProfile)
+        )
+        page.addSection(
             title: RepositoryDetailText.branches.title,
             detail: RepositoryDetailText.branches.detail,
             content: settingsRowStack([
@@ -887,6 +918,41 @@ private final class RepositoryDetailView: NSView, NSTextFieldDelegate, SettingsT
                 makeSkeletonRow(RepositoryDetailText.worktreeOverride),
                 makeSkeletonRow(RepositoryDetailText.existingWorktrees),
             ])
+        )
+    }
+
+    private func installGitHubProfileSection() {
+        let result = profiles ?? GitHubCLIProfileResult(profiles: [], errorMessage: nil)
+        ghProfilePopup.removeAllItems()
+        ghProfileChoices = [nil]
+        let activeLogin = result.profiles.first(where: \.isActive)?.login
+        ghProfilePopup.addItem(withTitle: activeLogin.map {
+            "Use active profile: \($0)"
+        } ?? "Use active profile")
+        for profile in result.profiles {
+            ghProfileChoices.append(profile.login)
+            ghProfilePopup.addItem(withTitle: profile.login)
+        }
+        if let selectedProfile = repository.ghProfile,
+           !ghProfileChoices.contains(selectedProfile)
+        {
+            ghProfileChoices.append(selectedProfile)
+            ghProfilePopup.addItem(withTitle: "\(selectedProfile) (unavailable)")
+        }
+        if let selectedProfile = repository.ghProfile,
+           let index = ghProfileChoices.firstIndex(of: selectedProfile)
+        {
+            ghProfilePopup.selectItem(at: index)
+        } else {
+            ghProfilePopup.selectItem(at: 0)
+        }
+        ghProfilePopup.target = self
+        ghProfilePopup.action = #selector(ghProfileChanged)
+        ghProfilePopup.isEnabled = result.errorMessage == nil || !result.profiles.isEmpty
+        page.addSection(
+            title: "GitHub CLI",
+            detail: result.errorMessage ?? "Defaults to the active gh profile on this machine.",
+            content: makeControlRow(RepositoryDetailText.ghProfile, control: ghProfilePopup)
         )
     }
 
@@ -925,6 +991,19 @@ private final class RepositoryDetailView: NSView, NSTextFieldDelegate, SettingsT
             controlHeight: SettingsLayout.skeletonHeight,
             minimumHeight: SettingsLayout.rowHeight
         )
+    }
+
+    @objc private func ghProfileChanged() {
+        let index = ghProfilePopup.indexOfSelectedItem
+        guard ghProfileChoices.indices.contains(index) else { return }
+        let previousProfile = repository.ghProfile
+        repository.ghProfile = ghProfileChoices[index]
+        if onSave?(repository) == false {
+            repository.ghProfile = previousProfile
+            if let previousIndex = ghProfileChoices.firstIndex(of: previousProfile) {
+                ghProfilePopup.selectItem(at: previousIndex)
+            }
+        }
     }
 
     @objc private func defaultBranchChanged() {

@@ -124,10 +124,12 @@ final class WorkspaceViewController: NSViewController {
     private static let sidebarDefaultsKey = "pinata.sidebar.presentation.v1"
     private static let leftPanelWidthDefaultsKey = "pinata.panel.left.width.v1"
     private static let rightPanelWidthDefaultsKey = "pinata.panel.right.width.v1"
+    private static let rightPanelVisibilityDefaultsKey = "pinata.panel.right.visible.v1"
     private static let dismissDelay: TimeInterval = 0.30
     private static let exitRevealGracePeriod: TimeInterval = 0.75
     private static let revealAnimationDuration: TimeInterval = 0.12
     private static let dismissAnimationDuration: TimeInterval = 0.10
+    private static let pullRequestRefreshInterval: TimeInterval = 60
 
     private let runtime: GhosttyRuntime
     private let workspaceCard = NSView()
@@ -135,6 +137,7 @@ final class WorkspaceViewController: NSViewController {
     private let terminalHost = NSView()
     private let workspaceHeader = WorkspaceHeaderView()
     private let sshConnectionStatusMonitor = SSHConnectionStatusMonitor()
+    private let pullRequestStatusStore = PullRequestStatusStore()
     private lazy var leftPanelController = PanelViewController(
         connectionStatusMonitor: sshConnectionStatusMonitor
     )
@@ -174,7 +177,12 @@ final class WorkspaceViewController: NSViewController {
     private var repositoryActionMenu: SidebarActionMenuView?
     private var repositoryActionMenuMouseMonitor: Any?
     private var repositoryActionMenuScope: TaskRepositoryScope?
+    private var pullRequestRefreshTimer: Timer?
+    private var worktreeBranchRefreshTask: Task<Void, Never>?
+    private var applicationIsActive = true
     private var leftResizeWindowWidth: CGFloat?
+    private var leftResizeStartWidth: CGFloat?
+    private var rightResizeStartWidth: CGFloat?
 
     private var leftWidthConstraint: NSLayoutConstraint!
     private var rightWidthConstraint: NSLayoutConstraint!
@@ -219,6 +227,7 @@ final class WorkspaceViewController: NSViewController {
             loadError = "Could not load tasks: \(error.localizedDescription)"
         }
         tasks = loadedTasks
+        pullRequestStatusStore.seed(loadedTasks)
         taskRegistryLoaded = didLoadTaskRegistry
         taskLoadError = loadError
         let restoredSession = try? sessionStore.load()
@@ -250,6 +259,7 @@ final class WorkspaceViewController: NSViewController {
         let stored = UserDefaults.standard.string(forKey: Self.sidebarDefaultsKey)
         sidebarPresentation = stored == SidebarPresentation.hidden.rawValue ? .hidden : .docked
         let defaults = UserDefaults.standard
+        rightPanelVisible = defaults.bool(forKey: Self.rightPanelVisibilityDefaultsKey)
         if defaults.object(forKey: Self.leftPanelWidthDefaultsKey) != nil {
             leftPanelWidth = min(
                 max(CGFloat(defaults.double(forKey: Self.leftPanelWidthDefaultsKey)), AppTheme.leftPanelRange.lowerBound),
@@ -263,6 +273,11 @@ final class WorkspaceViewController: NSViewController {
             )
         }
         super.init(nibName: nil, bundle: nil)
+        pullRequestStatusStore.onChange = { [weak self] repositoryIDs in
+            guard let self else { return }
+            self.persistPullRequestMetadata(for: repositoryIDs)
+            self.leftPanelController.updatePullRequestStatuses(self.pullRequestStatusStore.statuses)
+        }
         if let storedTab = restoredSession?.recentlyClosedTerminalTab,
            storedTab.tab.terminal.isValid,
            Self.workspaceScope(from: storedTab.scope, in: loadedTasks) != nil {
@@ -308,6 +323,7 @@ final class WorkspaceViewController: NSViewController {
         super.viewDidAppear()
         observeWindowIfNeeded()
         installKeyEventMonitorIfNeeded()
+        installPullRequestRefreshTimerIfNeeded()
         fullScreen = view.window?.styleMask.contains(.fullScreen) == true
         applySidebarPresentation()
         activeTerminalController?.focusActiveTerminal()
@@ -318,6 +334,10 @@ final class WorkspaceViewController: NSViewController {
         cancelScheduledTransitions()
         dismissTaskActionMenu()
         dismissRepositoryActionMenu()
+        worktreeBranchRefreshTask?.cancel()
+        worktreeBranchRefreshTask = nil
+        pullRequestRefreshTimer?.invalidate()
+        pullRequestRefreshTimer = nil
         NotificationCenter.default.removeObserver(self)
         if let keyEventMonitor {
             NSEvent.removeMonitor(keyEventMonitor)
@@ -342,6 +362,10 @@ final class WorkspaceViewController: NSViewController {
 
     @objc func toggleRightPanel(_ sender: Any?) {
         rightPanelVisible.toggle()
+        UserDefaults.standard.set(
+            rightPanelVisible,
+            forKey: Self.rightPanelVisibilityDefaultsKey
+        )
         applySidebarPresentation()
     }
 
@@ -589,7 +613,8 @@ final class WorkspaceViewController: NSViewController {
         rootView.addSubview(leftPanel)
         rootView.addSubview(leftResizeHandle)
         workspaceCard.addSubview(rightPanel)
-        workspaceCard.addSubview(rightResizeHandle)
+        rootView.addSubview(rightResizeHandle)
+        refreshRenamedWorktreeBranches()
         updateTaskSidebar()
     }
 
@@ -756,19 +781,29 @@ final class WorkspaceViewController: NSViewController {
             }
         }
         leftResizeHandle.onDrag = { [weak self] delta in
-            self?.resizeLeftPanel(by: delta)
+            guard let self, let startWidth = self.leftResizeStartWidth else { return }
+            self.resizeLeftPanel(to: startWidth + delta)
         }
         leftResizeHandle.onDragBegan = { [weak self] in
             self?.leftResizeWindowWidth = self?.view.bounds.width
+            self?.leftResizeStartWidth = self?.leftWidthConstraint.constant
         }
         leftResizeHandle.onDragEnded = { [weak self] in
             self?.leftResizeWindowWidth = nil
+            self?.leftResizeStartWidth = nil
         }
         leftResizeHandle.onKeyboardResize = { [weak self] command in
             self?.resizeLeftPanel(with: command)
         }
         rightResizeHandle.onDrag = { [weak self] delta in
-            self?.resizeRightPanel(by: -delta)
+            guard let self, let startWidth = self.rightResizeStartWidth else { return }
+            self.resizeRightPanel(to: startWidth - delta)
+        }
+        rightResizeHandle.onDragBegan = { [weak self] in
+            self?.rightResizeStartWidth = self?.rightWidthConstraint.constant
+        }
+        rightResizeHandle.onDragEnded = { [weak self] in
+            self?.rightResizeStartWidth = nil
         }
         rightResizeHandle.onKeyboardResize = { [weak self] command in
             self?.resizeRightPanel(with: command)
@@ -2013,12 +2048,16 @@ final class WorkspaceViewController: NSViewController {
             return
         }
         let attachment = attachments[attachmentIndex]
+        let branch = report.succeeded ? report.branch : attachment.branch
         attachments[attachmentIndex] = TaskRepositoryAttachment(
             repositoryID: attachment.repositoryID,
             name: attachment.name,
             worktreePath: report.succeeded ? report.path : nil,
             worktreeProvisioning: report.succeeded ? nil : report,
-            branch: report.succeeded ? report.branch : attachment.branch
+            branch: branch,
+            pullRequests: branch == attachment.branch ? attachment.pullRequests : [],
+            pullRequestNumbers: branch == attachment.branch ? attachment.pullRequestNumbers : [],
+            pullRequestsFetchedAt: branch == attachment.branch ? attachment.pullRequestsFetchedAt : nil
         )
         var updatedTasks = tasks
         updatedTasks[taskIndex] = WorkspaceTask(
@@ -2182,8 +2221,10 @@ final class WorkspaceViewController: NSViewController {
         updateTaskSidebar()
     }
 
-    private func updateTaskSidebar() {
-        sshConnectionStatusMonitor.sync((try? sshConnectionStore.load()) ?? [])
+    private func updateTaskSidebar(rebuild: Bool = true) {
+        let connections = (try? sshConnectionStore.load()) ?? []
+        sshConnectionStatusMonitor.sync(connections)
+        let connectionsByID = Dictionary(uniqueKeysWithValues: connections.map { ($0.id, $0) })
         let registeredRepositories: [UUID: RegisteredRepository]
         do {
             registeredRepositories = try Dictionary(
@@ -2194,8 +2235,54 @@ final class WorkspaceViewController: NSViewController {
         }
         let repositoryTargets = registeredRepositories.mapValues(\.target)
         let repositoryPaths = registeredRepositories.mapValues(\.path)
+        let repositoryRemoteURLs = registeredRepositories.compactMapValues(\.remoteURL)
         let repositoryBranches = registeredRepositories.compactMapValues {
             $0.currentBranch ?? $0.defaultBranch
+        }
+        let pullRequestBranches = tasks.reduce(into: [UUID: Set<String>]()) { result, task in
+            for repository in task.repositories {
+                let branch = repository.branch
+                    ?? repository.worktreeProvisioning?.branch
+                    ?? repositoryBranches[repository.repositoryID]
+                guard let branch, !branch.isEmpty else { continue }
+                result[repository.repositoryID, default: []].insert(branch)
+            }
+        }
+        let trackedPullRequestNumbers = tasks.reduce(into: [UUID: Set<Int>]()) { result, task in
+            for repository in task.repositories {
+                result[repository.repositoryID, default: []]
+                    .formUnion(repository.pullRequestNumbers)
+            }
+        }
+        let repositoryIDs = Set(tasks.flatMap { $0.repositories.map(\.repositoryID) })
+        let pullRequestContexts = repositoryIDs.reduce(into: [UUID: PullRequestQueryContext]()) { result, repositoryID in
+            guard let repository = registeredRepositories[repositoryID] else { return }
+            let branches = (pullRequestBranches[repositoryID] ?? [])
+                .sorted()
+            switch repository.target {
+            case .local:
+                result[repositoryID] = PullRequestQueryContext(
+                    path: repository.path,
+                    target: .local,
+                    branches: branches,
+                    ghProfile: repository.ghProfile,
+                    pullRequestNumbers: (trackedPullRequestNumbers[repositoryID] ?? []).sorted()
+                )
+            case .ssh(let connectionID):
+                guard let connection = connectionsByID[connectionID], connection.isEnabled else { return }
+                result[repositoryID] = PullRequestQueryContext(
+                    path: repository.path,
+                    target: .ssh(connection),
+                    branches: branches,
+                    ghProfile: repository.ghProfile,
+                    pullRequestNumbers: (trackedPullRequestNumbers[repositoryID] ?? []).sorted()
+                )
+            }
+        }
+        pullRequestStatusStore.refresh(pullRequestContexts)
+        guard rebuild else {
+            leftPanelController.updatePullRequestStatuses(pullRequestStatusStore.statuses)
+            return
         }
         var displayedRepositoryErrors = repositoryErrors
         for task in tasks {
@@ -2243,10 +2330,193 @@ final class WorkspaceViewController: NSViewController {
             repositoryTargets: repositoryTargets,
             repositoryPaths: repositoryPaths,
             repositoryBranches: repositoryBranches,
+            repositoryRemoteURLs: repositoryRemoteURLs,
+            pullRequestStatuses: pullRequestStatusStore.statuses,
             taskErrors: taskErrors,
             repositoryErrors: displayedRepositoryErrors,
             loadError: taskLoadError
         )
+    }
+
+    private struct WorktreeBranchProbe: Sendable {
+        let scope: TaskRepositoryScope
+        let path: String
+        let branch: String
+        let connection: SSHConnection?
+    }
+
+    private func refreshRenamedWorktreeBranches() {
+        guard worktreeBranchRefreshTask == nil else { return }
+        let registeredRepositories = (try? repositoryStore.load()) ?? []
+        let repositoriesByID = Dictionary(uniqueKeysWithValues: registeredRepositories.map { ($0.id, $0) })
+        let connectionsByID = Dictionary(
+            uniqueKeysWithValues: ((try? sshConnectionStore.load()) ?? []).map { ($0.id, $0) }
+        )
+        var probes: [WorktreeBranchProbe] = []
+        var seen = Set<TaskRepositoryScope>()
+        for task in tasks {
+            for attachment in task.repositories {
+                let scope = TaskRepositoryScope(taskID: task.id, repositoryID: attachment.repositoryID)
+                guard seen.insert(scope).inserted,
+                      let path = attachment.worktreePath ?? attachment.worktreeProvisioning?.path,
+                      let branch = attachment.branch ?? attachment.worktreeProvisioning?.branch,
+                      let repository = repositoriesByID[attachment.repositoryID]
+                else { continue }
+                let connection: SSHConnection?
+                switch repository.target {
+                case .local:
+                    connection = nil
+                case .ssh(let connectionID):
+                    guard let value = connectionsByID[connectionID], value.isEnabled else { continue }
+                    connection = value
+                }
+                probes.append(WorktreeBranchProbe(
+                    scope: scope,
+                    path: path,
+                    branch: branch,
+                    connection: connection
+                ))
+            }
+        }
+        guard !probes.isEmpty else { return }
+        let probesToInspect = probes
+        worktreeBranchRefreshTask = Task { [weak self] in
+            let observed = await Task.detached(priority: .utility) { [probesToInspect] in
+                probesToInspect.compactMap { probe -> (TaskRepositoryScope, String)? in
+                    guard let branch = try? RepositoryInspector().renamedBranch(
+                        at: probe.path,
+                        from: probe.branch,
+                        connection: probe.connection
+                    ) else { return nil }
+                    return (probe.scope, branch)
+                }
+            }.value
+            guard let self, !Task.isCancelled else { return }
+            self.worktreeBranchRefreshTask = nil
+            self.applyRenamedWorktreeBranches(observed)
+        }
+    }
+
+    private func applyRenamedWorktreeBranches(_ observed: [(TaskRepositoryScope, String)]) {
+        guard !observed.isEmpty else { return }
+        let observedByScope = Dictionary(uniqueKeysWithValues: observed)
+        var updatedTasks = tasks
+        var didChange = false
+        for taskIndex in updatedTasks.indices {
+            var attachments = updatedTasks[taskIndex].repositories
+            var taskChanged = false
+            for attachmentIndex in attachments.indices {
+                let attachment = attachments[attachmentIndex]
+                let scope = TaskRepositoryScope(
+                    taskID: updatedTasks[taskIndex].id,
+                    repositoryID: attachment.repositoryID
+                )
+                guard let branch = observedByScope[scope], branch != attachment.branch else { continue }
+                attachments[attachmentIndex].branch = branch
+                attachments[attachmentIndex].pullRequests = []
+                attachments[attachmentIndex].pullRequestNumbers = []
+                attachments[attachmentIndex].pullRequestsFetchedAt = nil
+                taskChanged = true
+            }
+            guard taskChanged else { continue }
+            let task = updatedTasks[taskIndex]
+            updatedTasks[taskIndex] = WorkspaceTask(
+                id: task.id,
+                title: task.title,
+                repositories: attachments,
+                createdAt: task.createdAt,
+                isPinned: task.isPinned
+            )
+            didChange = true
+        }
+        guard didChange else { return }
+        tasks = updatedTasks
+        try? taskStore.save(updatedTasks)
+        updateTaskSidebar()
+    }
+
+    func refreshPullRequestStatuses() {
+        refreshRenamedWorktreeBranches()
+        updateTaskSidebar(rebuild: false)
+    }
+
+    func setApplicationActive(_ isActive: Bool) {
+        applicationIsActive = isActive
+        if isActive {
+            refreshPullRequestStatuses()
+        }
+    }
+
+    private func persistPullRequestMetadata(for repositoryIDs: Set<UUID>) {
+        guard !repositoryIDs.isEmpty,
+              let repositories = try? repositoryStore.load()
+        else { return }
+        let repositoryBranches = repositories.reduce(into: [UUID: String]()) { result, repository in
+            result[repository.id] = repository.currentBranch ?? repository.defaultBranch
+        }
+        let fetchedAt = Date()
+        var updatedTasks = tasks
+        var didChange = false
+        for taskIndex in updatedTasks.indices {
+            var attachments = updatedTasks[taskIndex].repositories
+            var taskChanged = false
+            for attachmentIndex in attachments.indices {
+                let attachment = attachments[attachmentIndex]
+                guard repositoryIDs.contains(attachment.repositoryID),
+                      let status = pullRequestStatusStore.statuses[attachment.repositoryID],
+                      status.availability == .loaded,
+                      let branch = attachment.branch
+                          ?? attachment.worktreeProvisioning?.branch
+                          ?? repositoryBranches[attachment.repositoryID],
+                      !branch.isEmpty
+                else { continue }
+                let pullRequests = status.related(
+                    to: branch,
+                    preserving: attachment.pullRequestNumbers
+                )
+                var pullRequestNumbers = pullRequests.map(\.number)
+                pullRequestNumbers.append(contentsOf: attachment.pullRequestNumbers.filter {
+                    !pullRequestNumbers.contains($0)
+                })
+                guard attachment.pullRequests != pullRequests
+                    || attachment.pullRequestNumbers != pullRequestNumbers
+                    || attachment.pullRequestsFetchedAt == nil else { continue }
+                attachments[attachmentIndex].pullRequests = pullRequests
+                attachments[attachmentIndex].pullRequestNumbers = pullRequestNumbers
+                attachments[attachmentIndex].pullRequestsFetchedAt = fetchedAt
+                taskChanged = true
+            }
+            guard taskChanged else { continue }
+            let task = updatedTasks[taskIndex]
+            updatedTasks[taskIndex] = WorkspaceTask(
+                id: task.id,
+                title: task.title,
+                repositories: attachments,
+                createdAt: task.createdAt,
+                isPinned: task.isPinned
+            )
+            didChange = true
+        }
+        guard didChange else { return }
+        guard (try? taskStore.save(updatedTasks)) != nil else { return }
+        tasks = updatedTasks
+    }
+
+    private func installPullRequestRefreshTimerIfNeeded() {
+        guard pullRequestRefreshTimer == nil else { return }
+        pullRequestRefreshTimer = Timer.scheduledTimer(
+            withTimeInterval: Self.pullRequestRefreshInterval,
+            repeats: true
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.refreshPullRequestStatusesIfActive()
+            }
+        }
+    }
+
+    private func refreshPullRequestStatusesIfActive() {
+        guard applicationIsActive else { return }
+        refreshPullRequestStatuses()
     }
 
     private func dismissNewTaskModal() {
@@ -2670,6 +2940,7 @@ final class WorkspaceViewController: NSViewController {
         settingsController?.removeFromParent()
         settingsController = nil
         installActiveWorkspace()
+        refreshPullRequestStatuses()
         applySidebarPresentation()
         activeTerminalController?.focusActiveTerminal()
     }
@@ -2700,7 +2971,7 @@ final class WorkspaceViewController: NSViewController {
         }
     }
 
-    private func resizeLeftPanel(by delta: CGFloat) {
+    private func resizeLeftPanel(to width: CGFloat) {
         guard sidebarPresentation == .docked else { return }
         let maximumFromWindow = (leftResizeWindowWidth ?? view.bounds.width)
             - AppTheme.minimumCenterWidth
@@ -2710,13 +2981,17 @@ final class WorkspaceViewController: NSViewController {
             min(AppTheme.leftPanelRange.upperBound, maximumFromWindow)
         )
         leftPanelWidth = min(
-            max(leftWidthConstraint.constant + delta, AppTheme.leftPanelRange.lowerBound),
+            max(width, AppTheme.leftPanelRange.lowerBound),
             maximum
         )
         leftWidthConstraint.constant = leftPanelWidth
         UserDefaults.standard.set(Double(leftPanelWidth), forKey: Self.leftPanelWidthDefaultsKey)
         view.layoutSubtreeIfNeeded()
         updateWindowMinimumSize()
+    }
+
+    private func resizeLeftPanel(by delta: CGFloat) {
+        resizeLeftPanel(to: leftWidthConstraint.constant + delta)
     }
 
     private func resizeLeftPanel(with command: PanelResizeHandle.KeyboardCommand) {
@@ -2732,16 +3007,20 @@ final class WorkspaceViewController: NSViewController {
         }
     }
 
-    private func resizeRightPanel(by delta: CGFloat) {
+    private func resizeRightPanel(to width: CGFloat) {
         guard rightPanelVisible, settingsController == nil else { return }
         rightPanelWidth = min(
-            max(rightWidthConstraint.constant + delta, AppTheme.rightPanelRange.lowerBound),
+            max(width, AppTheme.rightPanelRange.lowerBound),
             AppTheme.rightPanelRange.upperBound
         )
         rightWidthConstraint.constant = rightPanelWidth
         UserDefaults.standard.set(Double(rightPanelWidth), forKey: Self.rightPanelWidthDefaultsKey)
         view.layoutSubtreeIfNeeded()
         updateWindowMinimumSize()
+    }
+
+    private func resizeRightPanel(by delta: CGFloat) {
+        resizeRightPanel(to: rightWidthConstraint.constant + delta)
     }
 
     private func resizeRightPanel(with command: PanelResizeHandle.KeyboardCommand) {
@@ -3726,17 +4005,20 @@ private final class PanelResizeHandle: NSView {
 
     override func mouseDown(with event: NSEvent) {
         guard enabled else { return }
+        let dragStartX = event.locationInWindow.x
         onDragBegan?()
-        super.mouseDown(with: event)
-    }
-
-    override func mouseDragged(with event: NSEvent) {
-        guard enabled else { return }
-        onDrag?(event.deltaX)
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        super.mouseUp(with: event)
+        while let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
+            switch next.type {
+            case .leftMouseDragged:
+                guard enabled else { continue }
+                onDrag?(next.locationInWindow.x - dragStartX)
+            case .leftMouseUp:
+                onDragEnded?()
+                return
+            default:
+                break
+            }
+        }
         onDragEnded?()
     }
 

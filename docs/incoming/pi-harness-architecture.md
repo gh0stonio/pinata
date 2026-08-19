@@ -70,6 +70,9 @@ The current native branch already provides:
 - Configurable global and per-repository worktree roots.
 - Parallel provisioning status, failure details, and retry handling.
 - Safe removal limited to Piñata-owned worktrees and branches.
+- Local and SSH file browsing with editable text tabs.
+- Durable local and SSH terminal panes through zmx.
+- Read-only pull request status and checks through local or remote `gh`.
 
 The main current constraints are:
 
@@ -77,14 +80,15 @@ The main current constraints are:
 - `WorkspaceViewController` owns `TerminalTab` values directly.
 - `WorkspaceViewController` persists terminal workspace snapshots, while `TerminalViewController` owns the live AppKit pane tree.
 - Ghostty owns terminal emulation and rendering. zmx owns each PTY, so native scrolling and terminal behavior are preserved across GUI detachment.
-- Repository inspection invokes local `git` and `FileManager` directly.
+- Repository operations invoke `git` locally or through the registered OpenSSH alias. Local file access uses `FileManager`; remote file access runs through SSH.
+- Pull request summaries are cached with task attachments. Refresh uses the repository's selected `gh` profile and performs branch reconciliation in the app.
 - Stale app-session references are ignored when their task or repository attachment no longer exists.
 - Tabs represent terminal controllers instead of durable discussions.
 - There is no discussion store or Pi RPC transport. zmx owns durable PTYs, but there is no general Pi coordinator daemon yet.
 
 ### 3.1 Implementation status
 
-The task and Git worktree capabilities above are implemented in the current app. The schema, daemon boundary, discussion model, remote execution, and phase roadmap in the rest of this document remain proposed. They are not a description of shipped behavior.
+The task, Git worktree, SSH repository, file browser, terminal, and pull request status capabilities above are implemented in the current app. The schema, daemon boundary, discussion model, daemon-backed Pi execution, and phase roadmap in the rest of this document remain proposed. They are not a description of shipped behavior.
 
 The historical `backup-rpc-history` branch is useful prior art. It proved:
 

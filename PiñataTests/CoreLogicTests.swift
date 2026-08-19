@@ -3,6 +3,360 @@ import AppKit
 @testable import Pinata
 
 final class CoreLogicTests: XCTestCase {
+    func testGitHubCLIProfilesParseActiveAccount() {
+        let profiles = GitHubCLIProfileInspector.parse("""
+        github.com
+          ✓ Logged in to github.com account antoine-leveque_ddog (/tmp/gh)
+          - Active account: true
+          ✓ Logged in to github.com account gh0stonio (/tmp/gh)
+          - Active account: false
+        """)
+
+        XCTAssertEqual(profiles.map(\.login), ["antoine-leveque_ddog", "gh0stonio"])
+        XCTAssertTrue(profiles[0].isActive)
+        XCTAssertFalse(profiles[1].isActive)
+    }
+
+    func testPullRequestStatusSummarizesChecksAndIssues() {
+        let pullRequest = PullRequestSummary(
+            number: 42,
+            title: "Ship sidebar PR status",
+            state: "OPEN",
+            isDraft: false,
+            baseBranch: "main",
+            headBranch: "feature/pr-status",
+            headRepositoryOwner: "gh0stonio",
+            mergeable: "CONFLICTING",
+            mergeStateStatus: "DIRTY",
+            reviewDecision: "APPROVED",
+            checks: [
+                PullRequestCheck(name: "Build", status: .passed),
+                PullRequestCheck(name: "Lint", status: .failed),
+                PullRequestCheck(name: "Tests", status: .pending),
+            ],
+            url: "https://github.com/gh0stonio/pinata/pull/42"
+        )
+
+        XCTAssertEqual(pullRequest.displayStatus, .issue)
+        XCTAssertEqual(pullRequest.checks.map(\.status), [.passed, .failed, .pending])
+    }
+
+    func testLoadingPullRequestStatusKeepsCachedStackVisible() {
+        let pullRequest = PullRequestSummary(
+            number: 44,
+            title: "Cached PR",
+            state: "OPEN",
+            isDraft: false,
+            baseBranch: "main",
+            headBranch: "feature/cached",
+            headRepositoryOwner: "gh0stonio",
+            mergeable: nil,
+            mergeStateStatus: nil,
+            reviewDecision: nil,
+            checks: [],
+            url: "https://github.com/gh0stonio/pinata/pull/44"
+        )
+        let status = PullRequestRepositoryStatus(
+            availability: .loading,
+            pullRequests: [pullRequest],
+            failureMessage: nil
+        )
+
+        XCTAssertEqual(status.related(to: "feature/cached").map(\.number), [44])
+    }
+
+    func testPullRequestDisplayStatusNormalizesPersistedValues() {
+        let mergedPullRequest = PullRequestSummary(
+            number: 43,
+            title: "Merged PR",
+            state: "merged",
+            isDraft: false,
+            baseBranch: "main",
+            headBranch: "feature/merged",
+            headRepositoryOwner: nil,
+            mergeable: nil,
+            mergeStateStatus: nil,
+            reviewDecision: nil,
+            checks: [],
+            url: nil
+        )
+
+        XCTAssertEqual(mergedPullRequest.displayStatus, .merged)
+    }
+
+    func testPullRequestLinkResolverSupportsSSHAndRejectsInvalidRemotes() {
+        let url = PullRequestLinkResolver.url(
+            remoteURL: "git@ddoghq.github.com:ddoghq/dd-source.git",
+            number: 57509
+        )
+
+        XCTAssertEqual(url?.absoluteString, "https://ddoghq.github.com/ddoghq/dd-source/pull/57509")
+        XCTAssertNil(PullRequestLinkResolver.url(remoteURL: "not-a-remote", number: 57509))
+    }
+
+    func testSidebarHoverCorridorProtectsDiagonalTravelOnly() {
+        let popoverFrame = NSRect(x: 400, y: 100, width: 400, height: 300)
+        let origin = NSPoint(x: 300, y: 250)
+
+        XCTAssertTrue(
+            SidebarHoverCorridor.contains(
+                NSPoint(x: 356, y: 200),
+                from: origin,
+                to: popoverFrame
+            )
+        )
+        XCTAssertFalse(
+            SidebarHoverCorridor.contains(
+                NSPoint(x: 356, y: 100),
+                from: origin,
+                to: popoverFrame
+            )
+        )
+        XCTAssertFalse(
+            SidebarHoverCorridor.contains(
+                NSPoint(x: 280, y: 250),
+                from: origin,
+                to: popoverFrame
+            )
+        )
+    }
+
+    @MainActor
+    func testPullRequestViewRoutesEachStackedRowToItsOwnURL() {
+        let summaries = [
+            makeTestPullRequest(number: 57509, head: "feature/list", base: "main"),
+            makeTestPullRequest(number: 57510, head: "feature/create", base: "feature/list"),
+            makeTestPullRequest(number: 57511, head: "feature/crud", base: "feature/create"),
+        ]
+        let view = SidebarPullRequestInfoView(
+            status: PullRequestRepositoryStatus(
+                availability: .loaded,
+                pullRequests: summaries,
+                failureMessage: nil
+            ),
+            branch: "feature/crud",
+            remoteURL: nil
+        )
+        view.frame = NSRect(x: 0, y: 0, width: 368, height: view.intrinsicContentSize.height)
+        view.layoutSubtreeIfNeeded()
+
+        var openedURLs: [URL] = []
+        view.visiblePullRequestRows.forEach { row in
+            row.onOpen = { openedURLs.append($0) }
+            let rowRect = view.convert(row.frame, from: row.superview!)
+            let point = NSPoint(x: rowRect.midX, y: rowRect.midY)
+            let hitView = view.hitTest(point) as? SidebarPullRequestInfoRow
+            XCTAssertTrue(hitView === row)
+            XCTAssertTrue(hitView?.acceptsFirstMouse(for: nil) == true)
+            hitView?.mouseDown(with: NSEvent())
+        }
+
+        let expectedURLs = summaries
+            .compactMap(\.url)
+            .compactMap(URL.init(string:))
+            .map(\.absoluteString)
+        XCTAssertEqual(openedURLs.map(\.absoluteString), expectedURLs)
+
+        let firstRow = view.visiblePullRequestRows[0]
+        firstRow.mouseDown(with: NSEvent())
+        XCTAssertEqual(openedURLs.last?.absoluteString, expectedURLs[0])
+    }
+
+    @MainActor
+    func testPullRequestViewShowsLoadingAndEmptyStates() {
+        let emptyView = SidebarPullRequestInfoView(
+            status: PullRequestRepositoryStatus(
+                availability: .loaded,
+                pullRequests: [],
+                failureMessage: nil
+            ),
+            branch: "feature/none",
+            remoteURL: nil
+        )
+        emptyView.frame = NSRect(x: 0, y: 0, width: 368, height: emptyView.intrinsicContentSize.height)
+        emptyView.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(emptyView.visibleMessage, "No pull request for this branch.")
+        XCTAssertGreaterThan(emptyView.intrinsicContentSize.height, 0)
+
+        let loadingView = SidebarPullRequestInfoView(
+            status: PullRequestRepositoryStatus(
+                availability: .loading,
+                pullRequests: [],
+                failureMessage: nil
+            ),
+            branch: "feature/loading",
+            remoteURL: nil
+        )
+        loadingView.frame = NSRect(x: 0, y: 0, width: 368, height: loadingView.intrinsicContentSize.height)
+        loadingView.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(loadingView.visibleMessage, "Loading GitHub…")
+        XCTAssertEqual(loadingView.visibleMessageAlignment, .center)
+        XCTAssertFalse(loadingView.isShowingBackgroundRefresh)
+    }
+
+    @MainActor
+    func testPullRequestRowsStayVisibleAcrossLoadingRefresh() {
+        let summaries = [
+            makeTestPullRequest(number: 57509, head: "feature/list", base: "main"),
+            makeTestPullRequest(number: 57510, head: "feature/create", base: "feature/list"),
+            makeTestPullRequest(number: 57511, head: "feature/crud", base: "feature/create"),
+        ]
+        let loadingView = SidebarPullRequestInfoView(
+            status: PullRequestRepositoryStatus(
+                availability: .loading,
+                pullRequests: summaries,
+                failureMessage: nil
+            ),
+            branch: "feature/crud",
+            remoteURL: nil
+        )
+        loadingView.frame = NSRect(x: 0, y: 0, width: 368, height: loadingView.intrinsicContentSize.height)
+        loadingView.layoutSubtreeIfNeeded()
+
+        XCTAssertNil(loadingView.visibleMessage)
+        XCTAssertTrue(loadingView.isShowingBackgroundRefresh)
+        XCTAssertEqual(loadingView.visiblePullRequestRows.map(\.frame.minY), [0, 48, 96])
+        XCTAssertTrue(loadingView.visiblePullRequestRows.allSatisfy {
+            $0.frame.size == NSSize(width: 368, height: 44)
+        })
+
+        loadingView.update(
+            status: PullRequestRepositoryStatus(
+                availability: .loaded,
+                pullRequests: summaries,
+                failureMessage: nil
+            ),
+            branch: "feature/crud"
+        )
+        loadingView.frame.size.height = loadingView.intrinsicContentSize.height
+        loadingView.layoutSubtreeIfNeeded()
+
+        let rowIDs = loadingView.visiblePullRequestRows.map(ObjectIdentifier.init)
+        loadingView.update(
+            status: PullRequestRepositoryStatus(
+                availability: .loaded,
+                pullRequests: summaries,
+                failureMessage: nil
+            ),
+            branch: "feature/crud"
+        )
+
+        XCTAssertEqual(loadingView.visiblePullRequestRows.count, 3)
+        XCTAssertEqual(loadingView.visiblePullRequestRows.map(ObjectIdentifier.init), rowIDs)
+        XCTAssertFalse(loadingView.isShowingBackgroundRefresh)
+        XCTAssertTrue(loadingView.visiblePullRequestRows.allSatisfy { $0.frame.height == 44 })
+    }
+
+    private func makeTestPullRequest(number: Int, head: String, base: String) -> PullRequestSummary {
+        PullRequestSummary(
+            number: number,
+            title: "PR \(number)",
+            state: "OPEN",
+            isDraft: false,
+            baseBranch: base,
+            headBranch: head,
+            headRepositoryOwner: "ddoghq",
+            mergeable: "MERGEABLE",
+            mergeStateStatus: "CLEAN",
+            reviewDecision: nil,
+            checks: [],
+            url: "https://github.com/ddoghq/dd-source/pull/\(number)"
+        )
+    }
+
+    func testPullRequestStackFindsParentChildAndSharedHeadPRs() {
+        func makePR(
+            _ number: Int,
+            head: String,
+            base: String,
+            state: String = "OPEN"
+        ) -> PullRequestSummary {
+            PullRequestSummary(
+                number: number,
+                title: "PR \(number)",
+                state: state,
+                isDraft: false,
+                baseBranch: base,
+                headBranch: head,
+                headRepositoryOwner: "gh0stonio",
+                mergeable: "MERGEABLE",
+                mergeStateStatus: "CLEAN",
+                reviewDecision: "APPROVED",
+                checks: [],
+                url: nil
+            )
+        }
+
+        let pullRequests = [
+            makePR(2, head: "feature/base", base: "main"),
+            makePR(3, head: "feature/stack", base: "feature/base"),
+            makePR(4, head: "feature/stack", base: "main"),
+            makePR(5, head: "feature/child", base: "feature/stack"),
+            makePR(6, head: "feature/stack", base: "main", state: "CLOSED"),
+            makePR(99, head: "unrelated", base: "main"),
+        ]
+
+        let related = PullRequestStack.related(to: "feature/stack", in: pullRequests)
+
+        XCTAssertEqual(Set(related.map(\.number)), Set([2, 3, 4, 5]))
+        XCTAssertFalse(related.contains { $0.number == 99 })
+        XCTAssertFalse(related.contains { $0.number == 6 })
+
+        let liftoffStack = [
+            makePR(57509, head: "antoine.leveque/liftoff-add-v0-backend", base: "main"),
+            makePR(
+                57510,
+                head: "antoine.leveque/liftoff-create",
+                base: "antoine.leveque/liftoff-add-v0-backend"
+            ),
+            makePR(
+                57511,
+                head: "antoine.leveque/liftoff-crud",
+                base: "antoine.leveque/liftoff-create"
+            ),
+        ]
+        let liftoffRelated = PullRequestStack.related(
+            to: "stack/liftoff-create",
+            in: liftoffStack
+        )
+        XCTAssertEqual(liftoffRelated.map(\.number), [57509, 57510, 57511])
+        XCTAssertEqual(Set(liftoffRelated.map(\.number)), Set([57509, 57510, 57511]))
+
+        let retargetedStatus = PullRequestRepositoryStatus(
+            availability: .loaded,
+            pullRequests: [
+                makePR(57509, head: "antoine.leveque/liftoff-add-v0-backend", base: "main", state: "MERGED"),
+                makePR(57510, head: "antoine.leveque/liftoff-create", base: "main"),
+                makePR(57511, head: "antoine.leveque/liftoff-crud", base: "main"),
+            ],
+            failureMessage: nil,
+            stacks: [[57509, 57510, 57511]]
+        )
+        XCTAssertEqual(
+            retargetedStatus.related(
+                to: "stack/liftoff-create",
+                preserving: [57510]
+            ).map(\.number),
+            [57509, 57510, 57511]
+        )
+
+        let body = """
+        ## Stack
+        - Base: #57509
+        - This PR: #57510
+        - Follow-up: #57511
+
+        ## Testing
+        See #99999 for unrelated coverage.
+        """
+        XCTAssertEqual(
+            PullRequestStackReferences.numbers(in: body),
+            [57509, 57510, 57511]
+        )
+    }
+
     func testEditorLanguageUsesFileExtension() {
         XCTAssertEqual(EditorLanguage(path: "/tmp/app.swift"), .swift)
         XCTAssertEqual(EditorLanguage(path: "/tmp/README.md"), .markdown)
@@ -74,13 +428,34 @@ final class CoreLogicTests: XCTestCase {
             defaultBranch: "main",
             currentBranch: "main",
             remoteURL: nil,
-            organization: nil
+            organization: nil,
+            ghProfile: "antoine-leveque_ddog"
         )
         let repositoryStore = RepositoryRegistryStore(fileURL: repositoryFileURL)
+        let cachedPullRequest = PullRequestSummary(
+            number: 57510,
+            title: "Add Liftoff creation endpoint",
+            state: "OPEN",
+            isDraft: true,
+            baseBranch: "antoine.leveque/liftoff-add-v0-backend",
+            headBranch: "antoine.leveque/liftoff-create",
+            headRepositoryOwner: "antoine.leveque",
+            mergeable: "MERGEABLE",
+            mergeStateStatus: "CLEAN",
+            reviewDecision: nil,
+            checks: [PullRequestCheck(name: "ci", status: .passed)],
+            url: "https://github.com/ddoghq/dd-source/pull/57510"
+        )
+        let cachedAt = Date(timeIntervalSince1970: 123)
         let task = WorkspaceTask(
             title: "Build task sidebar",
             repositories: [
-                TaskRepositoryAttachment(repositoryID: repository.id, name: repository.name),
+                TaskRepositoryAttachment(
+                    repositoryID: repository.id,
+                    name: repository.name,
+                    pullRequests: [cachedPullRequest],
+                    pullRequestsFetchedAt: cachedAt
+                ),
             ],
             isPinned: true
         )
@@ -92,6 +467,7 @@ final class CoreLogicTests: XCTestCase {
         try taskStore.save([task])
 
         XCTAssertEqual(try repositoryStore.load(), [repository])
+        XCTAssertEqual(try repositoryStore.load().first?.ghProfile, "antoine-leveque_ddog")
         XCTAssertEqual(try taskStore.load(), [task])
         try Data("{".utf8).write(to: taskFileURL)
         XCTAssertThrowsError(try taskStore.load())
@@ -666,6 +1042,17 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertNotEqual(ZmxSession.name(for: first), ZmxSession.name(for: second))
     }
 
+    func testZmxReconnectBackoffIsBounded() {
+        XCTAssertEqual(
+            (0...6).map { ZmxReconnectPolicy.delay(for: $0) },
+            [1, 2, 4, 8, 16, 30, 30]
+        )
+    }
+
+    func testZmxReconnectBackoffNormalizesNegativeAttempts() {
+        XCTAssertEqual(ZmxReconnectPolicy.delay(for: -1), 1)
+    }
+
     func testRemoteZmxInstallUsesPinnedArchives() {
         let script = RemoteZmxInstaller.installScript()
 
@@ -717,8 +1104,14 @@ final class CoreLogicTests: XCTestCase {
             repositoryDefaults.loadWorktreeBasePath(),
             RepositoryDefaultsStore.defaultWorktreeBasePath
         )
+        XCTAssertEqual(
+            repositoryDefaults.loadTaskBranchPrefix(),
+            RepositoryDefaultsStore.defaultTaskBranchPrefix
+        )
         repositoryDefaults.saveWorktreeBasePath("/tmp/worktrees")
         XCTAssertEqual(repositoryDefaults.loadWorktreeBasePath(), "/tmp/worktrees")
+        repositoryDefaults.saveTaskBranchPrefix("antoine.leveque")
+        XCTAssertEqual(repositoryDefaults.loadTaskBranchPrefix(), "antoine.leveque/")
     }
 
     @MainActor
@@ -833,6 +1226,10 @@ final class CoreLogicTests: XCTestCase {
             ),
             "Use a single-line path."
         )
+        XCTAssertEqual(TaskBranchName.normalizedPrefix("antoine.leveque"), "antoine.leveque/")
+        XCTAssertNil(TaskBranchName.error(for: "feature/team/"))
+        XCTAssertNotNil(TaskBranchName.error(for: "feature//"))
+        XCTAssertNotNil(TaskBranchName.error(for: "feature name"))
     }
 
     func testRepositoryInspectionRefreshAndContext() throws {
@@ -908,6 +1305,26 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: worktreeURL.path))
         XCTAssertTrue(try runGit(["-C", repositoryURL.path, "branch", "--list", branch]).isEmpty)
 
+        let secondWorktreeURL = directoryURL.appendingPathComponent("temporary-checkout", isDirectory: true)
+        let ownedBranch = "pinata/temporary-checkout"
+        let temporaryBranch = "temporary"
+        _ = try runGit(["-C", repositoryURL.path, "branch", ownedBranch, "main"])
+        _ = try runGit(["-C", repositoryURL.path, "branch", temporaryBranch, "main"])
+        _ = try runGit([
+            "-C", repositoryURL.path,
+            "worktree", "add", secondWorktreeURL.path, ownedBranch,
+        ])
+        _ = try runGit(["-C", secondWorktreeURL.path, "checkout", temporaryBranch])
+        XCTAssertNil(try inspector.renamedBranch(at: secondWorktreeURL.path, from: ownedBranch))
+        try inspector.removeWorktree(
+            at: secondWorktreeURL.path,
+            branchHint: ownedBranch,
+            taskID: UUID(),
+            from: repository
+        )
+        XCTAssertTrue(try runGit(["-C", repositoryURL.path, "branch", "--list", ownedBranch]).isEmpty)
+        XCTAssertFalse(try runGit(["-C", repositoryURL.path, "branch", "--list", temporaryBranch]).isEmpty)
+
         let incompleteWorktreeURL = directoryURL.appendingPathComponent(
             "incomplete-task",
             isDirectory: true
@@ -961,6 +1378,11 @@ final class CoreLogicTests: XCTestCase {
         _ = try runGit(["-C", repositoryURL.path, "branch", "-m", pinataBranch, renamedBranch])
         let inspector = RepositoryInspector()
         let repository = try inspector.inspect(directory: repositoryURL)
+
+        XCTAssertEqual(
+            try inspector.renamedBranch(at: worktreeURL.path, from: pinataBranch),
+            renamedBranch
+        )
 
         try inspector.removeWorktree(
             at: worktreeURL.path,
@@ -1132,7 +1554,8 @@ final class CoreLogicTests: XCTestCase {
         let updates = WorktreeUpdates()
         let taskID = UUID()
         let provisioner = WorktreeProvisioner(
-            globalBasePath: directoryURL.appendingPathComponent("worktrees").path
+            globalBasePath: directoryURL.appendingPathComponent("worktrees").path,
+            branchPrefix: "antoine.leveque"
         )
         let report = provisioner.provision(
             repository: repository,
@@ -1171,9 +1594,14 @@ final class CoreLogicTests: XCTestCase {
         try RepositoryInspector().removeWorktree(
             at: path,
             branchHint: report.branch,
+            taskID: taskID,
             from: repository
         )
         XCTAssertFalse(FileManager.default.fileExists(atPath: path))
+        XCTAssertEqual(
+            report.branch,
+            "antoine.leveque/fix-api-ui-" + String(taskID.uuidString.prefix(8).lowercased())
+        )
         XCTAssertEqual(try runGit(["-C", repository.path, "branch", "--list", report.branch]), "")
 
         let retry = provisioner.provision(
@@ -1185,6 +1613,7 @@ final class CoreLogicTests: XCTestCase {
         try RepositoryInspector().removeWorktree(
             at: retry.path,
             branchHint: retry.branch,
+            taskID: taskID,
             from: repository
         )
     }
