@@ -1,11 +1,8 @@
 import AppKit
+import CoreServices
 
 private extension NSPasteboard.PasteboardType {
     static let sidebarTaskID = Self("io.pinata.sidebar-task-id")
-}
-
-private final class SidebarTaskDocumentView: NSView {
-    override var isFlipped: Bool { true }
 }
 
 @MainActor
@@ -21,6 +18,8 @@ private final class SidebarTaskStackView: NSStackView {
     }
 
     private let insertionLayer = CALayer()
+
+    override var isFlipped: Bool { true }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -174,11 +173,8 @@ final class PanelViewController: NSViewController {
     private weak var brandView: SidebarBrandView?
     private let newTaskButton = SidebarNewTaskButton(frame: .zero)
     private let taskScrollView = NSScrollView()
-    private let taskDocument = SidebarTaskDocumentView()
+    private let taskDocument = NSView()
     private let taskStack = SidebarTaskStackView()
-    private var sizingTaskDocument = false
-    private var newTaskTrailingConstraint: NSLayoutConstraint!
-    private var taskStackTrailingConstraint: NSLayoutConstraint!
     private var taskMenuTaskID: UUID?
     private var repositoryMenuScope: TaskRepositoryScope?
 
@@ -193,7 +189,6 @@ final class PanelViewController: NSViewController {
 
     override func loadView() {
         let rootView = PanelTrackingView()
-        rootView.translatesAutoresizingMaskIntoConstraints = false
         rootView.wantsLayer = true
         rootView.layer?.backgroundColor = AppTheme.chromeBackground.cgColor
         rootView.setAccessibilityRole(.group)
@@ -207,24 +202,12 @@ final class PanelViewController: NSViewController {
         installLeftPanel()
     }
 
-    override func viewDidLayout() {
-        super.viewDidLayout()
-        sizeTaskDocumentToViewport()
-    }
-
     func setToggleActive(_ active: Bool) {
         leftHeader?.setPanelActive(active)
     }
 
     func setFullScreen(_ fullScreen: Bool) {
         leftHeader?.setFullScreen(fullScreen)
-    }
-
-    func setResizable(_ resizable: Bool) {
-        let inset = AppTheme.sidebarItemInset
-            - (resizable ? AppTheme.resizeHandleWidth / 2 : 0)
-        newTaskTrailingConstraint.constant = -inset
-        taskStackTrailingConstraint.constant = -inset
     }
 
     func applyTheme() {
@@ -249,6 +232,7 @@ final class PanelViewController: NSViewController {
         expandedTaskIDs: Set<UUID>,
         taskActivities: [UUID: String] = [:],
         repositoryActivities: [TaskRepositoryScope: String] = [:],
+        repositoryTargets: [UUID: RepositoryTarget] = [:],
         taskErrors: [UUID: String],
         repositoryErrors: [TaskRepositoryScope: String],
         loadError: String?
@@ -264,7 +248,7 @@ final class PanelViewController: NSViewController {
                 title: title,
                 isPinnedSection: isPinnedSection
             )
-            taskStack.addArrangedSubview(header)
+            taskStack.addView(header, in: .top)
             header.widthAnchor.constraint(equalTo: taskStack.widthAnchor).isActive = true
             taskStack.setCustomSpacing(AppTheme.sidebarTaskListTopSpacing, after: header)
             return header
@@ -280,7 +264,8 @@ final class PanelViewController: NSViewController {
                 taskError: taskErrors[task.id],
                 repositoryMenuScope: repositoryMenuScope,
                 repositoryActivities: repositoryActivities,
-                repositoryErrors: repositoryErrors
+                repositoryErrors: repositoryErrors,
+                repositoryTargets: repositoryTargets
             )
             group.onSelectTask = { [weak self] in self?.onSelectTask?(task.id) }
             group.onToggleExpansion = { [weak self] in
@@ -300,30 +285,44 @@ final class PanelViewController: NSViewController {
                     anchorRect
                 )
             }
-            taskStack.addArrangedSubview(group)
+            taskStack.addView(group, in: .top)
             group.widthAnchor.constraint(equalTo: taskStack.widthAnchor).isActive = true
+        }
+
+        func addMessage(_ message: String, error: Bool) -> SidebarMessageView {
+            let view = SidebarMessageView(message, error: error)
+            taskStack.addView(view, in: .top)
+            view.widthAnchor.constraint(equalTo: taskStack.widthAnchor).isActive = true
+            return view
         }
 
         let pinnedTasks = tasks.filter(\.isPinned)
         let pinnedHeader = addHeader("PINNED", isPinnedSection: true)
-        pinnedTasks.forEach(addTask)
-        if let lastPinned = taskStack.arrangedSubviews.last as? SidebarTaskGroupView {
-            taskStack.setCustomSpacing(AppTheme.sidebarSectionSpacing, after: lastPinned)
+        if pinnedTasks.isEmpty {
+            _ = addMessage("No pinned tasks yet.", error: false)
         } else {
-            taskStack.setCustomSpacing(AppTheme.sidebarSectionSpacing, after: pinnedHeader)
+            pinnedTasks.forEach(addTask)
         }
+        taskStack.setCustomSpacing(
+            AppTheme.sidebarSectionSpacing,
+            after: taskStack.arrangedSubviews.last ?? pinnedHeader
+        )
 
         _ = addHeader("TASKS", isPinnedSection: false)
         if let loadError {
-            taskStack.addArrangedSubview(SidebarMessageView(loadError, error: true))
+            _ = addMessage(loadError, error: true)
         }
         if tasks.isEmpty, loadError == nil {
-            taskStack.addArrangedSubview(SidebarMessageView("No tasks yet.", error: false))
+            _ = addMessage("No tasks yet.", error: false)
         } else {
             tasks.filter { !$0.isPinned }.forEach(addTask)
         }
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        spacer.setContentHuggingPriority(.defaultLow, for: .vertical)
+        taskStack.addView(spacer, in: .top)
+        spacer.widthAnchor.constraint(equalTo: taskStack.widthAnchor).isActive = true
         applyTheme()
-        sizeTaskDocumentToViewport()
     }
 
     func setTaskMenuTask(_ taskID: UUID?) {
@@ -357,11 +356,11 @@ final class PanelViewController: NSViewController {
         scrollView.autohidesScrollers = true
         scrollView.scrollerStyle = .overlay
         scrollView.horizontalScrollElasticity = .none
-        taskDocument.translatesAutoresizingMaskIntoConstraints = true
-        taskDocument.autoresizingMask = [.width]
+        taskDocument.translatesAutoresizingMaskIntoConstraints = false
         taskStack.translatesAutoresizingMaskIntoConstraints = false
         taskStack.orientation = .vertical
         taskStack.alignment = .leading
+        taskStack.distribution = .fill
         taskStack.spacing = 2
         taskStack.onMoveTask = { [weak self] sourceID, targetID, after, pinned in
             self?.onMoveTask?(sourceID, targetID, after, pinned)
@@ -375,15 +374,6 @@ final class PanelViewController: NSViewController {
 
         leftHeader = topHeader
         brandView = brand
-        newTaskTrailingConstraint = newTaskButton.trailingAnchor.constraint(
-            equalTo: view.trailingAnchor,
-            constant: -AppTheme.sidebarItemInset
-        )
-        taskStackTrailingConstraint = taskStack.trailingAnchor.constraint(
-            equalTo: taskDocument.trailingAnchor,
-            constant: -AppTheme.sidebarItemInset
-        )
-
         NSLayoutConstraint.activate([
             topHeader.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             topHeader.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -401,7 +391,10 @@ final class PanelViewController: NSViewController {
                 equalTo: view.leadingAnchor,
                 constant: AppTheme.sidebarItemInset
             ),
-            newTaskTrailingConstraint,
+            newTaskButton.trailingAnchor.constraint(
+                equalTo: view.trailingAnchor,
+                constant: -AppTheme.sidebarItemInset
+            ),
             newTaskButton.topAnchor.constraint(
                 equalTo: brand.bottomAnchor,
                 constant: AppTheme.sidebarNewTaskTopSpacing
@@ -415,29 +408,27 @@ final class PanelViewController: NSViewController {
                 constant: AppTheme.sidebarNewTaskBottomSpacing
             ),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            taskDocument.leadingAnchor.constraint(
+                equalTo: scrollView.contentView.leadingAnchor,
+            ),
+            taskDocument.trailingAnchor.constraint(
+                equalTo: scrollView.contentView.trailingAnchor,
+            ),
+            taskDocument.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            taskDocument.bottomAnchor.constraint(
+                greaterThanOrEqualTo: scrollView.contentView.bottomAnchor
+            ),
             taskStack.leadingAnchor.constraint(
                 equalTo: taskDocument.leadingAnchor,
                 constant: AppTheme.sidebarItemInset
             ),
-            taskStackTrailingConstraint,
+            taskStack.trailingAnchor.constraint(
+                equalTo: taskDocument.trailingAnchor,
+                constant: -AppTheme.sidebarItemInset
+            ),
             taskStack.topAnchor.constraint(equalTo: taskDocument.topAnchor),
+            taskStack.bottomAnchor.constraint(greaterThanOrEqualTo: taskDocument.bottomAnchor),
         ])
-    }
-
-    private func sizeTaskDocumentToViewport() {
-        guard !sizingTaskDocument else { return }
-        let viewport = taskScrollView.contentView.bounds.size
-        guard viewport.width > 0, viewport.height > 0 else { return }
-        sizingTaskDocument = true
-        defer { sizingTaskDocument = false }
-        taskDocument.setFrameSize(
-            NSSize(width: viewport.width, height: max(viewport.height, taskDocument.frame.height))
-        )
-        taskDocument.layoutSubtreeIfNeeded()
-        let contentHeight = taskStack.fittingSize.height
-        taskDocument.setFrameSize(
-            NSSize(width: viewport.width, height: max(viewport.height, contentHeight))
-        )
     }
 }
 
@@ -532,7 +523,8 @@ private final class SidebarTaskGroupView: NSStackView {
         taskError: String?,
         repositoryMenuScope: TaskRepositoryScope?,
         repositoryActivities: [TaskRepositoryScope: String],
-        repositoryErrors: [TaskRepositoryScope: String]
+        repositoryErrors: [TaskRepositoryScope: String],
+        repositoryTargets: [UUID: RepositoryTarget]
     ) {
         taskID = task.id
         isPinned = task.isPinned
@@ -575,7 +567,9 @@ private final class SidebarTaskGroupView: NSStackView {
                     activity: repositoryActivities[scope] ?? (repository.worktreeProvisioning.map {
                         !$0.succeeded && $0.failureMessage == nil
                     } == true ? "creating" : nil),
-                    error: repositoryErrors[scope]
+                    error: repositoryErrors[scope],
+                    target: repositoryTargets[repository.repositoryID] ?? .local,
+                    suppressActions: activity == "deleting"
                 )
                 row.onSelect = { [weak self] in
                     self?.onSelectRepository?(repository.repositoryID)
@@ -1145,10 +1139,12 @@ private final class SidebarRepositoryRow: AppHoverView {
     private var menuActive: Bool
     private let activity: String?
     private let error: String?
+    private let suppressActions: Bool
     private let button = AppButton(role: .hitTarget)
     private let menuOverlay = SidebarTrailingActionOverlay()
     private var menuButton: SidebarMenuButton { menuOverlay.button }
     private let titleLabel: NSTextField
+    private let sourceIcon = NSImageView()
     private let errorIcon = NSImageView()
     private let activityIndicator = NSProgressIndicator()
     private let statusLabel: NSTextField
@@ -1158,21 +1154,31 @@ private final class SidebarRepositoryRow: AppHoverView {
         selected: Bool,
         menuActive: Bool,
         activity: String?,
-        error: String?
+        error: String?,
+        target: RepositoryTarget,
+        suppressActions: Bool
     ) {
         repositoryID = repository.repositoryID
         self.selected = selected
         self.menuActive = menuActive
         self.activity = activity
         self.error = error
+        self.suppressActions = suppressActions
         titleLabel = NSTextField(labelWithString: repository.name)
+        let isRemote: Bool
+        if case .ssh = target { isRemote = true } else { isRemote = false }
         statusLabel = NSTextField(labelWithString: error == nil ? activity ?? "" : "failed")
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
         layer?.cornerRadius = AppTheme.workspaceControlCornerRadius
         toolTip = error ?? repository.name
-        [button, titleLabel, errorIcon, activityIndicator, statusLabel, menuOverlay].forEach {
+        sourceIcon.image = NSImage(
+            systemSymbolName: isRemote ? "globe" : "laptopcomputer",
+            accessibilityDescription: isRemote ? "Remote repository" : "Local repository"
+        )
+        sourceIcon.symbolConfiguration = .init(pointSize: 10, weight: .medium)
+        [button, sourceIcon, titleLabel, errorIcon, activityIndicator, statusLabel, menuOverlay].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             addSubview($0)
         }
@@ -1185,7 +1191,7 @@ private final class SidebarRepositoryRow: AppHoverView {
                 accessibilityDescription: "Repository actions"
             )
             : nil
-        menuButton.isEnabled = activity == nil
+        menuButton.isEnabled = activity == nil && !suppressActions
         menuButton.target = self
         menuButton.action = #selector(showMenu)
         menuButton.setAccessibilityLabel("Repository actions")
@@ -1208,15 +1214,19 @@ private final class SidebarRepositoryRow: AppHoverView {
             button.trailingAnchor.constraint(equalTo: trailingAnchor),
             button.topAnchor.constraint(equalTo: topAnchor),
             button.bottomAnchor.constraint(equalTo: bottomAnchor),
-            titleLabel.leadingAnchor.constraint(
+            sourceIcon.leadingAnchor.constraint(
                 equalTo: leadingAnchor,
-                constant: AppTheme.sidebarRepositoryTitleInset
+                constant: AppTheme.sidebarTaskTitleDisclosureInset
+            ),
+            sourceIcon.centerYAnchor.constraint(equalTo: centerYAnchor),
+            sourceIcon.widthAnchor.constraint(equalToConstant: 12),
+            sourceIcon.heightAnchor.constraint(equalToConstant: 12),
+            titleLabel.leadingAnchor.constraint(
+                equalTo: sourceIcon.trailingAnchor,
+                constant: 6
             ),
             titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            titleLabel.trailingAnchor.constraint(
-                lessThanOrEqualTo: errorIcon.leadingAnchor,
-                constant: -6
-            ),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: errorIcon.leadingAnchor, constant: -6),
             menuOverlay.trailingAnchor.constraint(equalTo: trailingAnchor),
             menuOverlay.topAnchor.constraint(equalTo: topAnchor),
             menuOverlay.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -1258,6 +1268,7 @@ private final class SidebarRepositoryRow: AppHoverView {
             weight: selected ? .semibold : .regular
         )
         titleLabel.textColor = textColor
+        sourceIcon.contentTintColor = textColor
         menuButton.applyTheme()
         menuOverlay.apply(
             backgroundColor: AppTheme.renderedBackground(appearance.background)
@@ -1287,7 +1298,7 @@ private final class SidebarRepositoryRow: AppHoverView {
     }
 
     private func updateTrailingVisibility() {
-        let showsMenu = activity == nil && (isHovering || menuActive)
+        let showsMenu = !suppressActions && activity == nil && (isHovering || menuActive)
         menuOverlay.isHidden = !showsMenu
         errorIcon.isHidden = error == nil
         activityIndicator.isHidden = activity == nil || error != nil
@@ -1350,6 +1361,1466 @@ private final class PanelTrackingView: AppHoverView {
 
     override func hoverStateDidChange() {
         onHoverChanged?(isHovering)
+    }
+}
+
+@MainActor
+private final class FileTreeNode: NSObject {
+    enum Content {
+        case entry(FileTreeEntry)
+        case loading
+        case error(String)
+        case message(String)
+    }
+
+    var content: Content
+    let path: String
+
+    init(content: Content, path: String) {
+        self.content = content
+        self.path = path
+    }
+
+    var entry: FileTreeEntry? {
+        guard case .entry(let entry) = content else { return nil }
+        return entry
+    }
+}
+
+private final class FileTreeEventHandlerBox: @unchecked Sendable {
+    let onChange: @Sendable ([String]) -> Void
+
+    init(onChange: @escaping @Sendable ([String]) -> Void) {
+        self.onChange = onChange
+    }
+}
+
+private final class FileTreeRootWatcher: @unchecked Sendable {
+    private var stream: FSEventStreamRef?
+
+    init?(
+        path: String,
+        queue: DispatchQueue,
+        onChange: @escaping @Sendable ([String]) -> Void
+    ) {
+        let handler = FileTreeEventHandlerBox(onChange: onChange)
+        var context = FSEventStreamContext(
+            version: 0,
+            info: Unmanaged.passUnretained(handler).toOpaque(),
+            retain: { info in
+                guard let info else { return nil }
+                _ = Unmanaged<FileTreeEventHandlerBox>.fromOpaque(info).retain()
+                return UnsafeRawPointer(info)
+            },
+            release: { info in
+                guard let info else { return }
+                Unmanaged<FileTreeEventHandlerBox>.fromOpaque(info).release()
+            },
+            copyDescription: nil
+        )
+        guard let stream = FSEventStreamCreate(
+            nil,
+            { _, info, count, eventPaths, _, _ in
+                guard let info else { return }
+                let handler = Unmanaged<FileTreeEventHandlerBox>
+                    .fromOpaque(info)
+                    .takeUnretainedValue()
+                let paths = Unmanaged<CFArray>
+                    .fromOpaque(eventPaths)
+                    .takeUnretainedValue() as? [String] ?? []
+                if count > 0 { handler.onChange(paths) }
+            },
+            &context,
+            [path] as CFArray,
+            FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
+            0.15,
+            FSEventStreamCreateFlags(
+                kFSEventStreamCreateFlagUseCFTypes
+                    | kFSEventStreamCreateFlagWatchRoot
+            )
+        ) else { return nil }
+        self.stream = stream
+        FSEventStreamSetDispatchQueue(stream, queue)
+        guard FSEventStreamStart(stream) else {
+            FSEventStreamInvalidate(stream)
+            FSEventStreamRelease(stream)
+            self.stream = nil
+            return nil
+        }
+    }
+
+    func cancel() {
+        guard let stream else { return }
+        FSEventStreamStop(stream)
+        FSEventStreamInvalidate(stream)
+        FSEventStreamRelease(stream)
+        self.stream = nil
+    }
+
+    deinit {
+        cancel()
+    }
+}
+
+private final class FileTreeClipView: NSClipView {
+    override func scroll(to newOrigin: NSPoint) {
+        super.scroll(to: NSPoint(x: 0, y: newOrigin.y))
+    }
+
+    override func constrainBoundsRect(_ proposedBounds: NSRect) -> NSRect {
+        var bounds = super.constrainBoundsRect(proposedBounds)
+        bounds.origin.x = 0
+        return bounds
+    }
+}
+
+private final class FileTreeScrollView: NSScrollView {
+    override func layout() {
+        super.layout()
+        guard let documentView else { return }
+        let width = contentView.bounds.width
+        guard width > 0 else { return }
+        if let tableView = documentView as? NSTableView {
+            tableView.tableColumns.first?.width = width
+        }
+        guard abs(documentView.frame.width - width) > 0.5 else { return }
+        var frame = documentView.frame
+        frame.size.width = width
+        documentView.frame = frame
+    }
+}
+
+@MainActor
+private final class FileTreeCellView: NSTableCellView {
+    static let identifier = NSUserInterfaceItemIdentifier("FileTreeCell")
+
+    var onActivate: ((NSEvent) -> Void)?
+    var onRetry: (() -> Void)?
+
+    private let icon = NSImageView()
+    private let title = NSTextField(labelWithString: "")
+    private let retry = NSButton(title: "Retry", target: nil, action: nil)
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        identifier = Self.identifier
+        icon.imageAlignment = .alignCenter
+        icon.imageScaling = .scaleProportionallyDown
+        title.usesSingleLineMode = true
+        title.lineBreakMode = .byTruncatingTail
+        retry.isBordered = false
+        retry.target = self
+        retry.action = #selector(retryLoad)
+        addSubview(icon)
+        addSubview(title)
+        addSubview(retry)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is unavailable")
+    }
+
+    override func layout() {
+        super.layout()
+        let contentInset: CGFloat = 2
+        let iconSize: CGFloat = 14
+        let iconGap: CGFloat = 3
+        let retryWidth: CGFloat = retry.isHidden ? 0 : 42
+        let titleX: CGFloat = icon.isHidden ? contentInset : contentInset + iconSize + iconGap
+        let titleHeight = min(bounds.height, ceil(title.intrinsicContentSize.height))
+        let retryHeight = min(bounds.height, ceil(retry.intrinsicContentSize.height))
+        icon.frame = NSRect(
+            x: contentInset,
+            y: floor((bounds.height - iconSize) / 2),
+            width: iconSize,
+            height: iconSize
+        )
+        retry.frame = NSRect(
+            x: max(titleX, bounds.width - retryWidth - 4),
+            y: floor((bounds.height - retryHeight) / 2),
+            width: retryWidth,
+            height: retryHeight
+        )
+        title.frame = NSRect(
+            x: titleX,
+            y: floor((bounds.height - titleHeight) / 2),
+            width: max(0, bounds.width - titleX - retryWidth - (retryWidth > 0 ? 8 : 0)),
+            height: titleHeight
+        )
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if onActivate != nil {
+            onActivate?(event)
+        } else {
+            super.mouseDown(with: event)
+        }
+    }
+
+    func configure(with node: FileTreeNode, font: NSFont, retryFont: NSFont) {
+        onActivate = nil
+        onRetry = nil
+        retry.isHidden = true
+        icon.isHidden = false
+        title.font = font
+        title.textColor = AppTheme.secondaryText
+        retry.font = retryFont
+        retry.contentTintColor = AppTheme.accent
+
+        switch node.content {
+        case .entry(let entry):
+            let name = entry.name
+            title.stringValue = name.isEmpty ? entry.path : name
+            let descriptor = FileTreeIconResolver.descriptor(
+                for: title.stringValue,
+                isDirectory: entry.isDirectory
+            )
+            icon.image = FileTreeIconResolver.image(for: descriptor)
+            icon.contentTintColor = FileTreeIconResolver.tintColor(for: descriptor)
+        case .loading:
+            title.stringValue = "Loading…"
+            title.textColor = AppTheme.tertiaryText
+            icon.isHidden = true
+        case .error(let message):
+            title.stringValue = message
+            title.textColor = AppTheme.error
+            icon.isHidden = true
+            retry.isHidden = false
+        case .message(let message):
+            title.stringValue = message
+            title.textColor = AppTheme.tertiaryText
+            icon.isHidden = true
+        }
+        needsLayout = true
+    }
+
+    @objc private func retryLoad() {
+        onRetry?()
+    }
+}
+
+@MainActor
+final class WorkspacePanelViewController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate {
+    var onTogglePanel: (() -> Void)?
+
+    private struct FileRoot: Equatable {
+        let name: String
+        let path: String
+        let target: TerminalTarget
+    }
+
+    private struct PrefetchCandidate: Sendable {
+        let path: String
+        let depth: Int
+    }
+
+    private static let prefetchDepth = 2
+    private static let prefetchBatchSize = 8
+    private static let prefetchDirectoryLimit = 64
+    private static let prefetchEntryLimit = 5_000
+    private static let cachedDirectoryLimit = 256
+    private static let cachedEntryLimit = 20_000
+    private static let liveRefreshDebounce = Duration.milliseconds(150)
+    private static let remotePollInterval = Duration.seconds(2)
+
+    private let divider = NSView()
+    private let sections = NSStackView()
+    private let emptyState = NSTextField(labelWithString: "Nothing here yet.")
+    private let fileScrollView = FileTreeScrollView()
+    private let fileOutline = NSOutlineView()
+    private let fileColumn = NSTableColumn(identifier: .init("FileTreeColumn"))
+    private var fileTreeFont = AppTheme.font(ofSize: AppTheme.typography.body)
+    private var fileTreeRetryFont = AppTheme.font(
+        ofSize: AppTheme.typography.label,
+        weight: 600
+    )
+    private let fileCacheStore: FileTreeCacheStore
+    private let fileCacheQueue = DispatchQueue(label: "dev.pinata.file-tree-cache")
+    private let fileWatchQueue = DispatchQueue(label: "dev.pinata.file-tree-watch")
+    private let toggleButton = PanelToggleButton(
+        symbolName: "sidebar.right",
+        accessibilityLabel: "Toggle workspace panel"
+    )
+    private var sectionButtons: [WorkspacePanelTabButton] = []
+    private var selectedSection = 0
+    private var fileRoot: FileRoot?
+    private var fileEntries: [String: [FileTreeEntry]] = [:]
+    private lazy var fileCaches = (try? fileCacheStore.load()) ?? [:]
+    private var fileErrors: [String: String] = [:]
+    private var expandedPaths = Set<String>()
+    private var fileNodes: [String: FileTreeNode] = [:]
+    private var fileLoadTasks: [String: Task<[FileTreeEntry], Error>] = [:]
+    private var filePrefetchTask: Task<Void, Never>?
+    private var filePrefetchID: UUID?
+    private var prefetchingPaths = Set<String>()
+    private var fileRefreshTask: Task<Void, Never>?
+    private var fileRefreshID: UUID?
+    private var refreshingPaths = Set<String>()
+    private var fileCacheDirty = false
+    private var fileEntryAccessOrder: [String: UInt64] = [:]
+    private var fileEntryAccessCounter: UInt64 = 0
+    private var filePrefetchResumeTask: Task<Void, Never>?
+    private var deferredReloadPaths = Set<String>()
+    private var isFileTreeLiveScrolling = false
+    private var isRestoringExpandedPaths = false
+    private var isCollapsingFileBranch = false
+    private var isPanelVisible = false
+    private var localRootWatcher: FileTreeRootWatcher?
+    private var remotePollingTask: Task<Void, Never>?
+    private var remoteDirectorySignatures: [String: String] = [:]
+    private var liveRefreshDebounceTask: Task<Void, Never>?
+    private var liveRefreshTask: Task<Void, Never>?
+    private var liveRefreshID: UUID?
+    private var pendingLiveRefreshPaths = Set<String>()
+
+    init(fileCacheStore: FileTreeCacheStore = FileTreeCacheStore()) {
+        self.fileCacheStore = fileCacheStore
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is unavailable")
+    }
+
+    override func loadView() {
+        let rootView = NSView()
+        rootView.wantsLayer = true
+        rootView.setAccessibilityRole(.group)
+        rootView.setAccessibilityLabel("Workspace panel")
+        view = rootView
+
+        divider.translatesAutoresizingMaskIntoConstraints = false
+        divider.wantsLayer = true
+        toggleButton.panelVisible = true
+        toggleButton.target = self
+        toggleButton.action = #selector(togglePanel)
+        toggleButton.toolTip = "Toggle workspace panel (⌘L)"
+        sections.translatesAutoresizingMaskIntoConstraints = false
+        sections.orientation = .horizontal
+        sections.alignment = .centerY
+        sections.spacing = 4
+        let titles: [String] = ["Files", "Review", "PR"]
+        for (index, title) in titles.enumerated() {
+            let button = WorkspacePanelTabButton(title: title, index: index)
+            button.target = self
+            button.action = #selector(selectSection(_:))
+            sections.addArrangedSubview(button)
+            sectionButtons.append(button)
+        }
+        sectionButtons.first?.isVisuallySelected = true
+        emptyState.translatesAutoresizingMaskIntoConstraints = false
+        fileScrollView.translatesAutoresizingMaskIntoConstraints = false
+        fileScrollView.hasVerticalScroller = true
+        fileScrollView.hasHorizontalScroller = false
+        fileScrollView.horizontalScrollElasticity = .none
+        fileScrollView.drawsBackground = false
+        fileScrollView.contentView = FileTreeClipView()
+        fileOutline.addTableColumn(fileColumn)
+        fileOutline.outlineTableColumn = fileColumn
+        fileOutline.headerView = nil
+        fileOutline.backgroundColor = .clear
+        fileOutline.rowHeight = 24
+        fileOutline.intercellSpacing = .zero
+        fileOutline.indentationPerLevel = 16
+        fileOutline.selectionHighlightStyle = .none
+        fileOutline.focusRingType = .none
+        fileOutline.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        fileOutline.autoresizesOutlineColumn = false
+        fileOutline.autoresizingMask = [.width]
+        fileOutline.dataSource = self
+        fileOutline.delegate = self
+        fileColumn.minWidth = 120
+        fileColumn.width = AppTheme.rightPanelWidth
+        fileColumn.resizingMask = .autoresizingMask
+        fileScrollView.documentView = fileOutline
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(flushFileCaches),
+            name: NSApplication.willTerminateNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(fileTreeWillStartLiveScroll),
+            name: NSScrollView.willStartLiveScrollNotification,
+            object: fileScrollView
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(fileTreeDidEndLiveScroll),
+            name: NSScrollView.didEndLiveScrollNotification,
+            object: fileScrollView
+        )
+
+        rootView.addSubview(divider)
+        rootView.addSubview(sections)
+        rootView.addSubview(emptyState)
+        rootView.addSubview(fileScrollView)
+        rootView.addSubview(toggleButton)
+        NSLayoutConstraint.activate([
+            divider.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
+            divider.topAnchor.constraint(equalTo: rootView.topAnchor),
+            divider.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
+            divider.widthAnchor.constraint(equalToConstant: AppTheme.workspaceDividerThickness),
+
+            sections.leadingAnchor.constraint(
+                equalTo: rootView.leadingAnchor,
+                constant: AppTheme.workspacePanelHeaderInset
+            ),
+            sections.centerYAnchor.constraint(
+                equalTo: rootView.topAnchor,
+                constant: AppTheme.mainHeaderHeight / 2
+            ),
+            sections.heightAnchor.constraint(equalToConstant: AppTheme.workspaceTabHeight),
+            sections.trailingAnchor.constraint(lessThanOrEqualTo: toggleButton.leadingAnchor),
+
+            emptyState.leadingAnchor.constraint(
+                equalTo: rootView.leadingAnchor,
+                constant: AppTheme.workspacePanelHeaderInset
+            ),
+            emptyState.topAnchor.constraint(
+                equalTo: rootView.topAnchor,
+                constant: AppTheme.mainHeaderHeight + AppTheme.workspacePanelHeaderInset
+            ),
+
+            fileScrollView.leadingAnchor.constraint(
+                equalTo: rootView.leadingAnchor,
+                constant: AppTheme.workspaceFileTreeInset
+            ),
+            fileScrollView.trailingAnchor.constraint(
+                equalTo: rootView.trailingAnchor,
+                constant: -AppTheme.workspaceFileTreeInset
+            ),
+            fileScrollView.topAnchor.constraint(
+                equalTo: rootView.topAnchor,
+                constant: AppTheme.mainHeaderHeight + AppTheme.workspaceFileTreeInset
+            ),
+            fileScrollView.bottomAnchor.constraint(
+                equalTo: rootView.bottomAnchor,
+                constant: -AppTheme.workspaceFileTreeInset
+            ),
+
+            toggleButton.centerYAnchor.constraint(
+                equalTo: rootView.topAnchor,
+                constant: AppTheme.mainHeaderHeight / 2
+            ),
+            toggleButton.trailingAnchor.constraint(
+                equalTo: rootView.trailingAnchor,
+                constant: -AppTheme.workspacePanelHeaderInset
+            ),
+        ])
+        applyTheme()
+        updateContent()
+    }
+
+    func setFileRoot(name: String?, workingDirectory: String?, target: TerminalTarget?) {
+        let root: FileRoot? = switch (name, workingDirectory, target) {
+        case let (.some(name), .some(path), .some(target)):
+            FileRoot(name: name, path: path, target: target)
+        default: nil
+        }
+        guard root != fileRoot else { return }
+        persistFileCaches()
+        stopFileMonitoring()
+        fileLoadTasks.values.forEach { $0.cancel() }
+        filePrefetchTask?.cancel()
+        filePrefetchResumeTask?.cancel()
+        fileRefreshTask?.cancel()
+        fileLoadTasks = [:]
+        filePrefetchTask = nil
+        filePrefetchID = nil
+        prefetchingPaths = []
+        fileRefreshTask = nil
+        fileRefreshID = nil
+        refreshingPaths = []
+        deferredReloadPaths = []
+        isFileTreeLiveScrolling = false
+        fileNodes = [:]
+        let cached = root.flatMap {
+            fileCaches[FileTreeCacheKey(path: $0.path, target: $0.target)]
+        }
+        if let root, case .ssh = root.target {
+            fileEntries = [:]
+        } else {
+            fileEntries = cached?.entries ?? [:]
+        }
+        fileEntryAccessOrder = [:]
+        fileEntryAccessCounter = 0
+        touchFileEntries(fileEntries.keys)
+        fileErrors = [:]
+        fileRoot = root
+        expandedPaths = cached?.expandedPaths ?? root.map { [$0.path] } ?? []
+        let loadedDirectoryCount = fileEntries.count
+        trimInactiveFileEntries()
+        if fileEntries.count != loadedDirectoryCount { fileCacheDirty = true }
+        if isViewLoaded {
+            fileOutline.reloadData()
+            restoreExpandedPaths()
+            updateContent()
+        }
+        if let root {
+            if fileEntries[root.path] == nil {
+                loadChildren(of: root.path)
+            } else {
+                refreshCachedDirectory(at: root.path, root: root)
+            }
+        }
+    }
+
+    func invalidateFileCaches(at paths: Set<String>) {
+        guard !paths.isEmpty else { return }
+        fileCaches = fileCaches.filter { !paths.contains($0.key.path) }
+        fileCacheDirty = true
+        guard let root = fileRoot, paths.contains(root.path) else {
+            persistFileCaches()
+            return
+        }
+        stopFileMonitoring()
+        fileLoadTasks.values.forEach { $0.cancel() }
+        filePrefetchTask?.cancel()
+        filePrefetchResumeTask?.cancel()
+        fileRefreshTask?.cancel()
+        fileEntries = [:]
+        fileErrors = [:]
+        filePrefetchTask = nil
+        filePrefetchID = nil
+        prefetchingPaths = []
+        filePrefetchResumeTask = nil
+        fileRefreshTask = nil
+        fileRefreshID = nil
+        refreshingPaths = []
+        deferredReloadPaths = []
+        isFileTreeLiveScrolling = false
+        fileNodes = [:]
+        fileEntryAccessOrder = [:]
+        if isViewLoaded { fileOutline.reloadData() }
+        persistFileCaches(captureCurrent: false)
+    }
+
+    func panelDidShow() {
+        isPanelVisible = true
+        guard selectedSection == 0 else { return }
+        ensureFileRootExpanded()
+        restoreExpandedPaths()
+        updateFileMonitoring()
+        if let root = fileRoot {
+            enqueueLiveRefresh(paths: visibleDirectoryPaths(for: root), debounce: false)
+        }
+    }
+
+    func panelDidHide() {
+        isPanelVisible = false
+        stopFileMonitoring()
+        persistFileCaches()
+    }
+
+    func applyTheme() {
+        view.layer?.backgroundColor = AppTheme.chromeBackground.cgColor
+        divider.layer?.backgroundColor = AppTheme.border.cgColor
+        toggleButton.applyTheme()
+        fileTreeFont = AppTheme.font(ofSize: AppTheme.typography.body)
+        fileTreeRetryFont = AppTheme.font(ofSize: AppTheme.typography.label, weight: 600)
+        emptyState.font = AppTheme.font(ofSize: AppTheme.typography.body)
+        emptyState.textColor = AppTheme.tertiaryText
+        sectionButtons.forEach {
+            $0.font = AppTheme.font(ofSize: AppTheme.typography.label, weight: 600)
+            $0.applyTheme()
+        }
+        if isViewLoaded { fileOutline.reloadData() }
+        updateContent()
+    }
+
+    @objc private func selectSection(_ sender: NSButton) {
+        sectionButtons.forEach { $0.isVisuallySelected = $0 === sender }
+        selectedSection = sender.tag
+        updateContent()
+    }
+
+    @objc private func togglePanel() {
+        onTogglePanel?()
+    }
+
+    private func updateContent() {
+        guard isViewLoaded else { return }
+        let showsFiles = selectedSection == 0
+        fileScrollView.isHidden = !showsFiles
+        emptyState.isHidden = showsFiles
+        guard showsFiles, isPanelVisible else {
+            stopFileMonitoring()
+            return
+        }
+        ensureFileRootExpanded()
+        restoreExpandedPaths()
+        updateFileMonitoring()
+    }
+
+    private func ensureFileRootExpanded() {
+        guard let root = fileRoot else { return }
+        let inserted = expandedPaths.insert(root.path).inserted
+        guard isViewLoaded, let node = rootNode(for: root.path) else { return }
+        if !fileOutline.isItemExpanded(node) {
+            isRestoringExpandedPaths = true
+            fileOutline.expandItem(node)
+            isRestoringExpandedPaths = false
+        }
+        if inserted { saveCurrentFileCache() }
+    }
+
+    func outlineView(
+        _ outlineView: NSOutlineView,
+        numberOfChildrenOfItem item: Any?
+    ) -> Int {
+        guard let item else { return fileRoot == nil ? 1 : 1 }
+        guard let node = item as? FileTreeNode, let entry = node.entry, entry.isDirectory else {
+            return 0
+        }
+        if let entries = fileEntries[entry.path] { return entries.count }
+        return 1
+    }
+
+    func outlineView(
+        _ outlineView: NSOutlineView,
+        child index: Int,
+        ofItem item: Any?
+    ) -> Any {
+        guard let item else {
+            guard let root = fileRoot else {
+                return FileTreeNode(
+                    content: .message("Select a workspace to browse files."),
+                    path: "message:empty"
+                )
+            }
+            return node(
+                for: FileTreeEntry(
+                    path: root.path,
+                    isDirectory: true,
+                    displayName: root.name
+                )
+            )
+        }
+        guard let parent = item as? FileTreeNode, let entry = parent.entry else {
+            return FileTreeNode(content: .message(""), path: "message:invalid")
+        }
+        if let entries = fileEntries[entry.path] { return node(for: entries[index]) }
+        if let message = fileErrors[entry.path] {
+            return FileTreeNode(content: .error(message), path: "error:\(entry.path)")
+        }
+        return FileTreeNode(content: .loading, path: "loading:\(entry.path)")
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
+        guard let entry = (item as? FileTreeNode)?.entry, entry.isDirectory else { return false }
+        return fileEntries[entry.path]?.isEmpty != true
+    }
+
+    func outlineView(
+        _ outlineView: NSOutlineView,
+        viewFor tableColumn: NSTableColumn?,
+        item: Any
+    ) -> NSView? {
+        guard let node = item as? FileTreeNode else { return nil }
+        let cell = outlineView.makeView(
+            withIdentifier: FileTreeCellView.identifier,
+            owner: self
+        ) as? FileTreeCellView ?? FileTreeCellView(frame: .zero)
+        cell.configure(with: node, font: fileTreeFont, retryFont: fileTreeRetryFont)
+        if let entry = node.entry, entry.isDirectory {
+            cell.onActivate = { [weak self, weak outlineView, weak node] event in
+                guard let self, let outlineView, let node else { return }
+                if event.modifierFlags.contains(.command) {
+                    self.collapseFileBranch(node)
+                } else if outlineView.isItemExpanded(node) {
+                    outlineView.collapseItem(node)
+                } else {
+                    outlineView.expandItem(node)
+                }
+            }
+        }
+        if case .error = node.content {
+            let path = String(node.path.dropFirst("error:".count))
+            cell.onRetry = { [weak self] in
+                self?.fileErrors[path] = nil
+                self?.reloadDirectory(path)
+                self?.prioritizeLoad(of: path)
+            }
+        }
+        return cell
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool {
+        false
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, shouldExpandItem item: Any) -> Bool {
+        guard let entry = (item as? FileTreeNode)?.entry, entry.isDirectory else { return false }
+        expandedPaths.insert(entry.path)
+        touchFileEntries([entry.path])
+        DispatchQueue.main.async { [weak self] in self?.updateFileMonitoring() }
+        if isRestoringExpandedPaths {
+            if fileEntries[entry.path] == nil { prioritizeLoad(of: entry.path) }
+            return true
+        }
+        saveCurrentFileCache()
+        if let entries = fileEntries[entry.path], let root = fileRoot {
+            startPrefetching(from: entries, root: root)
+            if entry.path != root.path {
+                refreshCachedDirectory(at: entry.path, root: root)
+            }
+        } else {
+            prioritizeLoad(of: entry.path)
+        }
+        return true
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, shouldCollapseItem item: Any) -> Bool {
+        guard let node = item as? FileTreeNode, let entry = node.entry else { return false }
+        if isCollapsingFileBranch { return true }
+        expandedPaths.remove(entry.path)
+        saveCurrentFileCache()
+        DispatchQueue.main.async { [weak self] in self?.updateFileMonitoring() }
+        if NSApp.currentEvent?.modifierFlags.contains(.command) == true {
+            DispatchQueue.main.async { [weak self, weak node] in
+                guard let node else { return }
+                self?.collapseFileBranch(node)
+            }
+        }
+        return true
+    }
+
+    private func collapseFileBranch(_ node: FileTreeNode) {
+        guard let entry = node.entry, entry.isDirectory else { return }
+        isCollapsingFileBranch = true
+        fileOutline.collapseItem(node, collapseChildren: true)
+        isCollapsingFileBranch = false
+        expandedPaths = expandedPaths.filter { !contains($0, in: entry.path) }
+        saveCurrentFileCache()
+        updateFileMonitoring()
+    }
+
+    private func node(for entry: FileTreeEntry) -> FileTreeNode {
+        if let node = fileNodes[entry.path] {
+            node.content = .entry(entry)
+            return node
+        }
+        let node = FileTreeNode(content: .entry(entry), path: entry.path)
+        fileNodes[entry.path] = node
+        return node
+    }
+
+    private func restoreExpandedPaths(_ paths: Set<String>? = nil) {
+        guard isViewLoaded, selectedSection == 0 else { return }
+        isRestoringExpandedPaths = true
+        defer { isRestoringExpandedPaths = false }
+        for path in (paths ?? expandedPaths).sorted(by: { pathDepth($0) < pathDepth($1) }) {
+            guard let node = fileNodes[path] ?? rootNode(for: path) else { continue }
+            fileOutline.expandItem(node)
+        }
+    }
+
+    private func rootNode(for path: String) -> FileTreeNode? {
+        guard let root = fileRoot, root.path == path else { return nil }
+        return node(
+            for: FileTreeEntry(path: root.path, isDirectory: true, displayName: root.name)
+        )
+    }
+
+    private func pathDepth(_ path: String) -> Int {
+        path.split(separator: "/").count
+    }
+
+    private func reloadDirectory(_ path: String) {
+        reloadDirectories([path])
+    }
+
+    private func reloadDirectories(_ paths: [String]) {
+        guard isViewLoaded else { return }
+        if isFileTreeLiveScrolling {
+            deferredReloadPaths.formUnion(paths)
+            return
+        }
+        let pathsToRestore: Set<String> = Set(fileNodes.compactMap { path, node -> String? in
+            guard fileOutline.isItemExpanded(node),
+                  paths.contains(where: { contains(path, in: $0) })
+            else { return nil }
+            return path
+        })
+        var didReload = false
+        for path in paths {
+            guard let node = fileNodes[path] ?? rootNode(for: path) else { continue }
+            fileOutline.reloadItem(node, reloadChildren: true)
+            didReload = true
+        }
+        if didReload { restoreExpandedPaths(pathsToRestore) }
+    }
+
+    private func contains(_ path: String, in branch: String) -> Bool {
+        path == branch || path.hasPrefix(branch.hasSuffix("/") ? branch : branch + "/")
+    }
+
+    @objc private func fileTreeWillStartLiveScroll() {
+        isFileTreeLiveScrolling = true
+        filePrefetchResumeTask?.cancel()
+        filePrefetchTask?.cancel()
+        filePrefetchTask = nil
+        filePrefetchID = nil
+        prefetchingPaths = []
+    }
+
+    @objc private func fileTreeDidEndLiveScroll() {
+        isFileTreeLiveScrolling = false
+        let paths = Array(deferredReloadPaths)
+        deferredReloadPaths = []
+        reloadDirectories(paths)
+
+        filePrefetchResumeTask?.cancel()
+        filePrefetchResumeTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled,
+                  let self,
+                  !self.isFileTreeLiveScrolling,
+                  let root = self.fileRoot,
+                  let entries = self.fileEntries[root.path]
+            else { return }
+            self.startPrefetching(from: entries, root: root)
+        }
+    }
+
+    private func prioritizeLoad(of path: String) {
+        guard fileEntries[path] == nil else { return }
+        fileErrors[path] = nil
+        if prefetchingPaths.contains(path) {
+            filePrefetchTask?.cancel()
+            filePrefetchTask = nil
+            filePrefetchID = nil
+            prefetchingPaths = []
+        }
+        if refreshingPaths.contains(path) {
+            fileRefreshTask?.cancel()
+            fileRefreshTask = nil
+            fileRefreshID = nil
+            refreshingPaths = []
+        }
+        loadChildren(of: path)
+    }
+
+    private func loadChildren(of path: String) {
+        guard let root = fileRoot,
+              fileLoadTasks[path] == nil,
+              !prefetchingPaths.contains(path),
+              !refreshingPaths.contains(path)
+        else { return }
+        let task = Task.detached(priority: .userInitiated) {
+            try FileTreeInspector().children(at: path, target: root.target)
+        }
+        fileLoadTasks[path] = task
+        Task { [weak self] in
+            var loadedEntries: [FileTreeEntry]?
+            do {
+                let entries = try await task.value
+                guard !Task.isCancelled, let self, self.fileRoot == root else { return }
+                self.fileEntries[path] = entries
+                if path == root.path,
+                   case .ssh = root.target,
+                   let cached = self.fileCaches[
+                       FileTreeCacheKey(path: root.path, target: root.target)
+                   ] {
+                    self.fileEntries.merge(cached.entries) { current, _ in current }
+                }
+                self.touchFileEntries([path])
+                self.trimInactiveFileEntries()
+                self.fileErrors[path] = nil
+                loadedEntries = entries
+            } catch is CancellationError {
+                return
+            } catch {
+                guard let self, self.fileRoot == root else { return }
+                self.fileErrors[path] = error.localizedDescription
+            }
+            self?.fileLoadTasks[path] = nil
+            self?.reloadDirectory(path)
+            self?.restoreExpandedPaths()
+            self?.saveCurrentFileCache()
+            self?.updateFileMonitoring()
+            if let loadedEntries {
+                self?.startPrefetching(from: loadedEntries, root: root)
+            }
+        }
+    }
+
+    private func saveCurrentFileCache() {
+        guard let root = fileRoot, fileEntries[root.path] != nil else { return }
+        fileCacheDirty = true
+        touchFileEntries([root.path])
+        trimInactiveFileEntries()
+    }
+
+    private func captureCurrentFileCache() {
+        guard let root = fileRoot, fileEntries[root.path] != nil else { return }
+        let key = FileTreeCacheKey(path: root.path, target: root.target)
+        fileCaches[key] = FileTreeCache(
+            key: key,
+            entries: limitedFileEntries(),
+            expandedPaths: expandedPaths,
+            updatedAt: Date()
+        )
+        let retainedKeys = Set(
+            fileCaches.values
+                .sorted { $0.updatedAt > $1.updatedAt }
+                .prefix(FileTreeCacheStore.maximumCacheCount)
+                .map(\.key)
+        )
+        fileCaches = fileCaches.filter { retainedKeys.contains($0.key) }
+        fileCacheDirty = true
+    }
+
+    private func persistFileCaches(captureCurrent: Bool = true) {
+        guard fileCacheDirty else { return }
+        if captureCurrent { captureCurrentFileCache() }
+        fileCacheDirty = false
+        let store = fileCacheStore
+        let caches = fileCaches
+        fileCacheQueue.async {
+            try? store.save(caches)
+        }
+    }
+
+    @objc private func flushFileCaches() {
+        if fileCacheDirty { captureCurrentFileCache() }
+        fileCacheDirty = false
+        let caches = fileCaches
+        fileCacheQueue.sync {
+            try? fileCacheStore.save(caches)
+        }
+    }
+
+    private func touchFileEntries<S: Sequence>(_ paths: S) where S.Element == String {
+        for path in paths where fileEntries[path] != nil {
+            fileEntryAccessCounter &+= 1
+            fileEntryAccessOrder[path] = fileEntryAccessCounter
+        }
+    }
+
+    private func activeExpandedPaths() -> Set<String> {
+        Set(fileNodes.compactMap { path, node in
+            fileOutline.isItemExpanded(node) ? path : nil
+        })
+    }
+
+    private func trimInactiveFileEntries() {
+        guard let root = fileRoot else { return }
+        var directoryCount = fileEntries.count
+        var entryCount = fileEntries.values.reduce(0) { $0 + $1.count }
+        guard directoryCount > Self.cachedDirectoryLimit
+                || entryCount > Self.cachedEntryLimit
+        else { return }
+        let protected = activeExpandedPaths().union([root.path])
+        let candidates = fileEntries.keys
+            .filter { !protected.contains($0) }
+            .sorted { fileEntryAccessOrder[$0, default: 0] < fileEntryAccessOrder[$1, default: 0] }
+        for path in candidates {
+            guard directoryCount > Self.cachedDirectoryLimit
+                    || entryCount > Self.cachedEntryLimit
+            else { break }
+            let prefix = path.hasSuffix("/") ? path : path + "/"
+            let removedPaths = fileEntries.keys.filter {
+                $0 == path || $0.hasPrefix(prefix)
+            }
+            for removedPath in removedPaths {
+                entryCount -= fileEntries.removeValue(forKey: removedPath)?.count ?? 0
+                fileEntryAccessOrder.removeValue(forKey: removedPath)
+            }
+            fileNodes = fileNodes.filter { key, _ in
+                key == path || !key.hasPrefix(prefix)
+            }
+            directoryCount -= removedPaths.count
+        }
+    }
+
+    private func limitedFileEntries() -> [String: [FileTreeEntry]] {
+        guard let root = fileRoot else { return [:] }
+        let paths = fileEntries.keys.sorted {
+            if $0 == root.path { return true }
+            if $1 == root.path { return false }
+            return fileEntryAccessOrder[$0, default: 0] > fileEntryAccessOrder[$1, default: 0]
+        }
+        var result: [String: [FileTreeEntry]] = [:]
+        var entryCount = 0
+        for path in paths {
+            guard result.count < Self.cachedDirectoryLimit,
+                  let entries = fileEntries[path],
+                  entryCount + entries.count <= Self.cachedEntryLimit
+            else { continue }
+            result[path] = entries
+            entryCount += entries.count
+        }
+        return result
+    }
+
+    private func monitoredDirectoryPaths() -> Set<String> {
+        guard isPanelVisible,
+              selectedSection == 0,
+              let root = fileRoot
+        else { return [] }
+        let canRetryRemoteRoot = if case .ssh = root.target {
+            fileErrors[root.path] != nil
+        } else {
+            false
+        }
+        let canMonitorRoot = fileEntries[root.path] != nil || canRetryRemoteRoot
+        guard canMonitorRoot else { return [] }
+        var paths: Set<String> = [root.path]
+        for (path, node) in fileNodes
+        where (fileEntries[path] != nil || fileErrors[path] != nil)
+            && fileOutline.isItemExpanded(node) {
+            paths.insert(path)
+        }
+        return paths
+    }
+
+    private func updateFileMonitoring() {
+        guard let root = fileRoot else {
+            stopFileMonitoring()
+            return
+        }
+        let paths = monitoredDirectoryPaths()
+        guard !paths.isEmpty else {
+            stopFileMonitoring()
+            return
+        }
+
+        switch root.target {
+        case .local:
+            remotePollingTask?.cancel()
+            remotePollingTask = nil
+            remoteDirectorySignatures = [:]
+            if localRootWatcher == nil {
+                localRootWatcher = FileTreeRootWatcher(
+                    path: root.path,
+                    queue: fileWatchQueue
+                ) { [weak self] eventPaths in
+                    Task { @MainActor [weak self] in
+                        self?.handleLocalFileEvents(eventPaths)
+                    }
+                }
+            }
+        case .ssh(let connection):
+            localRootWatcher?.cancel()
+            localRootWatcher = nil
+            guard remotePollingTask == nil else { return }
+            remotePollingTask = Task { [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: Self.remotePollInterval)
+                    guard !Task.isCancelled else { return }
+                    guard let paths = self?.remotePollPaths(for: root) else {
+                        if self?.fileRoot != root { return }
+                        continue
+                    }
+                    let inspection = Task.detached(priority: .utility) {
+                        try FileTreeInspector().directorySignatures(
+                            at: paths,
+                            connection: connection
+                        )
+                    }
+                    let signatures: [String: String]
+                    do {
+                        signatures = try await withTaskCancellationHandler {
+                            try await inspection.value
+                        } onCancel: {
+                            inspection.cancel()
+                        }
+                    } catch is CancellationError {
+                        return
+                    } catch {
+                        guard !Task.isCancelled,
+                              let self,
+                              self.fileRoot == root
+                        else { return }
+                        self.remoteDirectorySignatures = [:]
+                        self.showDirectoryError(at: root.path, message: error.localizedDescription)
+                        continue
+                    }
+                    guard !Task.isCancelled,
+                          let self,
+                          self.fileRoot == root
+                    else { return }
+                    let currentPaths = Set(paths)
+                    self.remoteDirectorySignatures = self.remoteDirectorySignatures.filter {
+                        currentPaths.contains($0.key)
+                    }
+                    let changed = Set(paths.filter { path in
+                        !self.remoteDirectorySignatures.keys.contains(path)
+                            || self.remoteDirectorySignatures[path] != signatures[path]
+                    })
+                    self.remoteDirectorySignatures.merge(signatures) { _, new in new }
+                    self.enqueueLiveRefresh(paths: changed, debounce: false)
+                }
+            }
+        }
+    }
+
+    private func stopFileMonitoring() {
+        localRootWatcher?.cancel()
+        localRootWatcher = nil
+        remotePollingTask?.cancel()
+        remotePollingTask = nil
+        remoteDirectorySignatures = [:]
+        liveRefreshDebounceTask?.cancel()
+        liveRefreshDebounceTask = nil
+        liveRefreshTask?.cancel()
+        liveRefreshTask = nil
+        liveRefreshID = nil
+        pendingLiveRefreshPaths = []
+    }
+
+    private func handleLocalFileEvents(_ eventPaths: [String]) {
+        let monitored = monitoredDirectoryPaths()
+        var changed = Set<String>()
+        for eventPath in eventPaths {
+            let path = URL(fileURLWithPath: eventPath).standardizedFileURL.path
+            var matched = false
+            if monitored.contains(path) {
+                changed.insert(path)
+                matched = true
+            }
+            let parent = URL(fileURLWithPath: path).deletingLastPathComponent().path
+            if monitored.contains(parent) {
+                changed.insert(parent)
+                matched = true
+            }
+            if !matched,
+               let ancestor = monitored
+                .filter({ contains(path, in: $0) })
+                .max(by: { pathDepth($0) < pathDepth($1) }) {
+                changed.insert(ancestor)
+            }
+        }
+        enqueueLiveRefresh(paths: changed, debounce: true)
+    }
+
+    private func remotePollPaths(for root: FileRoot) -> [String]? {
+        guard fileRoot == root,
+              isPanelVisible,
+              selectedSection == 0,
+              NSApp.isActive,
+              let window = view.window,
+              window.isVisible,
+              !window.isMiniaturized,
+              window.occlusionState.contains(.visible),
+              liveRefreshTask == nil
+        else { return nil }
+        return Array(visibleDirectoryPaths(for: root))
+    }
+
+    private func visibleDirectoryPaths(for root: FileRoot) -> Set<String> {
+        var paths: Set<String> = [root.path]
+        let rows = fileOutline.rows(in: fileScrollView.contentView.bounds)
+        guard rows.location != NSNotFound else { return paths }
+        for row in rows.location..<(rows.location + rows.length) {
+            guard let node = fileOutline.item(atRow: row) as? FileTreeNode,
+                  let entry = node.entry,
+                  entry.isDirectory,
+                  fileEntries[entry.path] != nil || fileErrors[entry.path] != nil,
+                  fileOutline.isItemExpanded(node)
+            else { continue }
+            paths.insert(entry.path)
+        }
+        return paths
+    }
+
+    private func enqueueLiveRefresh(paths: Set<String>, debounce: Bool) {
+        guard isPanelVisible, selectedSection == 0 else { return }
+        pendingLiveRefreshPaths.formUnion(paths.filter {
+            fileEntries[$0] != nil || fileErrors[$0] != nil
+        })
+        guard !pendingLiveRefreshPaths.isEmpty else { return }
+        liveRefreshDebounceTask?.cancel()
+        liveRefreshDebounceTask = nil
+        if debounce {
+            liveRefreshDebounceTask = Task { [weak self] in
+                try? await Task.sleep(for: Self.liveRefreshDebounce)
+                guard !Task.isCancelled, let self else { return }
+                self.liveRefreshDebounceTask = nil
+                self.performPendingLiveRefresh()
+            }
+        } else {
+            performPendingLiveRefresh()
+        }
+    }
+
+    private func performPendingLiveRefresh() {
+        guard liveRefreshTask == nil,
+              let root = fileRoot,
+              isPanelVisible,
+              selectedSection == 0
+        else { return }
+        let monitoredPaths = monitoredDirectoryPaths()
+        pendingLiveRefreshPaths.formIntersection(monitoredPaths)
+        let paths = pendingLiveRefreshPaths
+            .filter { !refreshingPaths.contains($0) }
+        pendingLiveRefreshPaths.subtract(paths)
+        guard !paths.isEmpty else { return }
+
+        let refreshID = UUID()
+        liveRefreshID = refreshID
+        let target = root.target
+        let inspection = Task.detached(priority: .utility) {
+            try FileTreeInspector().children(at: Array(paths), target: target)
+        }
+        liveRefreshTask = Task { [weak self] in
+            let refreshed: [String: [FileTreeEntry]]
+            do {
+                refreshed = try await withTaskCancellationHandler {
+                    try await inspection.value
+                } onCancel: {
+                    inspection.cancel()
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                guard let self,
+                      self.liveRefreshID == refreshID,
+                      self.fileRoot == root
+                else { return }
+                self.liveRefreshTask = nil
+                self.liveRefreshID = nil
+                self.remoteDirectorySignatures = [:]
+                for path in paths {
+                    self.showDirectoryError(at: path, message: error.localizedDescription)
+                }
+                return
+            }
+            guard let self, self.liveRefreshID == refreshID else { return }
+            self.liveRefreshTask = nil
+            self.liveRefreshID = nil
+            guard !Task.isCancelled,
+                  self.fileRoot == root
+            else { return }
+            var changedPaths: [String] = []
+            for path in paths {
+                guard let entries = refreshed[path] else {
+                    self.remoteDirectorySignatures.removeValue(forKey: path)
+                    self.showDirectoryError(
+                        at: path,
+                        message: "Remote folder is unavailable."
+                    )
+                    continue
+                }
+                if self.installFileEntries(entries, at: path) { changedPaths.append(path) }
+            }
+            if !changedPaths.isEmpty {
+                self.reloadDirectories(changedPaths)
+                self.saveCurrentFileCache()
+                self.updateFileMonitoring()
+            }
+            if !self.pendingLiveRefreshPaths.isEmpty {
+                self.performPendingLiveRefresh()
+            }
+        }
+    }
+
+    private func refreshCachedDirectory(at path: String, root: FileRoot) {
+        guard fileEntries[path] != nil, !refreshingPaths.contains(path) else { return }
+        fileRefreshTask?.cancel()
+        let refreshID = UUID()
+        fileRefreshID = refreshID
+        refreshingPaths = [path]
+
+        fileRefreshTask = Task(priority: .utility) { [weak self] in
+            guard let self else { return }
+            let target = root.target
+            let inspection = Task.detached(priority: .utility) {
+                try FileTreeInspector().children(at: path, target: target)
+            }
+            let refreshed: [FileTreeEntry]
+            do {
+                refreshed = try await withTaskCancellationHandler {
+                    try await inspection.value
+                } onCancel: {
+                    inspection.cancel()
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                guard fileRefreshID == refreshID, fileRoot == root else { return }
+                refreshingPaths = []
+                fileRefreshTask = nil
+                remoteDirectorySignatures.removeValue(forKey: path)
+                showDirectoryError(at: path, message: error.localizedDescription)
+                return
+            }
+            guard fileRefreshID == refreshID else { return }
+            refreshingPaths = []
+            fileRefreshTask = nil
+            guard !Task.isCancelled,
+                  fileRoot == root,
+                  fileEntries[path] != nil
+            else { return }
+
+            if installFileEntries(refreshed, at: path) {
+                if path == root.path || expandedPaths.contains(path) {
+                    reloadDirectory(path)
+                }
+                saveCurrentFileCache()
+                updateFileMonitoring()
+            }
+            if path == root.path, let entries = fileEntries[root.path] {
+                startPrefetching(from: entries, root: root)
+            }
+            if !pendingLiveRefreshPaths.isEmpty {
+                performPendingLiveRefresh()
+            }
+        }
+    }
+
+    private func discardCachedBranch(at path: String) {
+        let prefix = path.hasSuffix("/") ? path : path + "/"
+        fileEntries = fileEntries.filter { key, _ in
+            key != path && !key.hasPrefix(prefix)
+        }
+        expandedPaths = expandedPaths.filter { key in
+            key != path && !key.hasPrefix(prefix)
+        }
+        fileNodes = fileNodes.filter { key, _ in
+            key != path && !key.hasPrefix(prefix)
+        }
+        fileEntryAccessOrder = fileEntryAccessOrder.filter { key, _ in
+            key != path && !key.hasPrefix(prefix)
+        }
+    }
+
+    private func showDirectoryError(at path: String, message: String) {
+        let changed = fileEntries.removeValue(forKey: path) != nil || fileErrors[path] != message
+        fileErrors[path] = message
+        guard changed else { return }
+        reloadDirectory(path)
+    }
+
+    private func installFileEntries(_ entries: [FileTreeEntry], at path: String) -> Bool {
+        fileErrors[path] = nil
+        guard fileEntries[path] != nil else {
+            fileEntries[path] = entries
+            touchFileEntries([path])
+            trimInactiveFileEntries()
+            return true
+        }
+        return replaceFileEntries(at: path, with: entries)
+    }
+
+    private func replaceFileEntries(at path: String, with entries: [FileTreeEntry]) -> Bool {
+        guard let previous = fileEntries[path], previous != entries else { return false }
+        let refreshedPaths = Set(entries.map(\.path))
+        for removed in previous where !refreshedPaths.contains(removed.path) {
+            if removed.isDirectory {
+                discardCachedBranch(at: removed.path)
+            } else {
+                fileNodes.removeValue(forKey: removed.path)
+            }
+        }
+        fileEntries[path] = entries
+        touchFileEntries([path])
+        trimInactiveFileEntries()
+        return true
+    }
+
+    private func startPrefetching(from entries: [FileTreeEntry], root: FileRoot) {
+        filePrefetchTask?.cancel()
+        filePrefetchTask = nil
+        prefetchingPaths = []
+        guard !isFileTreeLiveScrolling else { return }
+        let prefetchID = UUID()
+        filePrefetchID = prefetchID
+        let initial = entries.compactMap { entry in
+            entry.isDirectory ? PrefetchCandidate(path: entry.path, depth: 1) : nil
+        }
+        guard !initial.isEmpty else { return }
+
+        filePrefetchTask = Task(priority: .background) { [weak self] in
+            guard let self else { return }
+            var queue = initial
+            var queuedPaths = Set(initial.map(\.path))
+            var directoryCount = 0
+            var entryCount = 0
+
+            while !queue.isEmpty,
+                  !Task.isCancelled,
+                  directoryCount < Self.prefetchDirectoryLimit,
+                  entryCount < Self.prefetchEntryLimit {
+                var batch: [PrefetchCandidate] = []
+                while !queue.isEmpty, batch.count < Self.prefetchBatchSize {
+                    let candidate = queue.removeFirst()
+                    if fileEntries[candidate.path] == nil,
+                       fileLoadTasks[candidate.path] == nil {
+                        batch.append(candidate)
+                    }
+                }
+                guard !batch.isEmpty else { continue }
+
+                let paths = batch.map(\.path)
+                let target = root.target
+                prefetchingPaths.formUnion(paths)
+                let inspection = Task.detached(priority: .utility) {
+                    try? FileTreeInspector().children(at: paths, target: target)
+                }
+                let loaded = await withTaskCancellationHandler {
+                    await inspection.value
+                } onCancel: {
+                    inspection.cancel()
+                }
+                guard filePrefetchID == prefetchID else { return }
+                prefetchingPaths.subtract(paths)
+                guard !Task.isCancelled, fileRoot == root else { return }
+
+                directoryCount += batch.count
+                var changedPaths: [String] = []
+                for candidate in batch {
+                    guard let children = loaded?[candidate.path] else { continue }
+                    if fileEntries[candidate.path] == nil {
+                        fileEntries[candidate.path] = children
+                        touchFileEntries([candidate.path])
+                        changedPaths.append(candidate.path)
+                    }
+                    entryCount += children.count
+                    guard candidate.depth < Self.prefetchDepth,
+                          directoryCount + queue.count < Self.prefetchDirectoryLimit,
+                          entryCount < Self.prefetchEntryLimit
+                    else { continue }
+                    for child in children where child.isDirectory {
+                        guard queuedPaths.insert(child.path).inserted else { continue }
+                        queue.append(
+                            PrefetchCandidate(path: child.path, depth: candidate.depth + 1)
+                        )
+                    }
+                }
+                reloadDirectories(changedPaths.filter { expandedPaths.contains($0) })
+                trimInactiveFileEntries()
+                if !changedPaths.isEmpty { saveCurrentFileCache() }
+            }
+        }
+    }
+}
+
+@MainActor
+private final class WorkspacePanelTabButton: AppButton {
+    init(title: String, index: Int) {
+        super.init(role: .workspacePanelTab)
+        self.title = title
+        tag = index
+        translatesAutoresizingMaskIntoConstraints = false
+        layer?.cornerRadius = AppTheme.workspaceControlCornerRadius
+        setAccessibilityLabel(title)
+        heightAnchor.constraint(equalToConstant: AppTheme.workspaceTabHeight).isActive = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is unavailable")
+    }
+
+    override var intrinsicContentSize: NSSize {
+        let size = super.intrinsicContentSize
+        return NSSize(width: size.width + 16, height: size.height)
     }
 }
 

@@ -10,7 +10,6 @@ final class PinataApp: NSObject, NSApplicationDelegate {
     private var settings = UserSettings.defaults
 
     static func main() {
-        if TerminalServiceEntryPoint.runIfRequested() { return }
         let application = NSApplication.shared
         let delegate = PinataApp()
         application.delegate = delegate
@@ -82,6 +81,10 @@ final class PinataApp: NSObject, NSApplicationDelegate {
 
     @objc private func toggleLeftPanel(_ sender: Any?) {
         workspaceViewController?.toggleLeftPanel(sender)
+    }
+
+    @objc private func toggleRightPanel(_ sender: Any?) {
+        workspaceViewController?.toggleRightPanel(sender)
     }
 
     @objc private func createTask(_ sender: Any?) {
@@ -184,6 +187,12 @@ final class PinataApp: NSObject, NSApplicationDelegate {
             keyEquivalent: "b"
         )
         leftPanelItem.target = self
+        let rightPanelItem = viewMenu.addItem(
+            withTitle: "Toggle Workspace Panel",
+            action: #selector(toggleRightPanel(_:)),
+            keyEquivalent: "l"
+        )
+        rightPanelItem.target = self
         let fullScreenItem = viewMenu.addItem(
             withTitle: "Toggle Full Screen",
             action: #selector(NSWindow.toggleFullScreen(_:)),

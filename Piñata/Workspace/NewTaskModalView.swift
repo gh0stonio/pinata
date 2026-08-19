@@ -6,6 +6,7 @@ final class NewTaskModalView: NSView, NSTextFieldDelegate {
     var onCreate: ((String, [RegisteredRepository]) -> Void)?
 
     private let repositories: [RegisteredRepository]
+    private let connections: [UUID: SSHConnection]
     private let editingTask: WorkspaceTask?
     private let existingRepositoryIDs: Set<UUID>
     private var selectedRepositoryIDs = Set<UUID>()
@@ -21,8 +22,8 @@ final class NewTaskModalView: NSView, NSTextFieldDelegate {
     private let noteLabel = NSTextField(
         wrappingLabelWithString: "Leave these empty to start as a conversation, then attach repositories once the work needs to write code."
     )
-    private let cancelButton = NewTaskActionButton(title: "Cancel", primary: false)
-    private let createButton = NewTaskActionButton(title: "Create task", primary: true)
+    private let cancelButton = ModalActionButton(title: "Cancel", primary: false)
+    private let createButton = ModalActionButton(title: "Create task", primary: true)
     private let divider = NSView()
     private var mouseDownMonitor: Any?
 
@@ -34,10 +35,12 @@ final class NewTaskModalView: NSView, NSTextFieldDelegate {
 
     init(
         repositories: [RegisteredRepository],
+        connections: [UUID: SSHConnection] = [:],
         repositoryError: String? = nil,
         editingTask: WorkspaceTask? = nil
     ) {
         self.repositories = repositories
+        self.connections = connections
         self.editingTask = editingTask
         existingRepositoryIDs = Set(editingTask?.repositories.map(\.repositoryID) ?? [])
         selectedRepositoryIDs = existingRepositoryIDs
@@ -177,11 +180,19 @@ final class NewTaskModalView: NSView, NSTextFieldDelegate {
                 : "No repositories are available to attach."
         } else {
             repositories.enumerated().forEach { index, repository in
+                let connection = connection(for: repository)
+                let isAvailable: Bool
+                if case .ssh = repository.target {
+                    isAvailable = connection?.isEnabled == true
+                } else {
+                    isAvailable = true
+                }
                 let row = NewTaskRepositoryRow(
                     repository: repository,
+                    connection: connection,
                     showsSeparator: index < repositories.count - 1,
                     selected: existingRepositoryIDs.contains(repository.id),
-                    enabled: !existingRepositoryIDs.contains(repository.id)
+                    enabled: !existingRepositoryIDs.contains(repository.id) && isAvailable
                 )
                 row.onToggle = { [weak self] repositoryID, selected in
                     if selected {
@@ -295,6 +306,11 @@ final class NewTaskModalView: NSView, NSTextFieldDelegate {
         updateValidation()
     }
 
+    private func connection(for repository: RegisteredRepository) -> SSHConnection? {
+        guard case .ssh(let id) = repository.target else { return nil }
+        return connections[id]
+    }
+
     private func updateValidation() {
         let title = titleField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let titleChanged = editingTask.map { $0.title != title } ?? false
@@ -391,10 +407,12 @@ private final class NewTaskRepositoryRow: AppHoverView {
     var onToggle: ((UUID, Bool) -> Void)?
 
     private let repository: RegisteredRepository
+    private let isRemote: Bool
     private let showsSeparator: Bool
     private var selected = false
     private let checkbox = NSImageView()
     private let nameLabel: NSTextField
+    private let sourceLabel: NSTextField
     private let repositoryIcon = NSImageView()
     private let separator = NSView()
     private let button = AppButton(role: .hitTarget)
@@ -403,21 +421,26 @@ private final class NewTaskRepositoryRow: AppHoverView {
 
     init(
         repository: RegisteredRepository,
+        connection: SSHConnection?,
         showsSeparator: Bool,
         selected: Bool = false,
         enabled: Bool = true
     ) {
         self.repository = repository
+        let isRemote: Bool
+        if case .ssh = repository.target { isRemote = true } else { isRemote = false }
+        self.isRemote = isRemote
         self.showsSeparator = showsSeparator
         self.selected = selected
         self.enabled = enabled
         nameLabel = NSTextField(labelWithString: repository.name)
+        sourceLabel = NSTextField(labelWithString: connection?.name ?? (isRemote ? "SSH connection" : "Local"))
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
         repositoryIcon.image = NSImage(
-            systemSymbolName: "book.closed",
-            accessibilityDescription: "Repository"
+            systemSymbolName: isRemote ? "globe" : "laptopcomputer",
+            accessibilityDescription: isRemote ? "Remote repository" : "Local repository"
         )
         separator.wantsLayer = true
         button.target = self
@@ -425,7 +448,7 @@ private final class NewTaskRepositoryRow: AppHoverView {
         button.setAccessibilityLabel(repository.name)
         button.setAccessibilityRole(.checkBox)
         button.isEnabled = enabled
-        [checkbox, nameLabel, repositoryIcon, separator, button].forEach {
+        [checkbox, nameLabel, sourceLabel, repositoryIcon, separator, button].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             addSubview($0)
         }
@@ -444,9 +467,14 @@ private final class NewTaskRepositoryRow: AppHoverView {
             ),
             nameLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             nameLabel.trailingAnchor.constraint(
-                lessThanOrEqualTo: repositoryIcon.leadingAnchor,
+                lessThanOrEqualTo: sourceLabel.leadingAnchor,
                 constant: -AppTheme.taskModalRowContentGap
             ),
+            sourceLabel.trailingAnchor.constraint(
+                equalTo: repositoryIcon.leadingAnchor,
+                constant: -AppTheme.taskModalRowContentGap
+            ),
+            sourceLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             repositoryIcon.trailingAnchor.constraint(
                 equalTo: trailingAnchor,
                 constant: -AppTheme.taskModalRowHorizontalInset
@@ -495,6 +523,8 @@ private final class NewTaskRepositoryRow: AppHoverView {
         nameLabel.textColor = enabled
             ? selected ? AppTheme.primaryText : AppTheme.secondaryText
             : AppTheme.tertiaryText
+        sourceLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsLabel)
+        sourceLabel.textColor = AppTheme.tertiaryText
         repositoryIcon.contentTintColor = AppTheme.tertiaryText
         separator.layer?.backgroundColor = AppTheme.border.cgColor
         separator.isHidden = !showsSeparator
@@ -515,7 +545,7 @@ private final class NewTaskRepositoryRow: AppHoverView {
 }
 
 @MainActor
-private final class NewTaskActionButton: AppButton {
+final class ModalActionButton: AppButton {
     private let destructive: Bool
 
     init(title: String, primary: Bool, destructive: Bool = false) {
@@ -535,8 +565,11 @@ private final class NewTaskActionButton: AppButton {
     }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(
-            width: ceil(attributedTitle.size().width) + AppTheme.taskModalButtonHorizontalPadding,
+        let imageWidth = image.map { $0.size.width + AppTheme.taskModalButtonImageGap } ?? 0
+        return NSSize(
+            width: ceil(attributedTitle.size().width)
+                + imageWidth
+                + AppTheme.taskModalButtonHorizontalPadding,
             height: super.intrinsicContentSize.height
         )
     }
@@ -567,8 +600,8 @@ final class DeleteTaskModalView: NSView {
     private let titleLabel: NSTextField
     private let detailLabel: NSTextField
     private let divider = NSView()
-    private let cancelButton = NewTaskActionButton(title: "Cancel", primary: false)
-    private let deleteButton: NewTaskActionButton
+    private let cancelButton = ModalActionButton(title: "Cancel", primary: false)
+    private let deleteButton: ModalActionButton
 
     convenience init(taskTitle: String) {
         self.init(
@@ -581,7 +614,7 @@ final class DeleteTaskModalView: NSView {
     init(title: String, detail: String, actionTitle: String) {
         titleLabel = NSTextField(labelWithString: title)
         detailLabel = NSTextField(wrappingLabelWithString: detail)
-        deleteButton = NewTaskActionButton(
+        deleteButton = ModalActionButton(
             title: actionTitle,
             primary: false,
             destructive: true

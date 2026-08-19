@@ -10,6 +10,7 @@ struct RegisteredRepository: Codable, Equatable, Identifiable, Sendable {
     let remoteURL: String?
     let organization: String?
     var worktreeBasePath: String?
+    var target: RepositoryTarget
 
     init(
         id: UUID = UUID(),
@@ -20,7 +21,8 @@ struct RegisteredRepository: Codable, Equatable, Identifiable, Sendable {
         currentBranch: String?,
         remoteURL: String?,
         organization: String?,
-        worktreeBasePath: String? = nil
+        worktreeBasePath: String? = nil,
+        target: RepositoryTarget = .local
     ) {
         self.id = id
         self.name = name
@@ -31,6 +33,26 @@ struct RegisteredRepository: Codable, Equatable, Identifiable, Sendable {
         self.remoteURL = remoteURL
         self.organization = organization
         self.worktreeBasePath = worktreeBasePath
+        self.target = target
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, path, branches, defaultBranch, currentBranch, remoteURL, organization
+        case worktreeBasePath, target
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        path = try container.decode(String.self, forKey: .path)
+        branches = try container.decode([String].self, forKey: .branches)
+        defaultBranch = try container.decode(String.self, forKey: .defaultBranch)
+        currentBranch = try container.decodeIfPresent(String.self, forKey: .currentBranch)
+        remoteURL = try container.decodeIfPresent(String.self, forKey: .remoteURL)
+        organization = try container.decodeIfPresent(String.self, forKey: .organization)
+        worktreeBasePath = try container.decodeIfPresent(String.self, forKey: .worktreeBasePath)
+        target = try container.decodeIfPresent(RepositoryTarget.self, forKey: .target) ?? .local
     }
 }
 
@@ -60,21 +82,27 @@ enum RepositoryInspectionError: LocalizedError {
 
 struct RepositoryInspector: Sendable {
     func inspect(directory: URL) throws -> RegisteredRepository {
-        let root = try gitOutput(["-C", directory.path, "rev-parse", "--show-toplevel"])
-        let rootURL = URL(fileURLWithPath: root).resolvingSymlinksInPath().standardizedFileURL
-        let name = rootURL.lastPathComponent
+        try inspect(path: directory.path)
+    }
+
+    func inspect(path: String, connection: SSHConnection? = nil) throws -> RegisteredRepository {
+        let root = try gitOutput(["-C", path, "rev-parse", "--show-toplevel"], connection: connection)
+        let localRoot = connection == nil
+            ? URL(fileURLWithPath: root).resolvingSymlinksInPath().standardizedFileURL.path
+            : root
+        let name = URL(fileURLWithPath: localRoot).lastPathComponent
         guard !name.isEmpty else { throw RepositoryInspectionError.invalidRepository }
 
-        let branches = try gitOutput(["-C", rootURL.path, "branch", "--format=%(refname:short)"])
+        let branches = try gitOutput(["-C", localRoot, "branch", "--format=%(refname:short)"], connection: connection)
             .split(whereSeparator: \.isNewline)
             .map(String.init)
             .sorted()
-        let currentBranch = nonempty(try? gitOutput(["-C", rootURL.path, "branch", "--show-current"]))
-        let remoteURL = nonempty(try? gitOutput(["-C", rootURL.path, "remote", "get-url", "origin"]))
+        let currentBranch = nonempty(try? gitOutput(["-C", localRoot, "branch", "--show-current"], connection: connection))
+        let remoteURL = nonempty(try? gitOutput(["-C", localRoot, "remote", "get-url", "origin"], connection: connection))
         let remoteDefault = try? gitOutput([
-            "-C", rootURL.path,
+            "-C", localRoot,
             "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD",
-        ])
+        ], connection: connection)
         let defaultBranch = nonempty(remoteDefault?.replacingOccurrences(of: "origin/", with: ""))
             ?? currentBranch
             ?? branches.first
@@ -82,17 +110,18 @@ struct RepositoryInspector: Sendable {
 
         return RegisteredRepository(
             name: name,
-            path: rootURL.path,
+            path: localRoot,
             branches: branches,
             defaultBranch: defaultBranch,
             currentBranch: currentBranch,
             remoteURL: remoteURL,
-            organization: remoteURL.flatMap(RepositoryInspector.organization(from:))
+            organization: remoteURL.flatMap(RepositoryInspector.organization(from:)),
+            target: connection.map { .ssh($0.id) } ?? .local
         )
     }
 
-    func refresh(_ repository: RegisteredRepository) throws -> RegisteredRepository {
-        let inspected = try inspect(directory: URL(fileURLWithPath: repository.path))
+    func refresh(_ repository: RegisteredRepository, connection: SSHConnection? = nil) throws -> RegisteredRepository {
+        let inspected = try inspect(path: repository.path, connection: connection)
         return RegisteredRepository(
             id: repository.id,
             name: repository.name,
@@ -102,17 +131,18 @@ struct RepositoryInspector: Sendable {
             currentBranch: inspected.currentBranch,
             remoteURL: inspected.remoteURL,
             organization: inspected.organization,
-            worktreeBasePath: repository.worktreeBasePath
+            worktreeBasePath: repository.worktreeBasePath,
+            target: repository.target
         )
     }
 
-    func context(for repository: RegisteredRepository) throws -> RepositoryContext {
-        let tags = try gitOutput(["-C", repository.path, "tag", "--list", "--sort=-creatordate"])
+    func context(for repository: RegisteredRepository, connection: SSHConnection? = nil) throws -> RepositoryContext {
+        let tags = try gitOutput(["-C", repository.path, "tag", "--list", "--sort=-creatordate"], connection: connection)
             .split(whereSeparator: \.isNewline)
             .prefix(50)
             .map(String.init)
         let worktrees = parseWorktrees(
-            try gitOutput(["-C", repository.path, "worktree", "list", "--porcelain"])
+            try gitOutput(["-C", repository.path, "worktree", "list", "--porcelain"], connection: connection)
         )
         return RepositoryContext(
             tags: tags,
@@ -120,24 +150,28 @@ struct RepositoryInspector: Sendable {
         )
     }
 
-    func currentBranch(at path: String) throws -> String {
-        try gitOutput(["-C", path, "branch", "--show-current"])
+    func currentBranch(at path: String, connection: SSHConnection? = nil) throws -> String {
+        try gitOutput(["-C", path, "branch", "--show-current"], connection: connection)
     }
 
     func removeWorktree(
         at path: String,
         branchHint: String?,
-        from repository: RegisteredRepository
+        from repository: RegisteredRepository,
+        connection: SSHConnection? = nil
     ) throws {
-        let targetURL = URL(fileURLWithPath: path).standardizedFileURL
         let worktrees = parseWorktrees(
-            try gitOutput(["-C", repository.path, "worktree", "list", "--porcelain"])
+            try gitOutput(["-C", repository.path, "worktree", "list", "--porcelain"], connection: connection)
         )
         let worktree = worktrees.first {
-            URL(fileURLWithPath: $0.path).standardizedFileURL == targetURL
+            let pathMatches = connection == nil
+                ? URL(fileURLWithPath: $0.path).standardizedFileURL
+                    == URL(fileURLWithPath: path).standardizedFileURL
+                : $0.path == path
+            return pathMatches || (connection != nil && $0.branch == branchHint)
         }
         let branch = worktree?.branch ?? branchHint
-        let pathExists = FileManager.default.fileExists(atPath: path)
+        let pathExists = connection == nil && FileManager.default.fileExists(atPath: path)
         guard let branch, branch.hasPrefix("pinata/") else {
             if worktree != nil || pathExists {
                 throw RepositoryInspectionError.gitFailed(
@@ -152,21 +186,36 @@ struct RepositoryInspector: Sendable {
             )
         }
 
-        if worktree != nil {
+        if let worktree {
             _ = try gitOutput(
-                ["-C", repository.path, "worktree", "remove", "--force", path],
-                timeout: 15 * 60
+                ["-C", repository.path, "worktree", "remove", "--force", worktree.path],
+                timeout: 15 * 60,
+                connection: connection
             )
+            let remainingWorktrees = parseWorktrees(
+                try gitOutput(
+                    ["-C", repository.path, "worktree", "list", "--porcelain"],
+                    connection: connection
+                )
+            )
+            if remainingWorktrees.contains(where: {
+                $0.path == worktree.path || $0.branch == branch
+            }) {
+                throw RepositoryInspectionError.gitFailed(
+                    "Could not remove the worktree before deleting its branch."
+                )
+            }
         }
 
-        if !(try gitOutput(["-C", repository.path, "branch", "--list", branch])).isEmpty {
-            _ = try gitOutput(["-C", repository.path, "branch", "-D", branch])
+        if !(try gitOutput(["-C", repository.path, "branch", "--list", branch], connection: connection)).isEmpty {
+            _ = try gitOutput(["-C", repository.path, "branch", "-D", branch], connection: connection)
         }
     }
 
     private func gitOutput(
         _ arguments: [String],
-        timeout: TimeInterval = 30
+        timeout: TimeInterval = 30,
+        connection: SSHConnection? = nil
     ) throws -> String {
         try Task.checkCancellation()
 
@@ -191,8 +240,22 @@ struct RepositoryInspector: Sendable {
         defer { try? errorHandle.close() }
 
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = arguments
+        if let connection {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+            process.arguments = [
+                "-A",
+                "-S", "none",
+                "-o", "ControlMaster=no",
+                "-o", "ClearAllForwardings=yes",
+                "-o", "BatchMode=yes", "--", connection.host,
+                (["env", "GIT_TERMINAL_PROMPT=0", "git"] + arguments)
+                    .map(SSHCommand.shellQuote)
+                    .joined(separator: " "),
+            ]
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            process.arguments = arguments
+        }
         process.standardOutput = outputHandle
         process.standardError = errorHandle
         try process.run()
@@ -298,6 +361,15 @@ struct RepositoryRegistryStore {
             withIntermediateDirectories: true
         )
         try JSONEncoder().encode(repositories).write(to: fileURL, options: .atomic)
+    }
+
+    @discardableResult
+    func remove(id: UUID) throws -> [RegisteredRepository] {
+        let repositories = try load()
+        let updated = repositories.filter { $0.id != id }
+        guard updated.count != repositories.count else { return repositories }
+        try save(updated)
+        return updated
     }
 }
 
@@ -420,13 +492,16 @@ enum WorktreeProvisioningError: LocalizedError {
 
 struct WorktreeProvisioner {
     let globalBasePath: String
+    let connection: SSHConnection?
     private let fileManager: FileManager
 
     init(
         globalBasePath: String,
+        connection: SSHConnection? = nil,
         fileManager: FileManager = .default
     ) {
         self.globalBasePath = globalBasePath
+        self.connection = connection
         self.fileManager = fileManager
     }
 
@@ -435,19 +510,25 @@ struct WorktreeProvisioner {
         taskID: UUID,
         taskTitle: String
     ) -> WorktreeProvisioningReport {
-        let root = WorktreePathResolver.root(
-            for: repository,
-            globalBasePath: globalBasePath,
-            fileManager: fileManager
-        )
-        let destination = nextAvailableDestination(
-            in: root,
-            named: WorktreePathResolver.serializedTaskName(taskTitle)
-        )
+        let name = WorktreePathResolver.serializedTaskName(taskTitle)
+        let destination: String
+        if connection == nil {
+            let root = WorktreePathResolver.root(
+                for: repository,
+                globalBasePath: globalBasePath,
+                fileManager: fileManager
+            )
+            destination = nextAvailableDestination(in: root, named: name).path
+        } else {
+            destination = WorktreePathResolver.remoteRoot(
+                for: repository,
+                globalBasePath: globalBasePath
+            ) + "/\(name)"
+        }
         let remoteBranch = "origin/\(repository.defaultBranch)"
         let branch = "pinata/\(WorktreePathResolver.serializedTaskName(taskTitle))-\(taskID.uuidString.prefix(8).lowercased())"
         return WorktreeProvisioningReport(
-            path: destination.path,
+            path: destination,
             branch: branch,
             baseBranch: remoteBranch,
             steps: [
@@ -550,7 +631,7 @@ struct WorktreeProvisioner {
         let fetchArguments = [
             "-C", repository.path,
             "fetch", "origin",
-            "refs/heads/\(repository.defaultBranch):refs/remotes/\(report.baseBranch)",
+            "refs/heads/\(repository.defaultBranch):refs/remotes/origin/\(repository.defaultBranch)",
         ]
         update(0, status: .running, detail: "Running…")
         let fetch = runStep(
@@ -572,10 +653,7 @@ struct WorktreeProvisioner {
 
         update(2, status: .running, detail: "Running…")
         do {
-            try fileManager.createDirectory(
-                at: URL(fileURLWithPath: report.path).deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
+            try prepareDestinationParent(for: report.path)
         } catch {
             update(2, status: .failed, detail: error.localizedDescription)
             return report
@@ -639,8 +717,22 @@ struct WorktreeProvisioner {
     ) throws -> String {
         let pipe = Pipe()
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = arguments
+        if let connection {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+            process.arguments = [
+                "-A",
+                "-S", "none",
+                "-o", "ControlMaster=no",
+                "-o", "ClearAllForwardings=yes",
+                "-o", "BatchMode=yes", "--", connection.host,
+                (["env", "GIT_TERMINAL_PROMPT=0", "git"] + arguments)
+                    .map(SSHCommand.shellQuote)
+                    .joined(separator: " "),
+            ]
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            process.arguments = arguments
+        }
         var environment = ProcessInfo.processInfo.environment
         environment["GIT_TERMINAL_PROMPT"] = "0"
         process.environment = environment
@@ -679,6 +771,33 @@ struct WorktreeProvisioner {
             .replacingOccurrences(of: "\r", with: "\n")
     }
 
+    private func prepareDestinationParent(for path: String) throws {
+        if let connection {
+            let process = SSHCommand.makeProcess(
+                connection: connection,
+                command: ["mkdir", "-p", remoteParentPath(of: path)]
+            )
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = pipe
+            try process.run()
+            try pipe.fileHandleForWriting.close()
+            let data = try pipe.fileHandleForReading.readToEnd() ?? Data()
+            try pipe.fileHandleForReading.close()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else {
+                throw WorktreeProvisioningError.gitFailed(
+                    String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+            }
+        } else {
+            try fileManager.createDirectory(
+                at: URL(fileURLWithPath: path).deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+        }
+    }
+
     private func progressTitles(for output: String) -> [String] {
         var titles: [String] = []
         for line in output.split(whereSeparator: \.isNewline) {
@@ -695,6 +814,12 @@ struct WorktreeProvisioner {
             }
         }
         return titles
+    }
+
+    private func remoteParentPath(of path: String) -> String {
+        guard let slash = path.lastIndex(of: "/") else { return "." }
+        let parent = String(path[..<slash])
+        return parent.isEmpty ? "/" : parent
     }
 }
 
@@ -731,5 +856,21 @@ enum WorktreePathResolver {
         return usesRepositoryOverride
             ? standardizedRoot
             : standardizedRoot.appendingPathComponent(serializedTaskName(repository.name))
+    }
+
+    static func remoteRoot(
+        for repository: RegisteredRepository,
+        globalBasePath: String
+    ) -> String {
+        let base = repository.worktreeBasePath ?? globalBasePath
+        let root: String
+        if base.hasPrefix("./") {
+            root = repository.path + "/" + String(base.dropFirst(2))
+        } else {
+            root = base
+        }
+        return repository.worktreeBasePath == nil
+            ? root + "/" + serializedTaskName(repository.name)
+            : root
     }
 }

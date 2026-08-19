@@ -3,6 +3,7 @@ import AppKit
 @MainActor
 final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageContent {
     private let store = RepositoryRegistryStore()
+    private let connectionStore = SSHConnectionStore()
     private let defaultsStore = RepositoryDefaultsStore()
     private let page = SettingsSplitPageView()
     private let errorLabel = NSTextField(wrappingLabelWithString: "")
@@ -16,6 +17,7 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
     private var selectedRepositoryID: UUID?
     private var contextTask: Task<Void, Never>?
     private var registrationTask: Task<Void, Never>?
+    private var removalModal: DeleteTaskModalView?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -111,7 +113,7 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
         )
         page.addSection(
             title: "Repositories",
-            detail: "Repositories available to tasks and pull requests.",
+            detail: "Local and remote repositories available to tasks. Add remote repositories from Connections.",
             content: repositoryContent
         )
     }
@@ -157,7 +159,7 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
 
     private func finishRegistration(_ repository: RegisteredRepository) {
         do {
-            guard !repositories.contains(where: { $0.path == repository.path }) else {
+            guard !repositories.contains(where: { $0.path == repository.path && $0.target == repository.target }) else {
                 setError("Repository already registered.")
                 return
             }
@@ -189,8 +191,14 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
         } else if repositories.isEmpty {
             rows = [SettingsMessageRow("No repositories yet. Register one to attach code to tasks.")]
         } else {
+            let connectionsByID = Dictionary(
+                uniqueKeysWithValues: ((try? connectionStore.load()) ?? []).map { ($0.id, $0) }
+            )
             rows = repositories.map { repository in
-                let row = RepositoryRowView(repository: repository)
+                let row = RepositoryRowView(
+                    repository: repository,
+                    source: RepositorySource(repository: repository, connections: connectionsByID)
+                )
                 row.onSelect = { [weak self] in self?.select(repository.id) }
                 return row
             }
@@ -216,11 +224,27 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
         selectedRepositoryID = repositoryID
         contextTask?.cancel()
         showDetails(RepositoryDetailView(repository: repository))
-
+        let connection: SSHConnection?
+        do {
+            if case .ssh(let connectionID) = repository.target {
+                guard let value = try connectionStore.load().first(where: { $0.id == connectionID }) else {
+                    throw RepositorySettingsError.connectionUnavailable
+                }
+                guard value.isEnabled else {
+                    throw RepositorySettingsError.connectionUnavailable
+                }
+                connection = value
+            } else {
+                connection = nil
+            }
+        } catch {
+            installInspectionError(for: repository, error: error)
+            return
+        }
         let worker = Task.detached(priority: .userInitiated) { () throws -> (RegisteredRepository, RepositoryContext) in
             let inspector = RepositoryInspector()
-            let refreshedRepository = try inspector.refresh(repository)
-            return (refreshedRepository, try inspector.context(for: refreshedRepository))
+            let refreshedRepository = try inspector.refresh(repository, connection: connection)
+            return (refreshedRepository, try inspector.context(for: refreshedRepository, connection: connection))
         }
         contextTask = Task { [weak self] in
             do {
@@ -269,6 +293,7 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
     private func showDetails(_ details: RepositoryDetailView) {
         detailView?.removeFromSuperview()
         details.onBack = { [weak self] in self?.closeDetails() }
+        details.onRemove = { [weak self] repository in self?.confirmRemoval(of: repository) }
         addSubview(details)
         NSLayoutConstraint.activate([
             details.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -278,6 +303,43 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
         ])
         detailView = details
         page.isHidden = true
+    }
+
+    private func confirmRemoval(of repository: RegisteredRepository) {
+        guard removalModal == nil else { return }
+        let modal = DeleteTaskModalView(
+            title: "Remove \"\(repository.name)\"?",
+            detail: "This unregisters the repository from Piñata. Its files, worktrees, and existing task attachments stay in place.",
+            actionTitle: "Remove"
+        )
+        modal.onCancel = { [weak self] in self?.dismissRemovalModal() }
+        modal.onDelete = { [weak self] in self?.remove(repository) }
+        let host = window?.contentView ?? self
+        host.addSubview(modal)
+        NSLayoutConstraint.activate([
+            modal.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            modal.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            modal.topAnchor.constraint(equalTo: host.topAnchor),
+            modal.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+        removalModal = modal
+    }
+
+    private func dismissRemovalModal() {
+        removalModal?.removeFromSuperview()
+        removalModal = nil
+    }
+
+    private func remove(_ repository: RegisteredRepository) {
+        do {
+            repositories = try store.remove(id: repository.id)
+            dismissRemovalModal()
+            closeDetails()
+        } catch {
+            dismissRemovalModal()
+            closeDetails()
+            setError("Could not remove repository: \(error.localizedDescription)")
+        }
     }
 
     private func save(_ repository: RegisteredRepository) -> Bool {
@@ -347,6 +409,33 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
     }
 }
 
+private struct RepositorySource {
+    let connectionName: String?
+    let isRemote: Bool
+
+    init(repository: RegisteredRepository, connections: [UUID: SSHConnection]) {
+        switch repository.target {
+        case .local:
+            connectionName = nil
+            isRemote = false
+        case .ssh(let connectionID):
+            connectionName = connections[connectionID]?.name ?? "SSH connection"
+            isRemote = true
+        }
+    }
+}
+
+private enum RepositorySettingsError: LocalizedError {
+    case connectionUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .connectionUnavailable:
+            "The SSH connection for this repository is no longer available."
+        }
+    }
+}
+
 @MainActor
 private final class RepositoryRowView: AppHoverView, SettingsThemeApplying {
     var onSelect: (() -> Void)?
@@ -357,21 +446,26 @@ private final class RepositoryRowView: AppHoverView, SettingsThemeApplying {
     private let repositoryIcon = NSImageView()
     private let chevron = NSImageView()
 
-    init(repository: RegisteredRepository) {
+    init(repository: RegisteredRepository, source: RepositorySource) {
         nameLabel = NSTextField(labelWithString: repository.name)
-        metadataLabel = NSTextField(labelWithString: [repository.organization, repository.defaultBranch]
+        let metadata = [repository.organization, repository.defaultBranch]
             .compactMap { $0 }
-            .joined(separator: " · "))
+            .joined(separator: " · ")
+        metadataLabel = NSTextField(labelWithString: source.connectionName.map {
+            "\(metadata) (\($0))"
+        } ?? metadata)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
         layer?.cornerRadius = SettingsLayout.compactRowCornerRadius
         layer?.masksToBounds = true
-        toolTip = [repository.path, repository.remoteURL].compactMap { $0 }.joined(separator: "\n")
+        toolTip = ([source.connectionName, repository.path, repository.remoteURL]
+            .compactMap { $0 }
+            .joined(separator: "\n"))
 
         repositoryIcon.image = NSImage(
-            systemSymbolName: "book.closed",
-            accessibilityDescription: "Repository"
+            systemSymbolName: source.isRemote ? "globe" : "laptopcomputer",
+            accessibilityDescription: source.isRemote ? "Remote repository" : "Local repository"
         )
         repositoryIcon.imageScaling = .scaleProportionallyDown
         chevron.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)
@@ -451,7 +545,7 @@ private final class RepositoryRegisterActionView: AppHoverView, SettingsThemeApp
     var onAction: (() -> Void)?
 
     private let icon = NSImageView()
-    private let label = NSTextField(labelWithString: "Register a repository")
+    private let label = NSTextField(labelWithString: "Register local repository")
     private let button = AppButton(role: .hitTarget)
 
     override init(frame frameRect: NSRect) {
@@ -465,7 +559,7 @@ private final class RepositoryRegisterActionView: AppHoverView, SettingsThemeApp
         }
         button.target = self
         button.action = #selector(registerRepository)
-        button.setAccessibilityLabel("Register a repository")
+        button.setAccessibilityLabel("Register local repository")
         NSLayoutConstraint.activate([
             icon.leadingAnchor.constraint(
                 equalTo: leadingAnchor,
@@ -637,11 +731,13 @@ private final class RepositoryDetailView: NSView, NSTextFieldDelegate, SettingsT
                 detail: "Git metadata could not be loaded.",
                 content: SettingsMessageRow(errorMessage)
             )
+            installRemovalSection()
             return
         }
 
         guard let context else {
             installSkeleton()
+            installRemovalSection()
             return
         }
 
@@ -710,6 +806,28 @@ private final class RepositoryDetailView: NSView, NSTextFieldDelegate, SettingsT
             title: RepositoryDetailText.worktrees.title,
             detail: RepositoryDetailText.worktrees.detail,
             content: settingsRowStack(worktreeRows)
+        )
+        installRemovalSection()
+    }
+
+    private func installRemovalSection() {
+        let action = RepositoryRemoveActionView()
+        action.onAction = { [weak self] in
+            guard let self else { return }
+            self.onRemove?(self.repository)
+        }
+        let row = SettingsRowView(
+            title: "Remove repository",
+            description: "Unregister it from Piñata. Its files and worktrees stay in place.",
+            control: action,
+            controlWidth: RepositoryRemoveActionView.width,
+            controlHeight: RepositoryRemoveActionView.height
+        )
+        page.addSection(
+            title: "Danger zone",
+            detail: "",
+            content: row,
+            isDestructive: true
         )
     }
 
@@ -806,6 +924,52 @@ private final class RepositoryDetailView: NSView, NSTextFieldDelegate, SettingsT
             worktreeField.stringValue = previousPath ?? ""
         }
     }
+}
+
+@MainActor
+private final class RepositoryRemoveActionView: NSView, SettingsThemeApplying {
+    static let width: CGFloat = 100
+    static let height: CGFloat = 28
+
+    var onAction: (() -> Void)?
+
+    private let button = ModalActionButton(
+        title: "Remove",
+        primary: false,
+        destructive: true
+    )
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        translatesAutoresizingMaskIntoConstraints = false
+        button.image = NSImage(systemSymbolName: "trash", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 12, weight: .medium))
+        button.imagePosition = .imageLeading
+        button.imageHugsTitle = true
+        button.imageScaling = .scaleProportionallyDown
+        button.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(button)
+        button.target = self
+        button.action = #selector(removeRepository)
+        button.setAccessibilityLabel("Remove repository")
+        NSLayoutConstraint.activate([
+            button.leadingAnchor.constraint(equalTo: leadingAnchor),
+            button.trailingAnchor.constraint(equalTo: trailingAnchor),
+            button.topAnchor.constraint(equalTo: topAnchor),
+            button.bottomAnchor.constraint(equalTo: bottomAnchor),
+            button.heightAnchor.constraint(equalToConstant: Self.height),
+        ])
+        applyTheme()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+
+    func applyTheme() {
+        button.applyTheme()
+    }
+
+    @objc private func removeRepository() { onAction?() }
 }
 
 @MainActor

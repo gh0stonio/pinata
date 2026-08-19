@@ -20,6 +20,7 @@ enum AppButtonRole {
     case hitTarget
     case link
     case segmented
+    case workspacePanelTab
     case swatch(NSColor)
 }
 
@@ -31,12 +32,46 @@ struct AppButtonAppearance {
 }
 
 @MainActor
+enum WorkspacePanelLayout {
+    static func centerWidth(
+        windowWidth: CGFloat,
+        leftPanelVisible: Bool,
+        rightPanelVisible: Bool,
+        leftPanelWidth: CGFloat = AppTheme.leftPanelWidth,
+        rightPanelWidth: CGFloat = AppTheme.rightPanelWidth
+    ) -> CGFloat {
+        windowWidth
+            - (leftPanelVisible ? leftPanelWidth : 0)
+            - AppTheme.workspaceInset * 2
+            - (rightPanelVisible ? rightPanelWidth : 0)
+    }
+
+    static func minimumWindowWidth(
+        leftPanelVisible: Bool,
+        rightPanelVisible: Bool,
+        leftPanelWidth: CGFloat = AppTheme.leftPanelWidth,
+        rightPanelWidth: CGFloat = AppTheme.rightPanelWidth
+    ) -> CGFloat {
+        let settingsWidth = AppTheme.settingsRailWidth
+            + SettingsLayout.dividerThickness
+            + SettingsLayout.minimumPageWidth
+        let centerAndRightWidth = AppTheme.minimumCenterWidth
+            + (rightPanelVisible ? rightPanelWidth : 0)
+        return (leftPanelVisible ? leftPanelWidth : 0)
+            + AppTheme.workspaceInset * 2
+            + max(settingsWidth, centerAndRightWidth)
+    }
+}
+
+@MainActor
 enum AppTheme {
     static let leftPanelWidth: CGFloat = 264
+    static let rightPanelWidth: CGFloat = 304
     static let settingsRailWidth: CGFloat = 260
     static let panelContentInset: CGFloat = 14
     static let fullScreenSidebarWidth: CGFloat = 320
     static let leftPanelRange: ClosedRange<CGFloat> = 200...440
+    static let rightPanelRange: ClosedRange<CGFloat> = 220...560
     static let workspaceHeaderHeight: CGFloat = 36
     static let mainHeaderHeight: CGFloat = 44
     static let workspaceContentInset: CGFloat = 10
@@ -82,6 +117,7 @@ enum AppTheme {
     static let taskModalCancelButtonMinimumWidth: CGFloat = 64
     static let taskModalCreateButtonMinimumWidth: CGFloat = 96
     static let taskModalButtonHorizontalPadding: CGFloat = 24
+    static let taskModalButtonImageGap: CGFloat = 6
     static let taskModalButtonSpacing: CGFloat = 12
     static let taskModalButtonCornerRadius: CGFloat = 7
     static let taskModalRowHeight: CGFloat = 35
@@ -114,6 +150,7 @@ enum AppTheme {
     static let workspaceControlGap: CGFloat = 2
     static let workspaceControlCornerRadius: CGFloat = 6
     static let workspaceDividerThickness: CGFloat = 1
+    static let workspaceFileTreeInset: CGFloat = 0
     static let workspaceTabCloseInset: CGFloat = 10
     static let workspaceTabCloseHoverSize: CGFloat = 18
     static let workspaceTabCloseHoverCornerRadius: CGFloat = 4
@@ -125,6 +162,7 @@ enum AppTheme {
     static let workspaceNewTabSymbolSize: CGFloat = 12
     static let workspaceTabCloseSymbolSize: CGFloat = 10
     static let panelToggleControlSize: CGFloat = 28
+    static let workspacePanelHeaderInset: CGFloat = 14
     static let symbolVerticalAdjustment: CGFloat = 2
     static let paneMinimumSize: CGFloat = 80
     static let paneHeaderIconWidth: CGFloat = 18
@@ -161,6 +199,7 @@ enum AppTheme {
     static private(set) var panelAccentHoverIcon = color(0xFF746B)
     static private(set) var panelAccentHoverBackground = color(0xFF746B).withAlphaComponent(0.24)
     static private(set) var typography = typography(for: AppFontSize.regular)
+    static private(set) var usesColoredFileIcons = true
 
     static var interactiveHoverForeground: NSColor { primaryText }
     static var interactiveHoverBackground: NSColor { controlBackground }
@@ -214,6 +253,7 @@ enum AppTheme {
         panelAccentHoverIcon = panelAccentHover.icon
         panelAccentHoverBackground = panelAccentHover.background
         typography = typography(for: settings.appFontSize)
+        usesColoredFileIcons = settings.fileIconColor == .colored
     }
 
     static func font(ofSize size: CGFloat, weight: CGFloat = 400) -> NSFont {
@@ -313,9 +353,9 @@ enum AppTheme {
 
         switch role {
         case .accent:
-            let foreground = panelAccentIcon
+            let foreground = hovered ? panelAccentHoverIcon : panelAccentIcon
             return AppButtonAppearance(
-                background: panelAccentBackground,
+                background: hovered ? panelAccentHoverBackground : panelAccentBackground,
                 foreground: foreground,
                 border: foreground.withAlphaComponent(0.55),
                 borderWidth: 1
@@ -370,6 +410,13 @@ enum AppTheme {
                 foreground: selected || hovered ? interactiveHoverForeground : secondaryText,
                 border: .clear,
                 borderWidth: 0
+            )
+        case .workspacePanelTab:
+            return AppButtonAppearance(
+                background: selected ? controlSelection : .clear,
+                foreground: selected || hovered ? primaryText : secondaryText,
+                border: selected ? border : .clear,
+                borderWidth: selected ? 1 : 0
             )
         case let .swatch(color):
             return AppButtonAppearance(
@@ -542,10 +589,23 @@ class AppHoverView: NSView {
         setHovering(false)
     }
 
+    func refreshHoverState() {
+        updateHoverStateForCurrentPointer()
+    }
+
     private func setHovering(_ hovering: Bool) {
         guard isHovering != hovering else { return }
         isHovering = hovering
         hoverStateDidChange()
+    }
+
+    private func updateHoverStateForCurrentPointer() {
+        guard let window else {
+            setHovering(false)
+            return
+        }
+        let pointInWindow = window.convertPoint(fromScreen: NSEvent.mouseLocation)
+        setHovering(bounds.contains(convert(pointInWindow, from: nil)))
     }
 }
 

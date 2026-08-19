@@ -55,9 +55,11 @@ The current `main` branch includes:
 - Theme, accent, font-size, terminal-size, and light/dark appearance settings.
 - Worktree-aware terminals, task and repository action menus, and safe cleanup of Piñata-owned worktrees and branches.
 - App-session restoration for selected scope, expanded tasks, terminal tabs, split layout, active pane, and working directories.
-- Durable local terminal sessions: restored Ghostty panes reconnect to their existing shell or agent process after an app quit, with native Ghostty scrolling and no tmux dependency.
+- Durable terminal sessions through bundled `zmx`, with native Ghostty scrolling and remote reattachment.
+- Independently resizable right workspace panel with a cached local and SSH file browser.
+- Incremental folder loading, bounded prefetch, live filesystem refresh, and colored or monochrome file icons.
 
-File browsing, diffs, reviews, checks, pull request workflows, and Pi discussion/daemon support are not implemented yet.
+Diffs, reviews, checks, pull request workflows, and Pi discussion/daemon support are not implemented yet.
 
 ## Project Structure
 
@@ -75,7 +77,7 @@ DerivedData/            Generated local Xcode output, ignored by Git
 
 Xcode generates the application bundle, `Info.plist`, compiled assets, and local development signature. Build settings such as the bundle identifier, version, deployment target, and Swift language mode live in `Piñata.xcodeproj/project.pbxproj`.
 
-See the [documentation map](docs/README.md) for the product workflow, current architecture, terminal sessions, and incoming Pi proposal.
+See the [documentation map](docs/README.md) for the product workflow, current architecture, file browser, terminal sessions, and incoming Pi proposal.
 
 ## Development
 
@@ -107,7 +109,7 @@ sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
 
 ### Bootstrap terminal dependencies
 
-Download the pinned Ghostty artifact:
+Download the pinned Ghostty and zmx artifacts:
 
 ```bash
 ./Scripts/bootstrap-ghostty.sh

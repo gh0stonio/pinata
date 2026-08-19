@@ -28,6 +28,7 @@ final class WorkspaceViewController: NSViewController {
     private final class TerminalWorkspace {
         let title: String
         let workingDirectory: String
+        let target: TerminalTarget
         var tabs: [TerminalTab]
         var activeTabID: UUID?
         var nextTabNumber = 2
@@ -36,10 +37,12 @@ final class WorkspaceViewController: NSViewController {
             runtime: GhosttyRuntime,
             title: String,
             workingDirectory: String,
+            target: TerminalTarget = .local,
             startsWithTab: Bool = true
         ) {
             self.title = title
             self.workingDirectory = workingDirectory
+            self.target = target
             if startsWithTab {
                 let tabID = UUID()
                 tabs = [
@@ -48,7 +51,8 @@ final class WorkspaceViewController: NSViewController {
                         title: title,
                         controller: TerminalViewController(
                             runtime: runtime,
-                            workingDirectory: workingDirectory
+                            workingDirectory: workingDirectory,
+                            target: target
                         )
                     )
                 ]
@@ -62,6 +66,7 @@ final class WorkspaceViewController: NSViewController {
         init(runtime: GhosttyRuntime, snapshot: StoredTerminalWorkspace) {
             title = snapshot.title
             workingDirectory = snapshot.workingDirectory
+            target = snapshot.tabs.first?.terminal.panes.first?.target ?? .local
             tabs = snapshot.tabs.compactMap { tab in
                 guard tab.terminal.isValid else { return nil }
                 return TerminalTab(
@@ -96,6 +101,7 @@ final class WorkspaceViewController: NSViewController {
 
     private static let sidebarDefaultsKey = "pinata.sidebar.presentation.v1"
     private static let leftPanelWidthDefaultsKey = "pinata.panel.left.width.v1"
+    private static let rightPanelWidthDefaultsKey = "pinata.panel.right.width.v1"
     private static let dismissDelay: TimeInterval = 0.30
     private static let exitRevealGracePeriod: TimeInterval = 0.75
     private static let revealAnimationDuration: TimeInterval = 0.12
@@ -107,10 +113,15 @@ final class WorkspaceViewController: NSViewController {
     private let terminalHost = NSView()
     private let workspaceHeader = WorkspaceHeaderView()
     private let leftPanelController = PanelViewController()
-    private let leftResizeHandle = PanelResizeHandle()
+    private let rightPanelController = WorkspacePanelViewController()
+    private let leftResizeHandle = PanelResizeHandle(
+        indicatorOffset: AppTheme.workspaceInset
+    )
+    private let rightResizeHandle = PanelResizeHandle()
     private let taskStore: TaskRegistryStore
     private let sessionStore = AppSessionStore()
     private let repositoryStore = RepositoryRegistryStore()
+    private let sshConnectionStore = SSHConnectionStore()
     private var taskWorkspaces: [UUID: TerminalWorkspace] = [:]
     private var repositoryWorkspaces: [TaskRepositoryScope: TerminalWorkspace] = [:]
     private var tasks: [WorkspaceTask]
@@ -132,8 +143,10 @@ final class WorkspaceViewController: NSViewController {
     private var repositoryActionMenu: SidebarActionMenuView?
     private var repositoryActionMenuMouseMonitor: Any?
     private var leftResizeWindowWidth: CGFloat?
+    private var rightResizeWorkspaceWidth: CGFloat?
 
     private var leftWidthConstraint: NSLayoutConstraint!
+    private var rightWidthConstraint: NSLayoutConstraint!
     private var leftPanelLeadingConstraint: NSLayoutConstraint!
     private var leftPanelTopConstraint: NSLayoutConstraint!
     private var leftPanelBottomConstraint: NSLayoutConstraint!
@@ -142,11 +155,15 @@ final class WorkspaceViewController: NSViewController {
     private var workspaceTopConstraint: NSLayoutConstraint!
     private var workspaceBottomConstraint: NSLayoutConstraint!
     private var workspaceTrailingConstraint: NSLayoutConstraint!
+    private var mainColumnTrailingToCard: NSLayoutConstraint!
+    private var mainColumnTrailingToPanel: NSLayoutConstraint!
     private var workspaceHeaderHeightConstraint: NSLayoutConstraint!
     private var workspaceMinimumWidthConstraint: NSLayoutConstraint!
 
     private var sidebarPresentation: SidebarPresentation
+    private var rightPanelVisible = false
     private var leftPanelWidth = AppTheme.leftPanelWidth
+    private var rightPanelWidth = AppTheme.rightPanelWidth
     private var fullScreen = false
     private var menuTracking = false
     private var keyEventMonitor: Any?
@@ -202,6 +219,12 @@ final class WorkspaceViewController: NSViewController {
             leftPanelWidth = min(
                 max(CGFloat(defaults.double(forKey: Self.leftPanelWidthDefaultsKey)), AppTheme.leftPanelRange.lowerBound),
                 AppTheme.leftPanelRange.upperBound
+            )
+        }
+        if defaults.object(forKey: Self.rightPanelWidthDefaultsKey) != nil {
+            rightPanelWidth = min(
+                max(CGFloat(defaults.double(forKey: Self.rightPanelWidthDefaultsKey)), AppTheme.rightPanelRange.lowerBound),
+                AppTheme.rightPanelRange.upperBound
             )
         }
         super.init(nibName: nil, bundle: nil)
@@ -263,6 +286,11 @@ final class WorkspaceViewController: NSViewController {
         applySidebarPresentation()
     }
 
+    @objc func toggleRightPanel(_ sender: Any?) {
+        rightPanelVisible.toggle()
+        applySidebarPresentation()
+    }
+
     @objc func splitTerminalVertically(_ sender: Any?) {
         guard settingsController == nil, newTaskModal == nil else { return }
         activeTerminalController?.splitActiveVertically()
@@ -302,7 +330,8 @@ final class WorkspaceViewController: NSViewController {
             title: isFirstTab ? workspace.title : "\(workspace.title) \(workspace.nextTabNumber)",
             controller: TerminalViewController(
                 runtime: runtime,
-                workingDirectory: workspace.workingDirectory
+                workingDirectory: workspace.workingDirectory,
+                target: workspace.target
             )
         )
         if !isFirstTab {
@@ -327,17 +356,23 @@ final class WorkspaceViewController: NSViewController {
         }
 
         let repositories: [RegisteredRepository]
+        let connections: [UUID: SSHConnection]
         let repositoryError: String?
         do {
             repositories = try repositoryStore.load()
+            connections = Dictionary(
+                uniqueKeysWithValues: ((try? sshConnectionStore.load()) ?? []).map { ($0.id, $0) }
+            )
             repositoryError = nil
         } catch {
             repositories = []
+            connections = [:]
             repositoryError = "Could not load repositories: \(error.localizedDescription)"
         }
 
         let modal = NewTaskModalView(
             repositories: repositories,
+            connections: connections,
             repositoryError: repositoryError,
             editingTask: editingTask
         )
@@ -414,10 +449,12 @@ final class WorkspaceViewController: NSViewController {
         terminalHost.layer?.backgroundColor = AppTheme.background.cgColor
         workspaceHeader.applyTheme()
         leftPanelController.applyTheme()
+        rightPanelController.applyTheme()
         allTerminalWorkspaces.forEach { workspace in
             workspace.tabs.forEach { $0.controller.applyTheme() }
         }
         leftResizeHandle.applyTheme()
+        rightResizeHandle.applyTheme()
         settingsController?.applyTheme()
         newTaskModal?.applyTheme()
         deleteTaskModal?.applyTheme()
@@ -441,9 +478,12 @@ final class WorkspaceViewController: NSViewController {
 
     private func configureControllers(in rootView: NSView) {
         addChild(leftPanelController)
+        addChild(rightPanelController)
 
         let leftPanel = leftPanelController.view
+        let rightPanel = rightPanelController.view
         leftPanel.translatesAutoresizingMaskIntoConstraints = false
+        rightPanel.translatesAutoresizingMaskIntoConstraints = false
         terminalHost.translatesAutoresizingMaskIntoConstraints = false
         terminalHost.wantsLayer = true
         terminalHost.layer?.backgroundColor = AppTheme.background.cgColor
@@ -454,16 +494,20 @@ final class WorkspaceViewController: NSViewController {
         mainColumn.addSubview(terminalHost)
         rootView.addSubview(leftPanel)
         rootView.addSubview(leftResizeHandle)
+        workspaceCard.addSubview(rightPanel)
+        workspaceCard.addSubview(rightResizeHandle)
         updateTaskSidebar()
     }
 
     private func configureConstraints(in rootView: NSView) {
         let leftPanel = leftPanelController.view
+        let rightPanel = rightPanelController.view
 
         workspaceMinimumWidthConstraint = rootView.widthAnchor.constraint(
             greaterThanOrEqualToConstant: AppTheme.minimumWindowWidth
         )
         leftWidthConstraint = leftPanel.widthAnchor.constraint(equalToConstant: leftPanelWidth)
+        rightWidthConstraint = rightPanel.widthAnchor.constraint(equalToConstant: rightPanelWidth)
         leftPanelLeadingConstraint = leftPanel.leadingAnchor.constraint(equalTo: rootView.leadingAnchor)
         leftPanelTopConstraint = leftPanel.topAnchor.constraint(equalTo: rootView.topAnchor)
         leftPanelBottomConstraint = leftPanel.bottomAnchor.constraint(equalTo: rootView.bottomAnchor)
@@ -490,21 +534,32 @@ final class WorkspaceViewController: NSViewController {
         workspaceHeaderHeightConstraint = workspaceHeader.heightAnchor.constraint(
             equalToConstant: AppTheme.mainHeaderHeight
         )
+        mainColumnTrailingToCard = mainColumn.trailingAnchor.constraint(
+            equalTo: workspaceCard.trailingAnchor
+        )
+        mainColumnTrailingToPanel = mainColumn.trailingAnchor.constraint(
+            equalTo: rightPanel.leadingAnchor
+        )
         NSLayoutConstraint.activate([
             workspaceMinimumWidthConstraint,
             leftPanelLeadingConstraint,
             leftPanelTopConstraint,
             leftPanelBottomConstraint,
             leftWidthConstraint,
+            rightWidthConstraint,
 
             workspaceTopConstraint,
             workspaceBottomConstraint,
             workspaceTrailingConstraint,
 
             mainColumn.leadingAnchor.constraint(equalTo: workspaceCard.leadingAnchor),
-            mainColumn.trailingAnchor.constraint(equalTo: workspaceCard.trailingAnchor),
+            mainColumnTrailingToCard,
             mainColumn.topAnchor.constraint(equalTo: workspaceCard.topAnchor),
             mainColumn.bottomAnchor.constraint(equalTo: workspaceCard.bottomAnchor),
+
+            rightPanel.trailingAnchor.constraint(equalTo: workspaceCard.trailingAnchor),
+            rightPanel.topAnchor.constraint(equalTo: workspaceCard.topAnchor),
+            rightPanel.bottomAnchor.constraint(equalTo: workspaceCard.bottomAnchor),
 
             workspaceHeader.leadingAnchor.constraint(equalTo: mainColumn.leadingAnchor),
             workspaceHeader.trailingAnchor.constraint(equalTo: mainColumn.trailingAnchor),
@@ -521,6 +576,11 @@ final class WorkspaceViewController: NSViewController {
             leftResizeHandle.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
             leftResizeHandle.widthAnchor.constraint(equalToConstant: AppTheme.resizeHandleWidth),
 
+            rightResizeHandle.centerXAnchor.constraint(equalTo: rightPanel.leadingAnchor),
+            rightResizeHandle.topAnchor.constraint(equalTo: workspaceCard.topAnchor),
+            rightResizeHandle.bottomAnchor.constraint(equalTo: workspaceCard.bottomAnchor),
+            rightResizeHandle.widthAnchor.constraint(equalToConstant: AppTheme.resizeHandleWidth),
+
         ])
     }
 
@@ -533,6 +593,12 @@ final class WorkspaceViewController: NSViewController {
         }
         workspaceHeader.onCloseTab = { [weak self] id in
             self?.closeTerminalTab(id)
+        }
+        workspaceHeader.onTogglePanel = { [weak self] in
+            self?.toggleRightPanel(nil)
+        }
+        rightPanelController.onTogglePanel = { [weak self] in
+            self?.toggleRightPanel(nil)
         }
         leftPanelController.onTogglePanel = { [weak self] in
             self?.toggleLeftPanel(nil)
@@ -582,6 +648,18 @@ final class WorkspaceViewController: NSViewController {
         }
         leftResizeHandle.onKeyboardResize = { [weak self] command in
             self?.resizeLeftPanel(with: command)
+        }
+        rightResizeHandle.onDrag = { [weak self] delta in
+            self?.resizeRightPanel(by: -delta)
+        }
+        rightResizeHandle.onDragBegan = { [weak self] in
+            self?.rightResizeWorkspaceWidth = self?.workspaceCard.bounds.width
+        }
+        rightResizeHandle.onDragEnded = { [weak self] in
+            self?.rightResizeWorkspaceWidth = nil
+        }
+        rightResizeHandle.onKeyboardResize = { [weak self] command in
+            self?.resizeRightPanel(with: command)
         }
     }
 
@@ -641,6 +719,18 @@ final class WorkspaceViewController: NSViewController {
 
     private func installActiveWorkspace() {
         terminalHost.subviews.forEach { $0.removeFromSuperview() }
+        let workspace = activeTerminalWorkspace
+        let repositoryName: String? = if case .repository(let scope) = activeScope {
+            tasks.first(where: { $0.id == scope.taskID })?
+                .repositories.first(where: { $0.repositoryID == scope.repositoryID })?.name
+        } else {
+            workspace?.title.replacingOccurrences(of: "~/", with: "")
+        }
+        rightPanelController.setFileRoot(
+            name: repositoryName,
+            workingDirectory: workspace?.workingDirectory,
+            target: workspace?.target
+        )
         if activeTaskDeletionState != nil || activeRepositoryRemovalState != nil {
             setWorkspaceHeaderVisible(false)
             installScopeMessage()
@@ -659,7 +749,7 @@ final class WorkspaceViewController: NSViewController {
             )
             return
         }
-        guard let workspace = activeTerminalWorkspace else {
+        guard let workspace else {
             setWorkspaceHeaderVisible(false)
             installScopeMessage()
             return
@@ -740,12 +830,14 @@ final class WorkspaceViewController: NSViewController {
         updateTaskSidebar()
 
         let repository: RegisteredRepository
+        let connection: SSHConnection?
         do {
             let repositories = try repositoryStore.load()
             guard let match = repositories.first(where: { $0.id == scope.repositoryID }) else {
                 throw WorkspaceTaskError.repositoryUnavailable(attachment.name)
             }
             repository = match
+            connection = try sshConnection(for: repository)
         } catch {
             failWorktreeRetry(error.localizedDescription, report: report, for: scope)
             return
@@ -757,7 +849,8 @@ final class WorkspaceViewController: NSViewController {
                     try RepositoryInspector().removeWorktree(
                         at: report.path,
                         branchHint: report.branch,
-                        from: repository
+                        from: repository,
+                        connection: connection
                     )
                     return nil as String?
                 } catch {
@@ -980,10 +1073,20 @@ final class WorkspaceViewController: NSViewController {
         }
 
         let worktreeBasePath = RepositoryDefaultsStore().loadWorktreeBasePath()
-        let provisioner = WorktreeProvisioner(globalBasePath: worktreeBasePath)
-        var provisionableRepositories: [RegisteredRepository] = []
+        var provisionableRepositories: [(repository: RegisteredRepository, connection: SSHConnection?)] = []
         for repository in repositories {
             let scope = TaskRepositoryScope(taskID: task.id, repositoryID: repository.id)
+            let connection: SSHConnection?
+            do {
+                connection = try sshConnection(for: repository)
+            } catch {
+                repositoryErrors[scope] = error.localizedDescription
+                continue
+            }
+            let provisioner = WorktreeProvisioner(
+                globalBasePath: worktreeBasePath,
+                connection: connection
+            )
             let report = provisioner.preparing(
                 repository: repository,
                 taskID: task.id,
@@ -991,12 +1094,12 @@ final class WorkspaceViewController: NSViewController {
             )
             do {
                 try storeWorktreeProvisioning(report, for: scope)
-                provisionableRepositories.append(repository)
+                provisionableRepositories.append((repository, connection))
             } catch {
                 repositoryErrors[scope] = error.localizedDescription
             }
         }
-        if let firstRepository = provisionableRepositories.first {
+        if let firstRepository = provisionableRepositories.first?.repository {
             let scope = TaskRepositoryScope(
                 taskID: task.id,
                 repositoryID: firstRepository.id
@@ -1011,14 +1114,16 @@ final class WorkspaceViewController: NSViewController {
         let updates = AsyncStream<(TaskRepositoryScope, WorktreeProvisioningReport)> { continuation in
             Task.detached { [provisionableRepositories, task, worktreeBasePath] in
                 await withTaskGroup(of: Void.self) { group in
-                    for repository in provisionableRepositories {
+                    for item in provisionableRepositories {
                         group.addTask {
+                            let repository = item.repository
                             let scope = TaskRepositoryScope(
                                 taskID: task.id,
                                 repositoryID: repository.id
                             )
                             let provisioner = WorktreeProvisioner(
-                                globalBasePath: worktreeBasePath
+                                globalBasePath: worktreeBasePath,
+                                connection: item.connection
                             )
                             _ = provisioner.provision(
                                 repository: repository,
@@ -1141,23 +1246,34 @@ final class WorkspaceViewController: NSViewController {
         dismissTaskActionMenu()
         dismissRepositoryActionMenu()
         leftPanelController.setRepositoryMenuScope(scope)
+        let isRemote: Bool
+        if let repository = try? repositoryStore.load().first(where: { $0.id == attachment.repositoryID }),
+           case .ssh = repository.target {
+            isRemote = true
+        } else {
+            isRemote = false
+        }
 
-        let menu = SidebarActionMenuView(items: [
+        var items: [SidebarActionMenuView.Item] = [
             .init(title: "Copy branch name", symbol: "doc.on.doc"),
-            .init(title: "Reveal worktree", symbol: "folder"),
-            .init(title: "Detach from task…", symbol: "xmark.circle", destructive: true),
-        ])
+        ]
+        if !isRemote {
+            items.append(.init(title: "Reveal worktree", symbol: "folder"))
+        }
+        items.append(.init(title: "Detach from task…", symbol: "xmark.circle", destructive: true))
+        let menu = SidebarActionMenuView(items: items)
         menu.onSelect = { [weak self] index in
             self?.dismissRepositoryActionMenu()
             switch index {
             case 0: self?.copyBranchName(attachment)
+            case 1 where isRemote: self?.confirmRepositoryRemoval(scope)
             case 1: self?.revealWorktree(attachment)
             case 2: self?.confirmRepositoryRemoval(scope)
             default: break
             }
         }
         let anchor = view.convert(anchorRect, from: nil)
-        let size = NSSize(width: 220, height: 110)
+        let size = NSSize(width: 220, height: isRemote ? 76 : 110)
         menu.frame = NSRect(
             x: min(anchor.maxX + 6, view.bounds.maxX - size.width - 8),
             y: min(max(8, anchor.maxY - size.height), view.bounds.maxY - size.height - 8),
@@ -1294,6 +1410,14 @@ final class WorkspaceViewController: NSViewController {
 
     private func deleteTask(_ task: WorkspaceTask) {
         guard tasks.contains(where: { $0.id == task.id }) else { return }
+        var fileCachePaths = Set(repositoryWorkspaces.compactMap { scope, workspace in
+            scope.taskID == task.id ? workspace.workingDirectory : nil
+        }).union(task.repositories.compactMap {
+            $0.worktreePath ?? $0.worktreeProvisioning?.path
+        })
+        if let path = taskWorkspaces[task.id]?.workingDirectory {
+            fileCachePaths.insert(path)
+        }
         activeScope = .task(task.id)
         expandedTaskIDs.insert(task.id)
         taskErrors.removeValue(forKey: task.id)
@@ -1323,7 +1447,8 @@ final class WorkspaceViewController: NSViewController {
                 }
             }
 
-            let errorMessage = await Task.detached { [attachments, registeredRepositories] in
+            let connections = (try? sshConnectionStore.load()) ?? []
+            let errorMessage = await Task.detached { [attachments, registeredRepositories, connections] in
                 let repositoriesByID = Dictionary(
                     uniqueKeysWithValues: registeredRepositories.map { ($0.id, $0) }
                 )
@@ -1334,11 +1459,21 @@ final class WorkspaceViewController: NSViewController {
                         guard let repository = repositoriesByID[attachment.repositoryID] else {
                             throw WorkspaceTaskError.repositoryUnavailable(attachment.name)
                         }
+                        let connection: SSHConnection?
+                        if case .ssh(let connectionID) = repository.target {
+                            guard let value = connections.first(where: { $0.id == connectionID }) else {
+                                throw WorkspaceTaskError.repositoryUnavailable(attachment.name)
+                            }
+                            connection = value
+                        } else {
+                            connection = nil
+                        }
                         try RepositoryInspector().removeWorktree(
                             at: path,
                             branchHint: attachment.branch
                                 ?? attachment.worktreeProvisioning?.branch,
-                            from: repository
+                            from: repository,
+                            connection: connection
                         )
                     }
                     return nil as String?
@@ -1360,6 +1495,7 @@ final class WorkspaceViewController: NSViewController {
                 failTaskDeletion(task.id, message: error.localizedDescription)
                 return
             }
+            rightPanelController.invalidateFileCaches(at: fileCachePaths)
             tasks = remainingTasks
             taskDeletionStates.removeValue(forKey: task.id)
             taskWorkspaces.removeValue(forKey: task.id)
@@ -1390,6 +1526,9 @@ final class WorkspaceViewController: NSViewController {
               let attachment = task.repositories.first(where: {
                   $0.repositoryID == scope.repositoryID
               }) else { return }
+        let fileCachePath = repositoryWorkspaces[scope]?.workingDirectory
+            ?? attachment.worktreePath
+            ?? attachment.worktreeProvisioning?.path
         activeScope = .repository(scope)
         repositoryErrors.removeValue(forKey: scope)
         repositoryRemovalStates[scope] = .removing("Closing terminals")
@@ -1410,6 +1549,7 @@ final class WorkspaceViewController: NSViewController {
 
             if let path = attachment.worktreePath ?? attachment.worktreeProvisioning?.path {
                 let repository: RegisteredRepository
+                let connection: SSHConnection?
                 do {
                     guard let match = try repositoryStore.load().first(where: {
                         $0.id == attachment.repositoryID
@@ -1417,6 +1557,7 @@ final class WorkspaceViewController: NSViewController {
                         throw WorkspaceTaskError.repositoryUnavailable(attachment.name)
                     }
                     repository = match
+                    connection = try sshConnection(for: repository)
                 } catch {
                     failRepositoryRemoval(scope, message: error.localizedDescription)
                     return
@@ -1427,7 +1568,8 @@ final class WorkspaceViewController: NSViewController {
                             at: path,
                             branchHint: attachment.branch
                                 ?? attachment.worktreeProvisioning?.branch,
-                            from: repository
+                            from: repository,
+                            connection: connection
                         )
                         return nil as String?
                     } catch {
@@ -1457,6 +1599,9 @@ final class WorkspaceViewController: NSViewController {
             } catch {
                 failRepositoryRemoval(scope, message: error.localizedDescription)
                 return
+            }
+            if let fileCachePath {
+                rightPanelController.invalidateFileCaches(at: [fileCachePath])
             }
             tasks = updatedTasks
             repositoryRemovalStates.removeValue(forKey: scope)
@@ -1528,7 +1673,8 @@ final class WorkspaceViewController: NSViewController {
                 try installRepositoryWorkspace(
                     for: scope,
                     name: attachment.name,
-                    workingDirectory: report.path
+                    workingDirectory: report.path,
+                    target: try terminalTarget(for: registeredRepository(id: scope.repositoryID))
                 )
                 repositoryErrors.removeValue(forKey: scope)
             } else {
@@ -1653,10 +1799,12 @@ final class WorkspaceViewController: NSViewController {
                     throw WorkspaceTaskError.repositoryUnavailable(attachment.name)
                 }
                 let workingDirectory = attachment.worktreePath ?? repository.path
+                let target = try terminalTarget(for: repository)
                 try installRepositoryWorkspace(
                     for: scope,
                     name: attachment.name,
                     workingDirectory: workingDirectory,
+                    target: target,
                     startsWithTab: false
                 )
                 repositoryErrors.removeValue(forKey: scope)
@@ -1673,19 +1821,48 @@ final class WorkspaceViewController: NSViewController {
         for scope: TaskRepositoryScope,
         name: String,
         workingDirectory: String,
+        target: TerminalTarget = .local,
         startsWithTab: Bool = true
     ) throws {
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: workingDirectory, isDirectory: &isDirectory),
-              isDirectory.boolValue else {
-            throw WorkspaceTaskError.repositoryUnavailable(name)
+        if case .local = target {
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: workingDirectory, isDirectory: &isDirectory),
+                  isDirectory.boolValue else {
+                throw WorkspaceTaskError.repositoryUnavailable(name)
+            }
         }
         repositoryWorkspaces[scope] = TerminalWorkspace(
             runtime: runtime,
             title: "~/\(name)",
             workingDirectory: workingDirectory,
+            target: target,
             startsWithTab: startsWithTab
         )
+    }
+
+    private func sshConnection(for repository: RegisteredRepository) throws -> SSHConnection? {
+        guard case .ssh(let connectionID) = repository.target else { return nil }
+        guard let connection = try sshConnectionStore.load().first(where: { $0.id == connectionID }) else {
+            throw WorkspaceTaskError.repositoryUnavailable(repository.name)
+        }
+        guard connection.isEnabled else {
+            throw WorkspaceTaskError.repositoryUnavailable(repository.name)
+        }
+        return connection
+    }
+
+    private func terminalTarget(for repository: RegisteredRepository) throws -> TerminalTarget {
+        if let connection = try sshConnection(for: repository) {
+            return .ssh(connection)
+        }
+        return .local
+    }
+
+    private func registeredRepository(id: UUID) throws -> RegisteredRepository {
+        guard let repository = try repositoryStore.load().first(where: { $0.id == id }) else {
+            throw WorkspaceTaskError.repositoryUnavailable("repository")
+        }
+        return repository
     }
 
     private func toggleTaskExpansion(_ taskID: UUID) {
@@ -1727,6 +1904,14 @@ final class WorkspaceViewController: NSViewController {
     }
 
     private func updateTaskSidebar() {
+        let repositoryTargets: [UUID: RepositoryTarget]
+        do {
+            repositoryTargets = try Dictionary(
+                uniqueKeysWithValues: repositoryStore.load().map { ($0.id, $0.target) }
+            )
+        } catch {
+            repositoryTargets = [:]
+        }
         var displayedRepositoryErrors = repositoryErrors
         for task in tasks {
             for repository in task.repositories {
@@ -1770,6 +1955,7 @@ final class WorkspaceViewController: NSViewController {
             expandedTaskIDs: expandedTaskIDs,
             taskActivities: taskActivities,
             repositoryActivities: repositoryActivities,
+            repositoryTargets: repositoryTargets,
             taskErrors: taskErrors,
             repositoryErrors: displayedRepositoryErrors,
             loadError: taskLoadError
@@ -1785,6 +1971,7 @@ final class WorkspaceViewController: NSViewController {
     private func applySidebarPresentation() {
         guard isViewLoaded else { return }
         let leftPanel = leftPanelController.view
+        let rightPanel = rightPanelController.view
         let docked = sidebarPresentation == .docked
         let immersive = fullScreen && !docked
         let inset = immersive ? 0 : AppTheme.workspaceInset
@@ -1826,10 +2013,20 @@ final class WorkspaceViewController: NSViewController {
         leftPanel.layer?.cornerCurve = .continuous
         leftPanel.layer?.masksToBounds = sidebarPresentation == .transient
 
+        rightPanel.isHidden = !rightPanelVisible
+        if rightPanelVisible {
+            rightPanelController.panelDidShow()
+        } else {
+            rightPanelController.panelDidHide()
+        }
+        mainColumnTrailingToCard.isActive = !rightPanelVisible
+        mainColumnTrailingToPanel.isActive = rightPanelVisible
+        workspaceHeader.setPanelVisible(rightPanelVisible)
+
         leftResizeHandle.setEnabled(docked)
+        rightResizeHandle.setEnabled(rightPanelVisible)
         leftPanelController.setToggleActive(docked)
         leftPanelController.setFullScreen(fullScreen)
-        leftPanelController.setResizable(docked)
         updateTrafficLights()
         view.layoutSubtreeIfNeeded()
         updateWindowMinimumSize()
@@ -2173,14 +2370,15 @@ final class WorkspaceViewController: NSViewController {
 
     private func updateWindowMinimumSize() {
         guard let window = view.window else { return }
-        let sidebarWidth = leftPanelWidth
-        let settingsWidth = AppTheme.settingsRailWidth
-            + SettingsLayout.dividerThickness
-            + SettingsLayout.minimumPageWidth
-        let requiredWidth = sidebarWidth
-            + AppTheme.workspaceInset * 2
-            + settingsWidth
-        let minimumWidth = max(AppTheme.minimumWindowWidth, requiredWidth)
+        let minimumWidth = max(
+            AppTheme.minimumWindowWidth,
+            WorkspacePanelLayout.minimumWindowWidth(
+                leftPanelVisible: sidebarPresentation == .docked,
+                rightPanelVisible: rightPanelVisible,
+                leftPanelWidth: leftPanelWidth,
+                rightPanelWidth: rightPanelWidth
+            )
+        )
         workspaceMinimumWidthConstraint.constant = minimumWidth
         window.minSize = NSSize(
             width: minimumWidth,
@@ -2225,6 +2423,37 @@ final class WorkspaceViewController: NSViewController {
             resizeLeftPanel(by: -AppTheme.leftPanelRange.upperBound)
         case .maximum:
             resizeLeftPanel(by: AppTheme.leftPanelRange.upperBound)
+        }
+    }
+
+    private func resizeRightPanel(by delta: CGFloat) {
+        guard rightPanelVisible else { return }
+        let maximumFromWorkspace = (rightResizeWorkspaceWidth ?? workspaceCard.bounds.width)
+            - AppTheme.minimumCenterWidth
+        let maximum = max(
+            AppTheme.rightPanelRange.lowerBound,
+            min(AppTheme.rightPanelRange.upperBound, maximumFromWorkspace)
+        )
+        rightPanelWidth = min(
+            max(rightWidthConstraint.constant + delta, AppTheme.rightPanelRange.lowerBound),
+            maximum
+        )
+        rightWidthConstraint.constant = rightPanelWidth
+        UserDefaults.standard.set(Double(rightPanelWidth), forKey: Self.rightPanelWidthDefaultsKey)
+        view.layoutSubtreeIfNeeded()
+        updateWindowMinimumSize()
+    }
+
+    private func resizeRightPanel(with command: PanelResizeHandle.KeyboardCommand) {
+        switch command {
+        case .decrease:
+            resizeRightPanel(by: -AppTheme.keyboardResizeStep)
+        case .increase:
+            resizeRightPanel(by: AppTheme.keyboardResizeStep)
+        case .minimum:
+            resizeRightPanel(by: -AppTheme.rightPanelRange.upperBound)
+        case .maximum:
+            resizeRightPanel(by: AppTheme.rightPanelRange.upperBound)
         }
     }
 
@@ -2892,14 +3121,16 @@ private final class PanelResizeHandle: NSView {
     var onKeyboardResize: ((KeyboardCommand) -> Void)?
 
     private let line = NSView()
+    private let indicatorOffset: CGFloat
     private var enabled = true
     private var trackingArea: NSTrackingArea?
     private var isHovering = false
 
     override var acceptsFirstResponder: Bool { enabled }
 
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
+    init(indicatorOffset: CGFloat = 0) {
+        self.indicatorOffset = indicatorOffset
+        super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         setAccessibilityRole(.splitter)
         setAccessibilityLabel("Resize panel")
@@ -2909,7 +3140,10 @@ private final class PanelResizeHandle: NSView {
         line.layer?.cornerRadius = AppTheme.resizeIndicatorCornerRadius
         addSubview(line)
         NSLayoutConstraint.activate([
-            line.centerXAnchor.constraint(equalTo: centerXAnchor),
+            line.centerXAnchor.constraint(
+                equalTo: centerXAnchor,
+                constant: indicatorOffset
+            ),
             line.centerYAnchor.constraint(equalTo: centerYAnchor),
             line.heightAnchor.constraint(
                 equalTo: heightAnchor,
