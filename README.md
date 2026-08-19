@@ -80,7 +80,7 @@ DerivedData/            Generated local Xcode output, ignored by Git
 
 Xcode generates the application bundle, `Info.plist`, compiled assets, and local development signature. Build settings such as the bundle identifier, version, deployment target, and Swift language mode live in `Piñata.xcodeproj/project.pbxproj`.
 
-See the [documentation map](docs/README.md) for the product workflow, current architecture, file browser, terminal sessions, and incoming Pi proposal.
+See the [documentation map](docs/README.md) for the product workflow, current architecture, pull request status, file browser, terminal sessions, and incoming Pi proposal.
 
 ## Development
 
