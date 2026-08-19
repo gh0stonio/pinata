@@ -7,6 +7,7 @@ struct TaskRepositoryAttachment: Codable, Equatable, Identifiable, Sendable {
     let worktreeProvisioning: WorktreeProvisioningReport?
     var branch: String?
     var pullRequests: [PullRequestSummary]
+    var pullRequestNumbers: [Int]
     var pullRequestsFetchedAt: Date?
 
     init(
@@ -16,6 +17,7 @@ struct TaskRepositoryAttachment: Codable, Equatable, Identifiable, Sendable {
         worktreeProvisioning: WorktreeProvisioningReport? = nil,
         branch: String? = nil,
         pullRequests: [PullRequestSummary] = [],
+        pullRequestNumbers: [Int]? = nil,
         pullRequestsFetchedAt: Date? = nil
     ) {
         self.repositoryID = repositoryID
@@ -24,6 +26,7 @@ struct TaskRepositoryAttachment: Codable, Equatable, Identifiable, Sendable {
         self.worktreeProvisioning = worktreeProvisioning
         self.branch = branch
         self.pullRequests = pullRequests
+        self.pullRequestNumbers = pullRequestNumbers ?? pullRequests.map(\.number)
         self.pullRequestsFetchedAt = pullRequestsFetchedAt
     }
 
@@ -31,7 +34,7 @@ struct TaskRepositoryAttachment: Codable, Equatable, Identifiable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case repositoryID, name, worktreePath, worktreeProvisioning, branch
-        case pullRequests, pullRequestsFetchedAt
+        case pullRequests, pullRequestNumbers, pullRequestsFetchedAt
     }
 
     init(from decoder: Decoder) throws {
@@ -45,6 +48,8 @@ struct TaskRepositoryAttachment: Codable, Equatable, Identifiable, Sendable {
         )
         branch = try values.decodeIfPresent(String.self, forKey: .branch)
         pullRequests = try values.decodeIfPresent([PullRequestSummary].self, forKey: .pullRequests) ?? []
+        pullRequestNumbers = try values.decodeIfPresent([Int].self, forKey: .pullRequestNumbers)
+            ?? pullRequests.map(\.number)
         pullRequestsFetchedAt = try values.decodeIfPresent(Date.self, forKey: .pullRequestsFetchedAt)
     }
 }

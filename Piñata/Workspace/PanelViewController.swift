@@ -555,9 +555,10 @@ private struct SidebarRepositoryContext {
     let connectionName: String?
     var status: SSHConnectionStatus
     var pullRequestStatus: PullRequestRepositoryStatus
+    let trackedPullRequestNumbers: [Int]
 
     var pullRequests: [PullRequestSummary] {
-        pullRequestStatus.related(to: branch)
+        pullRequestStatus.related(to: branch, preserving: trackedPullRequestNumbers)
     }
 }
 
@@ -619,7 +620,8 @@ private final class SidebarTaskGroupView: NSStackView {
                 connectionID: connectionID,
                 connectionName: connectionID.flatMap { connectionStatusMonitor.name(for: $0) },
                 status: connectionID.map { connectionStatusMonitor.status(for: $0) } ?? .disabled,
-                pullRequestStatus: pullRequestStatuses[repository.repositoryID] ?? .idle
+                pullRequestStatus: pullRequestStatuses[repository.repositoryID] ?? .idle,
+                trackedPullRequestNumbers: repository.pullRequestNumbers
             )
         }
         let collapsedRepositoryError = expanded ? nil : task.repositories.lazy.compactMap {
@@ -2021,7 +2023,8 @@ private final class SidebarRepositoryInfoCard: NSView {
         pullRequestView = SidebarPullRequestInfoView(
             status: context.pullRequestStatus,
             branch: context.branch,
-            remoteURL: context.remoteURL
+            remoteURL: context.remoteURL,
+            trackedPullRequestNumbers: context.trackedPullRequestNumbers
         )
         checksCard = SidebarChecksInfoCard(checks: [], height: 138)
         super.init(frame: .zero)
@@ -2082,7 +2085,11 @@ private final class SidebarRepositoryInfoCard: NSView {
 
     func update(context: SidebarRepositoryContext) {
         repositoryRow.update(context: context)
-        pullRequestView.update(status: context.pullRequestStatus, branch: context.branch)
+        pullRequestView.update(
+            status: context.pullRequestStatus,
+            branch: context.branch,
+            trackedPullRequestNumbers: context.trackedPullRequestNumbers
+        )
         invalidateIntrinsicContentSize()
         applyTheme()
     }
@@ -2185,12 +2192,19 @@ final class SidebarPullRequestInfoView: NSView {
     private var status: PullRequestRepositoryStatus
     private var branch: String?
     private let remoteURL: String?
+    private var trackedPullRequestNumbers: [Int]
     private var hasRendered = false
 
-    init(status: PullRequestRepositoryStatus, branch: String?, remoteURL: String?) {
+    init(
+        status: PullRequestRepositoryStatus,
+        branch: String?,
+        remoteURL: String?,
+        trackedPullRequestNumbers: [Int] = []
+    ) {
         self.status = status
         self.branch = branch
         self.remoteURL = remoteURL
+        self.trackedPullRequestNumbers = trackedPullRequestNumbers
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         pullRequestIcon.image = PullRequestIconAsset.image()
@@ -2270,7 +2284,7 @@ final class SidebarPullRequestInfoView: NSView {
         switch status.availability {
         case .loaded, .loading:
             rowsHeight = self.rowsHeight(
-                for: status.related(to: branch),
+                for: status.related(to: branch, preserving: trackedPullRequestNumbers),
                 availability: status.availability
             )
         case .idle, .unavailable:
@@ -2279,12 +2293,25 @@ final class SidebarPullRequestInfoView: NSView {
         return NSSize(width: 368, height: 28 + rowsHeight)
     }
 
-    func update(status: PullRequestRepositoryStatus, branch: String?) {
-        guard !hasRendered || self.status != status || self.branch != branch else { return }
+    func update(
+        status: PullRequestRepositoryStatus,
+        branch: String?,
+        trackedPullRequestNumbers: [Int]? = nil
+    ) {
+        let trackedPullRequestNumbers = trackedPullRequestNumbers ?? self.trackedPullRequestNumbers
+        guard !hasRendered
+            || self.status != status
+            || self.branch != branch
+            || self.trackedPullRequestNumbers != trackedPullRequestNumbers
+        else { return }
         hasRendered = true
         self.status = status
         self.branch = branch
-        let relatedPullRequests = status.related(to: branch)
+        self.trackedPullRequestNumbers = trackedPullRequestNumbers
+        let relatedPullRequests = status.related(
+            to: branch,
+            preserving: trackedPullRequestNumbers
+        )
         rowsHeightConstraint.constant = rowsHeight(for: relatedPullRequests, availability: status.availability)
         titleLabel.stringValue = "Pull requests"
         countLabel.stringValue = switch status.availability {
@@ -2688,20 +2715,13 @@ private final class SidebarChecksInfoCard: AppHoverView {
 }
 
 @MainActor
-private final class SidebarPullRequestOpenButton: AppButton {
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
-        true
-    }
-}
-
-@MainActor
 final class SidebarPullRequestInfoRow: AppHoverView {
     var onChecksHover: ((NSView, [PullRequestCheck], Bool) -> Void)?
     var onOpen: ((URL) -> Void)?
 
     private let summary: PullRequestSummary
     private let pullRequestURL: URL?
-    private let openButton = SidebarPullRequestOpenButton(role: .hitTarget)
+    private let statusIcon = NSImageView()
     private let titleLabel: NSTextField
     private let metadataLabel: NSTextField
     private let checksDonut: SidebarChecksDonutView
@@ -2723,6 +2743,11 @@ final class SidebarPullRequestInfoRow: AppHoverView {
         translatesAutoresizingMaskIntoConstraints = false
         setAccessibilityRole(.button)
         setAccessibilityLabel("Open pull request #\(summary.number)")
+        statusIcon.image = PullRequestIconAsset.image()
+        statusIcon.imageScaling = .scaleProportionallyDown
+        statusIcon.translatesAutoresizingMaskIntoConstraints = false
+        statusIcon.setAccessibilityLabel("Pull request status")
+        statusIcon.setAccessibilityValue(summary.displayStatus.label)
         detailsStack.translatesAutoresizingMaskIntoConstraints = false
         detailsStack.orientation = .vertical
         detailsStack.alignment = .leading
@@ -2734,20 +2759,16 @@ final class SidebarPullRequestInfoRow: AppHoverView {
             label.lineBreakMode = .byTruncatingTail
             label.widthAnchor.constraint(equalTo: detailsStack.widthAnchor).isActive = true
         }
-        openButton.translatesAutoresizingMaskIntoConstraints = false
-        openButton.target = self
-        openButton.action = #selector(openPullRequest)
-        openButton.setAccessibilityLabel("Open pull request #\(summary.number)")
-        addSubview(openButton)
+        addSubview(statusIcon)
         addSubview(detailsStack)
         addSubview(checksDonut)
         NSLayoutConstraint.activate([
-            openButton.leadingAnchor.constraint(equalTo: leadingAnchor),
-            openButton.trailingAnchor.constraint(equalTo: trailingAnchor),
-            openButton.topAnchor.constraint(equalTo: topAnchor),
-            openButton.bottomAnchor.constraint(equalTo: bottomAnchor),
             heightAnchor.constraint(equalToConstant: 44),
-            detailsStack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            statusIcon.leadingAnchor.constraint(equalTo: leadingAnchor),
+            statusIcon.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            statusIcon.widthAnchor.constraint(equalToConstant: 16),
+            statusIcon.heightAnchor.constraint(equalToConstant: 16),
+            detailsStack.leadingAnchor.constraint(equalTo: statusIcon.trailingAnchor, constant: 8),
             detailsStack.trailingAnchor.constraint(equalTo: checksDonut.leadingAnchor, constant: -8),
             detailsStack.topAnchor.constraint(equalTo: topAnchor, constant: 3),
             detailsStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
@@ -2778,12 +2799,27 @@ final class SidebarPullRequestInfoRow: AppHoverView {
         }
     }
 
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard bounds.contains(point) else { return nil }
-        return openButton
+        return self
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        openPullRequest()
+    }
+
+    override func accessibilityPerformPress() -> Bool {
+        guard pullRequestURL != nil else { return false }
+        openPullRequest()
+        return true
     }
 
     func applyTheme() {
+        statusIcon.contentTintColor = AppTheme.pullRequestColor(summary.displayStatus)
         titleLabel.font = AppTheme.font(ofSize: AppTheme.typography.label, weight: 600)
         titleLabel.textColor = isHovering && pullRequestURL != nil
             ? AppTheme.panelAccentIcon
@@ -2793,7 +2829,7 @@ final class SidebarPullRequestInfoRow: AppHoverView {
         checksDonut.needsDisplay = true
     }
 
-    @objc private func openPullRequest() {
+    private func openPullRequest() {
         guard let pullRequestURL else { return }
         if let onOpen {
             onOpen(pullRequestURL)

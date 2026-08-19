@@ -145,10 +145,10 @@ final class CoreLogicTests: XCTestCase {
             row.onOpen = { openedURLs.append($0) }
             let rowRect = view.convert(row.frame, from: row.superview!)
             let point = NSPoint(x: rowRect.midX, y: rowRect.midY)
-            let hitView = view.hitTest(point) as? NSButton
-            XCTAssertNotNil(hitView?.action)
+            let hitView = view.hitTest(point) as? SidebarPullRequestInfoRow
+            XCTAssertTrue(hitView === row)
             XCTAssertTrue(hitView?.acceptsFirstMouse(for: nil) == true)
-            hitView?.performClick(nil)
+            hitView?.mouseDown(with: NSEvent())
         }
 
         let expectedURLs = summaries
@@ -156,6 +156,10 @@ final class CoreLogicTests: XCTestCase {
             .compactMap(URL.init(string:))
             .map(\.absoluteString)
         XCTAssertEqual(openedURLs.map(\.absoluteString), expectedURLs)
+
+        let firstRow = view.visiblePullRequestRows[0]
+        firstRow.mouseDown(with: NSEvent())
+        XCTAssertEqual(openedURLs.last?.absoluteString, expectedURLs[0])
     }
 
     @MainActor
@@ -319,6 +323,38 @@ final class CoreLogicTests: XCTestCase {
         )
         XCTAssertEqual(liftoffRelated.map(\.number), [57509, 57510, 57511])
         XCTAssertEqual(Set(liftoffRelated.map(\.number)), Set([57509, 57510, 57511]))
+
+        let retargetedStatus = PullRequestRepositoryStatus(
+            availability: .loaded,
+            pullRequests: [
+                makePR(57509, head: "antoine.leveque/liftoff-add-v0-backend", base: "main", state: "MERGED"),
+                makePR(57510, head: "antoine.leveque/liftoff-create", base: "main"),
+                makePR(57511, head: "antoine.leveque/liftoff-crud", base: "main"),
+            ],
+            failureMessage: nil,
+            stacks: [[57509, 57510, 57511]]
+        )
+        XCTAssertEqual(
+            retargetedStatus.related(
+                to: "stack/liftoff-create",
+                preserving: [57510]
+            ).map(\.number),
+            [57509, 57510, 57511]
+        )
+
+        let body = """
+        ## Stack
+        - Base: #57509
+        - This PR: #57510
+        - Follow-up: #57511
+
+        ## Testing
+        See #99999 for unrelated coverage.
+        """
+        XCTAssertEqual(
+            PullRequestStackReferences.numbers(in: body),
+            [57509, 57510, 57511]
+        )
     }
 
     func testEditorLanguageUsesFileExtension() {

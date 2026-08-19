@@ -2056,6 +2056,7 @@ final class WorkspaceViewController: NSViewController {
             worktreeProvisioning: report.succeeded ? nil : report,
             branch: branch,
             pullRequests: branch == attachment.branch ? attachment.pullRequests : [],
+            pullRequestNumbers: branch == attachment.branch ? attachment.pullRequestNumbers : [],
             pullRequestsFetchedAt: branch == attachment.branch ? attachment.pullRequestsFetchedAt : nil
         )
         var updatedTasks = tasks
@@ -2247,6 +2248,12 @@ final class WorkspaceViewController: NSViewController {
                 result[repository.repositoryID, default: []].insert(branch)
             }
         }
+        let trackedPullRequestNumbers = tasks.reduce(into: [UUID: Set<Int>]()) { result, task in
+            for repository in task.repositories {
+                result[repository.repositoryID, default: []]
+                    .formUnion(repository.pullRequestNumbers)
+            }
+        }
         let repositoryIDs = Set(tasks.flatMap { $0.repositories.map(\.repositoryID) })
         let pullRequestContexts = repositoryIDs.reduce(into: [UUID: PullRequestQueryContext]()) { result, repositoryID in
             guard let repository = registeredRepositories[repositoryID] else { return }
@@ -2258,7 +2265,8 @@ final class WorkspaceViewController: NSViewController {
                     path: repository.path,
                     target: .local,
                     branches: branches,
-                    ghProfile: repository.ghProfile
+                    ghProfile: repository.ghProfile,
+                    pullRequestNumbers: (trackedPullRequestNumbers[repositoryID] ?? []).sorted()
                 )
             case .ssh(let connectionID):
                 guard let connection = connectionsByID[connectionID], connection.isEnabled else { return }
@@ -2266,7 +2274,8 @@ final class WorkspaceViewController: NSViewController {
                     path: repository.path,
                     target: .ssh(connection),
                     branches: branches,
-                    ghProfile: repository.ghProfile
+                    ghProfile: repository.ghProfile,
+                    pullRequestNumbers: (trackedPullRequestNumbers[repositoryID] ?? []).sorted()
                 )
             }
         }
@@ -2405,6 +2414,7 @@ final class WorkspaceViewController: NSViewController {
                 guard let branch = observedByScope[scope], branch != attachment.branch else { continue }
                 attachments[attachmentIndex].branch = branch
                 attachments[attachmentIndex].pullRequests = []
+                attachments[attachmentIndex].pullRequestNumbers = []
                 attachments[attachmentIndex].pullRequestsFetchedAt = nil
                 taskChanged = true
             }
@@ -2460,10 +2470,19 @@ final class WorkspaceViewController: NSViewController {
                           ?? repositoryBranches[attachment.repositoryID],
                       !branch.isEmpty
                 else { continue }
-                let pullRequests = status.related(to: branch)
+                let pullRequests = status.related(
+                    to: branch,
+                    preserving: attachment.pullRequestNumbers
+                )
+                var pullRequestNumbers = pullRequests.map(\.number)
+                pullRequestNumbers.append(contentsOf: attachment.pullRequestNumbers.filter {
+                    !pullRequestNumbers.contains($0)
+                })
                 guard attachment.pullRequests != pullRequests
+                    || attachment.pullRequestNumbers != pullRequestNumbers
                     || attachment.pullRequestsFetchedAt == nil else { continue }
                 attachments[attachmentIndex].pullRequests = pullRequests
+                attachments[attachmentIndex].pullRequestNumbers = pullRequestNumbers
                 attachments[attachmentIndex].pullRequestsFetchedAt = fetchedAt
                 taskChanged = true
             }
@@ -3981,16 +4000,7 @@ private final class PanelResizeHandle: NSView {
     override func resetCursorRects() {
         super.resetCursorRects()
         guard enabled else { return }
-        let cursorWidth = min(AppTheme.resizeIndicatorWidth, bounds.width)
-        addCursorRect(
-            NSRect(
-                x: bounds.midX - cursorWidth / 2,
-                y: bounds.minY,
-                width: cursorWidth,
-                height: bounds.height
-            ),
-            cursor: .resizeLeftRight
-        )
+        addCursorRect(bounds, cursor: .resizeLeftRight)
     }
 
     override func mouseDown(with event: NSEvent) {

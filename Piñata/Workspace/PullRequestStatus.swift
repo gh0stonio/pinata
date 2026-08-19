@@ -135,6 +135,19 @@ struct PullRequestRepositoryStatus: Equatable, Sendable {
     let availability: PullRequestAvailability
     let pullRequests: [PullRequestSummary]
     let failureMessage: String?
+    let stacks: [[Int]]
+
+    init(
+        availability: PullRequestAvailability,
+        pullRequests: [PullRequestSummary],
+        failureMessage: String?,
+        stacks: [[Int]] = []
+    ) {
+        self.availability = availability
+        self.pullRequests = pullRequests
+        self.failureMessage = failureMessage
+        self.stacks = stacks
+    }
 
     static let idle = PullRequestRepositoryStatus(
         availability: .idle,
@@ -148,6 +161,47 @@ struct PullRequestRepositoryStatus: Equatable, Sendable {
               !branch.isEmpty
         else { return [] }
         return PullRequestStack.related(to: branch, in: pullRequests)
+    }
+
+    func related(
+        to branch: String?,
+        preserving trackedNumbers: [Int]
+    ) -> [PullRequestSummary] {
+        let live = related(to: branch)
+        var selectedNumbers = Set(live.map(\.number))
+        selectedNumbers.formUnion(trackedNumbers)
+        var didExpand = true
+        while didExpand {
+            didExpand = false
+            for stack in stacks where !selectedNumbers.isDisjoint(with: stack) {
+                let previousCount = selectedNumbers.count
+                selectedNumbers.formUnion(stack)
+                didExpand = didExpand || selectedNumbers.count != previousCount
+            }
+        }
+        guard !selectedNumbers.isEmpty else { return [] }
+        let byNumber = Dictionary(uniqueKeysWithValues: pullRequests.map { ($0.number, $0) })
+        var included = Set<Int>()
+        let orderedNumbers = stacks
+            .filter { !selectedNumbers.isDisjoint(with: $0) }
+            .flatMap { $0 }
+            + trackedNumbers
+            + live.map(\.number)
+        return orderedNumbers.compactMap { number -> PullRequestSummary? in
+            guard selectedNumbers.contains(number),
+                  let pullRequest = byNumber[number],
+                  pullRequest.isSurfaced,
+                  included.insert(number).inserted
+            else { return nil }
+            return pullRequest
+        } + pullRequests.compactMap { pullRequest -> PullRequestSummary? in
+            let number = pullRequest.number
+            guard selectedNumbers.contains(number),
+                  pullRequest.isSurfaced,
+                  included.insert(number).inserted
+            else { return nil }
+            return pullRequest
+        }
     }
 }
 
@@ -268,6 +322,21 @@ struct PullRequestQueryContext: Equatable, Sendable {
     let target: TerminalTarget
     let branches: [String]
     let ghProfile: String?
+    let pullRequestNumbers: [Int]
+
+    init(
+        path: String,
+        target: TerminalTarget,
+        branches: [String],
+        ghProfile: String?,
+        pullRequestNumbers: [Int] = []
+    ) {
+        self.path = path
+        self.target = target
+        self.branches = branches
+        self.ghProfile = ghProfile
+        self.pullRequestNumbers = pullRequestNumbers
+    }
 }
 
 enum GitHubCLIProfileInspector {
@@ -381,7 +450,8 @@ final class PullRequestStatusStore {
                 path: values[0].value.path,
                 target: values[0].value.target,
                 branches: Set(values.flatMap { $0.value.branches }).sorted(),
-                ghProfile: values[0].value.ghProfile
+                ghProfile: values[0].value.ghProfile,
+                pullRequestNumbers: Set(values.flatMap { $0.value.pullRequestNumbers }).sorted()
             )
             if let activeContext = activeContexts[key], activeContext != context {
                 refreshTasks[key]?.cancel()
@@ -409,7 +479,8 @@ final class PullRequestStatusStore {
             let loading = PullRequestRepositoryStatus(
                 availability: .loading,
                 pullRequests: cachedStatus?.pullRequests ?? [],
-                failureMessage: nil
+                failureMessage: nil,
+                stacks: cachedStatus?.stacks ?? []
             )
             let didChange = repositoryIDs.contains {
                 statuses[$0] != loading
@@ -444,7 +515,8 @@ final class PullRequestStatusStore {
                     displayStatus = PullRequestRepositoryStatus(
                         availability: .loaded,
                         pullRequests: cachedStatus.pullRequests,
-                        failureMessage: status.failureMessage
+                        failureMessage: status.failureMessage,
+                        stacks: cachedStatus.stacks
                     )
                 } else {
                     displayStatus = status
@@ -490,6 +562,7 @@ private enum PullRequestQuery {
         "mergeStateStatus",
         "reviewDecision",
         "url",
+        "body",
     ].joined(separator: ",")
 
     private static let detailFields = [detailMetadataFields, "statusCheckRollup"].joined(separator: ",")
@@ -498,31 +571,51 @@ private enum PullRequestQuery {
         do {
             let references = try loadMetadata(context: context)
             let summaries = references.compactMap(\.summary)
-            let relatedNumbers = Set(context.branches.flatMap {
+            var relatedNumbers = Set(context.branches.flatMap {
                 PullRequestStack.related(to: $0, in: summaries).map(\.number)
             })
-            let relatedReferences = references.filter { relatedNumbers.contains($0.number) }
-            let enrichedValues = try relatedReferences.map { value in
+            relatedNumbers.formUnion(context.pullRequestNumbers)
+            let surfacedNumbers = Set(summaries.map(\.number))
+            var pendingNumbers = references
+                .filter { relatedNumbers.contains($0.number) }
+                .map(\.number)
+            var visitedNumbers = Set<Int>()
+            var enrichedOrder: [Int] = []
+            var enrichedByNumber: [Int: GitHubPullRequest] = [:]
+            var stacks: [[Int]] = []
+            while let number = pendingNumbers.first {
+                pendingNumbers.removeFirst()
+                guard visitedNumbers.insert(number).inserted else { continue }
+                enrichedOrder.append(number)
                 let output = try run(
                     context: context,
                     arguments: [
                         "gh",
                         "pr",
                         "view",
-                        String(value.number),
+                        String(number),
                         "--json",
                         detailFields,
                     ]
                 )
-                return try JSONDecoder().decode(
+                let value = try JSONDecoder().decode(
                     GitHubPullRequest.self,
                     from: Data(output.utf8)
                 )
+                enrichedByNumber[number] = value
+                let linkedNumbers = PullRequestStackReferences.numbers(in: value.body)
+                    .filter { surfacedNumbers.contains($0) }
+                if linkedNumbers.count > 1 {
+                    stacks.append(linkedNumbers)
+                    pendingNumbers.append(contentsOf: linkedNumbers)
+                }
             }
+            let enrichedValues = enrichedOrder.compactMap { enrichedByNumber[$0] }
             return PullRequestRepositoryStatus(
                 availability: .loaded,
                 pullRequests: enrichedValues.compactMap(PullRequestSummary.init),
-                failureMessage: nil
+                failureMessage: nil,
+                stacks: stacks
             )
         } catch {
             return PullRequestRepositoryStatus(
@@ -669,6 +762,7 @@ private struct GitHubPullRequest: Decodable {
     let reviewDecision: String?
     let statusCheckRollup: [GitHubCheck]?
     let url: String?
+    let body: String?
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -687,12 +781,50 @@ private struct GitHubPullRequest: Decodable {
         reviewDecision = try container.decodeIfPresent(String.self, forKey: .reviewDecision)?.uppercased()
         statusCheckRollup = try container.decodeIfPresent([GitHubCheck].self, forKey: .statusCheckRollup)
         url = try container.decodeIfPresent(String.self, forKey: .url)
+        body = try container.decodeIfPresent(String.self, forKey: .body)
     }
 
     private enum CodingKeys: String, CodingKey {
         case number, title, state, isDraft, baseRefName, headRefName
         case headRepositoryOwner, mergeable, mergeStateStatus, reviewDecision
-        case statusCheckRollup, url
+        case statusCheckRollup, url, body
+    }
+}
+
+enum PullRequestStackReferences {
+    static func numbers(in body: String?) -> [Int] {
+        guard let body else { return [] }
+        let lines = body.components(separatedBy: .newlines)
+        guard let start = lines.firstIndex(where: { line in
+            line.trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased() == "stack"
+        }) else { return [] }
+        var numbers: [Int] = []
+        var included = Set<Int>()
+        for index in lines.indices where index > start {
+            let line = lines[index].trimmingCharacters(in: .whitespacesAndNewlines)
+            if index > start + 1, line.hasPrefix("#") {
+                break
+            }
+            if index > start + 1,
+               !line.isEmpty,
+               !line.hasPrefix("-"),
+               !line.hasPrefix("*"),
+               lines.indices.contains(index + 1),
+               lines[index + 1].trimmingCharacters(in: .whitespacesAndNewlines)
+                    .allSatisfy({ $0 == "-" || $0 == "=" })
+            {
+                break
+            }
+            let matches = line.matches(of: /#(\d+)/)
+            for match in matches {
+                guard let number = Int(match.output.1), included.insert(number).inserted else { continue }
+                numbers.append(number)
+            }
+        }
+        return numbers
     }
 }
 
