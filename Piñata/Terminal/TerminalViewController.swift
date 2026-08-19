@@ -128,22 +128,79 @@ struct TerminalSessionSnapshot: Codable, Equatable, Sendable {
 }
 
 struct AgentTitleActivityDetector {
+    private static let maximumTransitionInterval: TimeInterval = 0.5
     private(set) var isActive = false
+    private var previousParts: [String]?
+    private var previousUpdateTime: TimeInterval?
+    private var transitionIndex: Int?
+    private var transitionCount = 0
 
-    mutating func update(title: String) -> Bool {
-        isActive = Self.frame(in: title) != nil
+    mutating func update(
+        title: String,
+        at updateTime: TimeInterval = ProcessInfo.processInfo.systemUptime
+    ) -> Bool {
+        let parts = title.split(whereSeparator: \.isWhitespace).map(String.init)
+        defer {
+            previousParts = parts
+            previousUpdateTime = updateTime
+        }
+
+        guard let previousParts,
+              let previousUpdateTime,
+              updateTime >= previousUpdateTime,
+              updateTime - previousUpdateTime <= Self.maximumTransitionInterval,
+              let changedIndex = Self.changedSymbolIndex(from: previousParts, to: parts)
+        else {
+            transitionIndex = nil
+            transitionCount = 0
+            isActive = false
+            return false
+        }
+
+        if transitionIndex == changedIndex {
+            transitionCount += 1
+        } else {
+            transitionIndex = changedIndex
+            transitionCount = 1
+        }
+        isActive = transitionCount >= 2
         return isActive
     }
 
-    private static func frame(in title: String) -> Character? {
-        guard let indicator = title.first,
-              indicator.unicodeScalars.allSatisfy(isSymbol),
-              let separator = title.firstIndex(where: \.isWhitespace),
-              title.index(after: separator) < title.endIndex
-        else { return nil }
-        return indicator
+    private static func changedSymbolIndex(from previous: [String], to current: [String]) -> Int? {
+        guard previous.count == current.count else { return nil }
+        var changedIndex: Int?
+
+        for index in previous.indices where previous[index] != current[index] {
+            guard changedIndex == nil,
+                  previous[index].count == 1,
+                  current[index].count == 1,
+                  let previousFrame = previous[index].first,
+                  let currentFrame = current[index].first,
+                  isSpinnerFrame(previousFrame),
+                  isSpinnerFrame(currentFrame)
+            else { return nil }
+            changedIndex = index
+        }
+        return changedIndex
     }
 
+    private static func isSpinnerFrame(_ frame: Character) -> Bool {
+        var hasSymbol = false
+        for scalar in frame.unicodeScalars {
+            if isSymbol(scalar) {
+                hasSymbol = true
+                continue
+            }
+            switch scalar.properties.generalCategory {
+            case .nonspacingMark, .enclosingMark, .format:
+                continue
+            default:
+                return false
+            }
+        }
+        return hasSymbol
+    }
 
     private static func isSymbol(_ scalar: Unicode.Scalar) -> Bool {
         switch scalar.properties.generalCategory {
