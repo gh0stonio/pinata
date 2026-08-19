@@ -686,6 +686,16 @@ final class CoreLogicTests: XCTestCase {
         )
     }
 
+    func testSSHCommandPreservesForwardingsWhenRequested() {
+        let arguments = SSHCommand.arguments(
+            connection: SSHConnection(name: "Workspace", host: "workspace"),
+            command: "true",
+            clearForwardings: false
+        )
+
+        XCTAssertFalse(arguments.contains("ClearAllForwardings=yes"))
+    }
+
     func testOlderTasksDefaultToUnpinned() throws {
         let id = UUID()
         let data = Data(

@@ -570,15 +570,16 @@ enum SSHCommand {
         command: String,
         allocateTTY: Bool = false,
         includeExecutableName: Bool = false,
-        reuseConnection: Bool = false
+        reuseConnection: Bool = false,
+        clearForwardings: Bool = true
     ) -> [String] {
         (includeExecutableName ? ["ssh"] : []) + [
             "-A",
             "-o", "BatchMode=yes",
             "-o", "ConnectTimeout=\(connectionTimeout)",
             "-o", "ConnectionAttempts=1",
-            "-o", "ClearAllForwardings=yes",
-        ] + (reuseConnection
+        ] + (clearForwardings ? ["-o", "ClearAllForwardings=yes"] : [])
+            + (reuseConnection
             ? [
                 "-o", "ControlMaster=auto",
                 "-o", "ControlPersist=60",

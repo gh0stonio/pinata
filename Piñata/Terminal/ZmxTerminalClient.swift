@@ -286,7 +286,8 @@ private final class ZmxLaunchConfiguration {
                 connection: connection,
                 command: command,
                 allocateTTY: true,
-                includeExecutableName: true
+                includeExecutableName: true,
+                clearForwardings: false
             )
             arguments = Self.makeArguments(values)
             argumentCount = values.count
