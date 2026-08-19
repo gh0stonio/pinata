@@ -128,9 +128,20 @@ final class CoreLogicTests: XCTestCase {
         )
     }
 
-    func testAgentTitleActivityRecognizesKnownSpinnerFrames() {
-        XCTAssertTrue(AgentTitleActivity.isActive("⠹ Piñata"))
-        XCTAssertFalse(AgentTitleActivity.isActive("Piñata"))
+    func testAgentTitleActivityRecognizesChangingSymbolFrames() {
+        var detector = AgentTitleActivityDetector()
+
+        XCTAssertFalse(detector.update(title: "◐ Liftoff workflow"))
+        XCTAssertTrue(detector.update(title: "◓ Liftoff workflow"))
+        XCTAssertTrue(detector.update(title: "⠹ Saving changes"))
+    }
+
+    func testAgentTitleActivityStopsWithoutSymbolFrame() {
+        var detector = AgentTitleActivityDetector()
+
+        _ = detector.update(title: "◐ Liftoff workflow")
+        XCTAssertTrue(detector.update(title: "◓ Liftoff workflow"))
+        XCTAssertFalse(detector.update(title: "Liftoff workflow"))
     }
 
     @MainActor

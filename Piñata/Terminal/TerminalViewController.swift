@@ -127,11 +127,52 @@ struct TerminalSessionSnapshot: Codable, Equatable, Sendable {
     }
 }
 
-enum AgentTitleActivity {
-    private static let spinnerFrames = Set("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+struct AgentTitleActivityDetector {
+    private struct Frame: Equatable {
+        let indicator: Character
+        let content: Substring
+    }
 
-    static func isActive(_ title: String) -> Bool {
-        title.contains { spinnerFrames.contains($0) }
+    private var previousFrame: Frame?
+    private(set) var isActive = false
+
+    mutating func update(title: String) -> Bool {
+        let frame = Self.frame(in: title)
+        defer { previousFrame = frame }
+
+        guard let frame else {
+            isActive = false
+            return false
+        }
+
+        if let previousFrame,
+           previousFrame.content == frame.content,
+           previousFrame.indicator != frame.indicator
+        {
+            isActive = true
+        }
+
+        return isActive
+    }
+
+    private static func frame(in title: String) -> Frame? {
+        guard let indicator = title.first,
+              indicator.unicodeScalars.allSatisfy(isSymbol),
+              let separator = title.firstIndex(where: \.isWhitespace)
+        else { return nil }
+
+        let content = title[title.index(after: separator)...]
+        guard !content.isEmpty else { return nil }
+        return Frame(indicator: indicator, content: content)
+    }
+
+    private static func isSymbol(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.properties.generalCategory {
+        case .currencySymbol, .mathSymbol, .modifierSymbol, .otherSymbol:
+            true
+        default:
+            false
+        }
     }
 }
 
@@ -427,6 +468,7 @@ private final class TerminalPaneViewController: NSViewController {
     var didRequestSplit: ((PaneID, SplitAxis) -> Void)?
     var didRequestClose: ((PaneID) -> Void)?
     var didChangeAgentActivity: ((PaneID, Bool) -> Void)?
+    private var agentActivityDetector = AgentTitleActivityDetector()
     private var isAgentActive = false
 
     init(
@@ -456,7 +498,7 @@ private final class TerminalPaneViewController: NSViewController {
         terminalView.didChangeTitle = { [weak self, weak header] title in
             header?.setTitle(title)
             guard let self else { return }
-            let active = AgentTitleActivity.isActive(title)
+            let active = self.agentActivityDetector.update(title: title)
             guard self.isAgentActive != active else { return }
             self.isAgentActive = active
             self.didChangeAgentActivity?(self.paneID, active)
