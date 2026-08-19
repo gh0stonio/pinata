@@ -248,6 +248,8 @@ final class PanelViewController: NSViewController {
         repositoryBranches: [UUID: String] = [:],
         repositoryRemoteURLs: [UUID: String] = [:],
         pullRequestStatuses: [UUID: PullRequestRepositoryStatus] = [:],
+        taskAgentActivity: Set<UUID> = [],
+        repositoryAgentActivity: Set<TaskRepositoryScope> = [],
         taskErrors: [UUID: String],
         repositoryErrors: [TaskRepositoryScope: String],
         loadError: String?
@@ -276,9 +278,11 @@ final class PanelViewController: NSViewController {
                 expanded: expandedTaskIDs.contains(task.id),
                 menuActive: taskMenuTaskID == task.id,
                 activity: taskActivities[task.id],
+                agentActive: taskAgentActivity.contains(task.id),
                 taskError: taskErrors[task.id],
                 repositoryMenuScope: repositoryMenuScope,
                 repositoryActivities: repositoryActivities,
+                repositoryAgentActivity: repositoryAgentActivity,
                 repositoryErrors: repositoryErrors,
                 repositoryTargets: repositoryTargets,
                 repositoryPaths: repositoryPaths,
@@ -544,7 +548,7 @@ private final class SidebarNewTaskButton: AppButton {
 }
 
 @MainActor
-private struct SidebarRepositoryContext {
+struct SidebarRepositoryContext {
     let repositoryID: UUID
     let name: String
     let remoteURL: String?
@@ -583,9 +587,11 @@ private final class SidebarTaskGroupView: NSStackView {
         expanded: Bool,
         menuActive: Bool,
         activity: String?,
+        agentActive: Bool,
         taskError: String?,
         repositoryMenuScope: TaskRepositoryScope?,
         repositoryActivities: [TaskRepositoryScope: String],
+        repositoryAgentActivity: Set<TaskRepositoryScope>,
         repositoryErrors: [TaskRepositoryScope: String],
         repositoryTargets: [UUID: RepositoryTarget],
         repositoryPaths: [UUID: String],
@@ -638,6 +644,7 @@ private final class SidebarTaskGroupView: NSStackView {
             selected: selection == .task(task.id),
             menuActive: menuActive,
             activity: activity,
+            agentActive: agentActive,
             error: taskError ?? collapsedRepositoryError,
             repositoryContexts: repositoryContexts,
             connectionStatusMonitor: connectionStatusMonitor,
@@ -668,6 +675,7 @@ private final class SidebarTaskGroupView: NSStackView {
                     activity: repositoryActivities[scope] ?? (repository.worktreeProvisioning.map {
                         !$0.succeeded && $0.failureMessage == nil
                     } == true ? "creating" : nil),
+                    agentActive: repositoryAgentActivity.contains(scope),
                     error: repositoryErrors[scope],
                     context: context,
                     suppressActions: activity == "deleting",
@@ -843,6 +851,7 @@ private final class SidebarTaskRow: AppHoverView {
     private let hasRepositories: Bool
     private var menuActive: Bool
     private let activity: String?
+    private let agentActive: Bool
     private let error: String?
     private let selectButton = SidebarTaskSelectButton(role: .hitTarget)
     private let disclosureButton = SidebarDisclosureButton(role: .icon)
@@ -867,6 +876,7 @@ private final class SidebarTaskRow: AppHoverView {
         selected: Bool,
         menuActive: Bool,
         activity: String?,
+        agentActive: Bool,
         error: String?,
         repositoryContexts: [SidebarRepositoryContext],
         connectionStatusMonitor: SSHConnectionStatusMonitor,
@@ -876,6 +886,7 @@ private final class SidebarTaskRow: AppHoverView {
         self.hasRepositories = hasRepositories
         self.menuActive = menuActive
         self.activity = activity
+        self.agentActive = agentActive
         self.error = error
         self.repositoryContexts = repositoryContexts
         self.connectionStatusMonitor = connectionStatusMonitor
@@ -944,7 +955,7 @@ private final class SidebarTaskRow: AppHoverView {
         )
         activityIndicator.style = .spinning
         activityIndicator.controlSize = .small
-        if activity != nil, error == nil {
+        if agentActive || (activity != nil && error == nil) {
             activityIndicator.startAnimation(nil)
         }
 
@@ -987,7 +998,7 @@ private final class SidebarTaskRow: AppHoverView {
                 constant: -6
             ),
             activityIndicator.centerYAnchor.constraint(equalTo: centerYAnchor),
-            activityIndicator.widthAnchor.constraint(equalToConstant: activity == nil ? 0 : 12),
+            activityIndicator.widthAnchor.constraint(equalToConstant: activity == nil && !agentActive ? 0 : 12),
             activityIndicator.heightAnchor.constraint(equalToConstant: 12),
             errorIcon.trailingAnchor.constraint(equalTo: activityIndicator.leadingAnchor),
             errorIcon.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -1087,7 +1098,7 @@ private final class SidebarTaskRow: AppHoverView {
         menuOverlay.isHidden = !showsMenu
         disclosureButton.isHidden = !hasRepositories
         errorIcon.isHidden = error == nil
-        activityIndicator.isHidden = activity == nil || error != nil
+        activityIndicator.isHidden = !agentActive && (activity == nil || error != nil)
         statusLabel.isHidden = activity == nil
     }
 
@@ -1112,13 +1123,12 @@ private final class SidebarTaskRow: AppHoverView {
             infoPopover = value
             return value
         }()
-        popover.cancelScheduledClose()
         guard !popover.isVisible, window.isVisible else { return }
         popover.show(relativeTo: bounds, of: self)
     }
 
     private func dismissInfoPopover() {
-        infoPopover?.scheduleClose(allowingCorridor: true)
+        infoPopover?.scheduleClose()
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
@@ -1352,7 +1362,7 @@ private enum PullRequestIconAsset {
 }
 
 @MainActor
-private final class SidebarRepositoryRow: AppHoverView {
+final class SidebarRepositoryRow: AppHoverView {
     var onSelect: (() -> Void)?
     var onHover: (() -> Void)?
     var onShowMenu: ((NSRect) -> Void)?
@@ -1361,6 +1371,7 @@ private final class SidebarRepositoryRow: AppHoverView {
     private let selected: Bool
     private var menuActive: Bool
     private let activity: String?
+    private let agentActive: Bool
     private let error: String?
     private let suppressActions: Bool
     private let button = AppButton(role: .hitTarget)
@@ -1384,11 +1395,16 @@ private final class SidebarRepositoryRow: AppHoverView {
     private var infoPopover: SidebarHoverPopover?
     private var infoCard: SidebarRepositoryInfoCard?
 
+#if DEBUG
+    var hasCachedInfoPopoverForTesting: Bool { infoPopover != nil }
+#endif
+
     init(
         repository: TaskRepositoryAttachment,
         selected: Bool,
         menuActive: Bool,
         activity: String?,
+        agentActive: Bool,
         error: String?,
         context: SidebarRepositoryContext?,
         suppressActions: Bool,
@@ -1398,6 +1414,7 @@ private final class SidebarRepositoryRow: AppHoverView {
         self.selected = selected
         self.menuActive = menuActive
         self.activity = activity
+        self.agentActive = agentActive
         self.error = error
         self.suppressActions = suppressActions
         self.connectionStatusMonitor = connectionStatusMonitor
@@ -1460,7 +1477,7 @@ private final class SidebarRepositoryRow: AppHoverView {
         pullRequestIcon.setAccessibilityLabel("Pull request status")
         pullRequestCountLabel.alignment = .center
         pullRequestCountLabel.setAccessibilityLabel("Pull request count")
-        if activity != nil, error == nil {
+        if agentActive || (activity != nil && error == nil) {
             activityIndicator.startAnimation(nil)
         }
 
@@ -1487,7 +1504,7 @@ private final class SidebarRepositoryRow: AppHoverView {
             menuOverlay.topAnchor.constraint(equalTo: topAnchor),
             menuOverlay.bottomAnchor.constraint(equalTo: bottomAnchor),
             menuOverlay.widthAnchor.constraint(equalToConstant: 88),
-            activityIndicator.widthAnchor.constraint(equalToConstant: activity == nil ? 0 : 12),
+            activityIndicator.widthAnchor.constraint(equalToConstant: activity == nil && !agentActive ? 0 : 12),
             activityIndicator.heightAnchor.constraint(equalToConstant: 12),
             errorIcon.widthAnchor.constraint(equalToConstant: error == nil ? 0 : 14),
             errorIcon.heightAnchor.constraint(equalToConstant: 12),
@@ -1589,10 +1606,17 @@ private final class SidebarRepositoryRow: AppHoverView {
         else { return }
         repositoryContext.pullRequestStatus = status
         self.repositoryContext = repositoryContext
-        infoCard?.hideChecks()
-        infoCard?.update(context: repositoryContext)
         if infoPopover?.isVisible == true {
+            infoCard?.hideChecks()
+            infoCard?.update(context: repositoryContext)
             infoPopover?.refreshContentSize()
+        } else {
+            infoPopover?.close()
+            infoPopover = nil
+            infoCard = nil
+            if isHovering {
+                showInfoPopover()
+            }
         }
         applyTheme()
     }
@@ -1603,9 +1627,9 @@ private final class SidebarRepositoryRow: AppHoverView {
             && (isHovering || infoPopoverHovering || menuActive)
         menuOverlay.isHidden = !showsMenu
         errorIcon.isHidden = error == nil
-        activityIndicator.isHidden = activity == nil || error != nil
+        activityIndicator.isHidden = !agentActive && (activity == nil || error != nil)
         statusLabel.isHidden = error == nil && activity == nil
-        connectionStatusDot.isHidden = connectionID == nil
+        connectionStatusDot.isHidden = connectionID == nil || connectionStatus != .disconnected
     }
 
     private func updatePullRequestIcon() {
@@ -1649,7 +1673,6 @@ private final class SidebarRepositoryRow: AppHoverView {
             infoPopover = value
             return value
         }()
-        popover.cancelScheduledClose()
         if !popover.isVisible {
             card.hideChecks()
         }
@@ -1658,7 +1681,7 @@ private final class SidebarRepositoryRow: AppHoverView {
     }
 
     private func dismissInfoPopover() {
-        infoPopover?.scheduleClose(allowingCorridor: true)
+        infoPopover?.scheduleClose()
     }
 
     private func handleChecksHover(
@@ -1700,64 +1723,17 @@ private final class SidebarRepositoryRow: AppHoverView {
     }
 }
 
-enum SidebarHoverCorridor {
-    static func contains(
-        _ point: NSPoint,
-        from origin: NSPoint?,
-        to popoverFrame: NSRect
-    ) -> Bool {
-        guard let origin else { return false }
-        let padding: CGFloat = 12
-        let targetX = popoverFrame.minX + padding
-        guard origin.x < targetX,
-              point.x >= origin.x,
-              point.x <= targetX
-        else { return false }
-        return pointInTriangle(
-            point,
-            origin,
-            NSPoint(x: targetX, y: popoverFrame.maxY + padding),
-            NSPoint(x: targetX, y: popoverFrame.minY - padding)
-        )
-    }
-
-    private static func pointInTriangle(
-        _ point: NSPoint,
-        _ first: NSPoint,
-        _ second: NSPoint,
-        _ third: NSPoint
-    ) -> Bool {
-        let firstArea = cross(first, second, point)
-        let secondArea = cross(second, third, point)
-        let thirdArea = cross(third, first, point)
-        let hasNegative = firstArea < 0 || secondArea < 0 || thirdArea < 0
-        let hasPositive = firstArea > 0 || secondArea > 0 || thirdArea > 0
-        return !(hasNegative && hasPositive)
-    }
-
-    private static func cross(
-        _ first: NSPoint,
-        _ second: NSPoint,
-        _ point: NSPoint
-    ) -> CGFloat {
-        (second.x - first.x) * (point.y - first.y)
-            - (second.y - first.y) * (point.x - first.x)
-    }
-}
 
 @MainActor
 private final class SidebarHoverPopover: NSPanel {
     private static weak var activePopover: SidebarHoverPopover?
-    private static let handoffDelay: TimeInterval = 0.2
-    private static let closeDelay: TimeInterval = 0.12
-    private static let corridorDuration: TimeInterval = 0.45
+    private static let showDelay: TimeInterval = 0.5
     private static let pointerPollInterval: TimeInterval = 0.04
+    private static let closeDelay: TimeInterval = 0.15
     private let chromeView: SidebarHoverPopoverView
     private var pointerTimer: Timer?
     private var pendingShow: DispatchWorkItem?
-    private var closeDeadline: Date?
-    private var corridorDeadline: Date?
-    private var corridorOrigin: NSPoint?
+    private var pendingClose: DispatchWorkItem?
     private weak var sourceView: NSView?
     private var isHovering = false
     var onHoverChanged: ((Bool) -> Void)?
@@ -1793,25 +1769,21 @@ private final class SidebarHoverPopover: NSPanel {
     func show(relativeTo rect: NSRect, of view: NSView) {
         guard view.window != nil else { return }
         sourceView = view
-        cancelScheduledClose()
         pendingShow?.cancel()
-        pendingShow = nil
-        if let activePopover = Self.activePopover, activePopover !== self {
-            let workItem = DispatchWorkItem { [weak self, weak view] in
-                guard let self,
-                      let view,
-                      self.pointerInsideSourceView(view)
-                else { return }
-                self.present(relativeTo: rect, of: view)
-            }
-            pendingShow = workItem
-            DispatchQueue.main.asyncAfter(
-                deadline: .now() + Self.handoffDelay,
-                execute: workItem
-            )
-            return
+        pendingClose?.cancel()
+        pendingClose = nil
+        let workItem = DispatchWorkItem { [weak self, weak view] in
+            guard let self,
+                  let view,
+                  self.pointerInsideSourceView(view)
+            else { return }
+            self.present(relativeTo: rect, of: view)
         }
-        present(relativeTo: rect, of: view)
+        pendingShow = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.showDelay,
+            execute: workItem
+        )
     }
 
     private func present(relativeTo rect: NSRect, of view: NSView) {
@@ -1826,7 +1798,7 @@ private final class SidebarHoverPopover: NSPanel {
         let size = frame.size
         setFrame(
             NSRect(
-                x: screenRect.maxX,
+                x: screenRect.maxX + 6,
                 y: screenRect.maxY - size.height,
                 width: size.width,
                 height: size.height
@@ -1841,7 +1813,6 @@ private final class SidebarHoverPopover: NSPanel {
     }
 
     func refreshContentSize() {
-        cancelScheduledClose()
         let topLeft = NSPoint(x: frame.minX, y: frame.maxY)
         setContentSize(chromeView.intrinsicContentSize)
         setFrameTopLeftPoint(topLeft)
@@ -1849,24 +1820,10 @@ private final class SidebarHoverPopover: NSPanel {
         updatePointerState()
     }
 
-    func scheduleClose(allowingCorridor: Bool = false) {
+    func scheduleClose() {
         pendingShow?.cancel()
         pendingShow = nil
-        guard isVisible else { return }
-        closeDeadline = Date().addingTimeInterval(Self.closeDelay)
-        if allowingCorridor {
-            corridorOrigin = NSEvent.mouseLocation
-            corridorDeadline = Date().addingTimeInterval(Self.corridorDuration)
-        } else {
-            corridorOrigin = nil
-            corridorDeadline = nil
-        }
-    }
-
-    func cancelScheduledClose() {
-        closeDeadline = nil
-        corridorOrigin = nil
-        corridorDeadline = nil
+        scheduleDelayedClose()
     }
 
     private func startPointerTracking() {
@@ -1889,30 +1846,35 @@ private final class SidebarHoverPopover: NSPanel {
         let pointerInsidePopover = frame.contains(mouseLocation)
         let pointerInsideSource = sourceView.map(pointerInsideSourceView) ?? false
         if pointerInsidePopover || pointerInsideSource {
+            pendingClose?.cancel()
+            pendingClose = nil
             setHovering(true)
-            closeDeadline = nil
-            corridorOrigin = nil
-            corridorDeadline = nil
-            return
-        }
-        if let corridorDeadline,
-           corridorDeadline > Date(),
-           SidebarHoverCorridor.contains(mouseLocation, from: corridorOrigin, to: frame)
-        {
-            NSCursor.arrow.set()
-            setHovering(true)
-            closeDeadline = nil
-            return
-        }
-        corridorOrigin = nil
-        corridorDeadline = nil
-        if let closeDeadline {
-            if closeDeadline <= Date() {
-                close()
-            }
         } else {
-            closeDeadline = Date().addingTimeInterval(Self.closeDelay)
+            scheduleDelayedClose()
         }
+    }
+
+    private func scheduleDelayedClose() {
+        guard isVisible, pendingClose == nil else { return }
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingClose = nil
+            self.closeIfPointerOutside()
+        }
+        pendingClose = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.closeDelay, execute: workItem)
+    }
+
+    private func closeIfPointerOutside() {
+        guard isVisible else { return }
+        let mouseLocation = NSEvent.mouseLocation
+        guard !frame.contains(mouseLocation),
+              !(sourceView.map(pointerInsideSourceView) ?? false)
+        else {
+            updatePointerState()
+            return
+        }
+        close()
     }
 
     private func setHovering(_ hovering: Bool) {
@@ -1933,10 +1895,11 @@ private final class SidebarHoverPopover: NSPanel {
     }
 
     override func close() {
-        cancelScheduledClose()
         stopPointerTracking()
         pendingShow?.cancel()
         pendingShow = nil
+        pendingClose?.cancel()
+        pendingClose = nil
         sourceView = nil
         setHovering(false)
         if Self.activePopover === self {
@@ -1961,6 +1924,13 @@ private final class SidebarHoverPopoverView: NSView {
                 height: contentSize.height
             )
         )
+        wantsLayer = true
+        layer?.cornerRadius = 12
+        layer?.cornerCurve = .continuous
+        layer?.shadowOpacity = 0.18
+        layer?.shadowRadius = 8
+        layer?.shadowOffset = NSSize(width: 0, height: -2)
+        layer?.shadowColor = NSColor.black.cgColor
         content.translatesAutoresizingMaskIntoConstraints = false
         addSubview(content)
         NSLayoutConstraint.activate([
@@ -1996,7 +1966,7 @@ private final class SidebarHoverPopoverView: NSView {
         )
         AppTheme.surface.setFill()
         path.fill()
-        AppTheme.border.withAlphaComponent(0.32).setStroke()
+        AppTheme.border.setStroke()
         path.lineWidth = 1
         path.stroke()
     }
@@ -2155,7 +2125,7 @@ private final class SidebarRepositoryInfoCard: NSView {
 @MainActor
 private final class SidebarPullRequestRowsView: NSView {
     static let spacing: CGFloat = 4
-
+    private static let contentWidth: CGFloat = 368
     override var isFlipped: Bool { true }
 
     override func setFrameSize(_ newSize: NSSize) {
@@ -2172,7 +2142,13 @@ private final class SidebarPullRequestRowsView: NSView {
         var y: CGFloat = 0
         for view in subviews {
             let height: CGFloat = view is SidebarPullRequestInfoRow ? 44 : 22
-            view.frame = NSRect(x: 0, y: y, width: bounds.width, height: height)
+            view.frame = NSRect(
+                x: 0,
+                y: y,
+                width: max(bounds.width, Self.contentWidth),
+                height: height
+            )
+            view.layoutSubtreeIfNeeded()
             y += height + Self.spacing
         }
     }
@@ -2182,7 +2158,6 @@ private final class SidebarPullRequestRowsView: NSView {
 final class SidebarPullRequestInfoView: NSView {
     var onChecksHover: ((NSView, [PullRequestCheck], Bool) -> Void)?
 
-    private let pullRequestIcon = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "Pull requests")
     private let refreshIndicator = NSProgressIndicator()
     private let countLabel = NSTextField(labelWithString: "")
@@ -2207,10 +2182,6 @@ final class SidebarPullRequestInfoView: NSView {
         self.trackedPullRequestNumbers = trackedPullRequestNumbers
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-        pullRequestIcon.image = PullRequestIconAsset.image()
-        pullRequestIcon.imageScaling = .scaleProportionallyDown
-        pullRequestIcon.setAccessibilityLabel("Pull request status")
-        pullRequestIcon.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         refreshIndicator.style = .spinning
         refreshIndicator.controlSize = .small
@@ -2221,17 +2192,12 @@ final class SidebarPullRequestInfoView: NSView {
         countLabel.alignment = .right
         rowsView.translatesAutoresizingMaskIntoConstraints = false
         rowsHeightConstraint = rowsView.heightAnchor.constraint(equalToConstant: 22)
-        addSubview(pullRequestIcon)
         addSubview(titleLabel)
         addSubview(refreshIndicator)
         addSubview(countLabel)
         addSubview(rowsView)
         NSLayoutConstraint.activate([
-            pullRequestIcon.leadingAnchor.constraint(equalTo: leadingAnchor),
-            pullRequestIcon.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
-            pullRequestIcon.widthAnchor.constraint(equalToConstant: 16),
-            pullRequestIcon.heightAnchor.constraint(equalToConstant: 16),
-            titleLabel.leadingAnchor.constraint(equalTo: pullRequestIcon.trailingAnchor, constant: 6),
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
             titleLabel.firstBaselineAnchor.constraint(equalTo: countLabel.firstBaselineAnchor),
             refreshIndicator.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 6),
             refreshIndicator.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
@@ -2327,23 +2293,6 @@ final class SidebarPullRequestInfoView: NSView {
             refreshIndicator.startAnimation(nil)
         } else {
             refreshIndicator.stopAnimation(nil)
-        }
-        if !relatedPullRequests.isEmpty,
-           (status.availability == .loaded || status.availability == .loading)
-        {
-            pullRequestIcon.isHidden = false
-            pullRequestIcon.toolTip = nil
-            if relatedPullRequests.count == 1, let summary = relatedPullRequests.first {
-                pullRequestIcon.contentTintColor = AppTheme.pullRequestColor(summary.displayStatus)
-                pullRequestIcon.setAccessibilityValue(summary.displayStatus.label)
-            } else {
-                pullRequestIcon.contentTintColor = AppTheme.tertiaryText
-                pullRequestIcon.setAccessibilityValue("\(relatedPullRequests.count) pull requests")
-            }
-        } else {
-            pullRequestIcon.isHidden = true
-            pullRequestIcon.toolTip = nil
-            pullRequestIcon.setAccessibilityValue(nil)
         }
         rowViews.forEach { $0.removeFromSuperview() }
         rowViews.removeAll(keepingCapacity: true)
@@ -2765,7 +2714,7 @@ final class SidebarPullRequestInfoRow: AppHoverView {
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: 44),
             statusIcon.leadingAnchor.constraint(equalTo: leadingAnchor),
-            statusIcon.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            statusIcon.topAnchor.constraint(equalTo: titleLabel.topAnchor),
             statusIcon.widthAnchor.constraint(equalToConstant: 16),
             statusIcon.heightAnchor.constraint(equalToConstant: 16),
             detailsStack.leadingAnchor.constraint(equalTo: statusIcon.trailingAnchor, constant: 8),
@@ -2773,7 +2722,7 @@ final class SidebarPullRequestInfoRow: AppHoverView {
             detailsStack.topAnchor.constraint(equalTo: topAnchor, constant: 3),
             detailsStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
             checksDonut.trailingAnchor.constraint(equalTo: trailingAnchor),
-            checksDonut.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            checksDonut.topAnchor.constraint(equalTo: titleLabel.topAnchor),
             checksDonut.widthAnchor.constraint(equalToConstant: 16),
             checksDonut.heightAnchor.constraint(equalToConstant: 16),
         ])

@@ -58,6 +58,7 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
     private var trackingAreaToken: NSTrackingArea?
     private var surfaceCreationScheduled = false
     private var receivedTerminalOutput = false
+    private var needsInitialRender = true
     private var remoteStartTask: Task<Void, Never>?
     private var lastPixelWidth: UInt32 = 0
     private var lastPixelHeight: UInt32 = 0
@@ -100,7 +101,7 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
                 receivedTerminalOutput = true
                 didConnect?()
             }
-            processTerminalOutput(data)
+            processTerminalOutput(data, isStatusMessage: isStatusMessage)
         }
         wantsLayer = true
         layerContentsRedrawPolicy = .duringViewResize
@@ -135,6 +136,7 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
         scheduleSurfaceCreation()
         updateSurfaceGeometry()
     }
+
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
@@ -278,9 +280,10 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
 
     private func presentConnectionFailure(_ message: String) {
         didFailToConnect?(message)
-        processTerminalOutput(Data(
-            "\r\n[Piñata] \(message)\r\n[Piñata] Retrying automatically when the connection returns.\r\n".utf8
-        ))
+        processTerminalOutput(
+            Data("\r\n[Piñata] \(message)\r\n[Piñata] Retrying automatically when the connection returns.\r\n".utf8),
+            isStatusMessage: true
+        )
     }
 
     private var currentDisplayID: UInt32? {
@@ -549,7 +552,7 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
         terminalSession.close()
     }
 
-    private func processTerminalOutput(_ data: Data) {
+    private func processTerminalOutput(_ data: Data, isStatusMessage: Bool) {
         guard let surface else { return }
         data.withUnsafeBytes { bytes in
             guard let baseAddress = bytes.baseAddress else { return }
@@ -559,7 +562,12 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
                 UInt(bytes.count)
             )
         }
-        ghostty_surface_refresh(surface)
+        if needsInitialRender && !isStatusMessage {
+            needsInitialRender = false
+            ghostty_surface_render_now(surface)
+        } else {
+            ghostty_surface_refresh(surface)
+        }
     }
 
     func insertText(_ string: Any, replacementRange: NSRange) {

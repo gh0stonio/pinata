@@ -218,7 +218,11 @@ final class WorkspaceViewController: NSViewController {
         let didLoadTaskRegistry: Bool
         let loadError: String?
         do {
-            loadedTasks = try taskStore.load()
+            let storedTasks = try taskStore.load()
+            loadedTasks = recoverInterruptedWorktreeProvisioning(in: storedTasks)
+            if loadedTasks != storedTasks {
+                try? taskStore.save(loadedTasks)
+            }
             didLoadTaskRegistry = true
             loadError = nil
         } catch {
@@ -757,6 +761,7 @@ final class WorkspaceViewController: NSViewController {
             if repositoryActionMenu != nil, repositoryActionMenuScope != scope {
                 dismissRepositoryActionMenu()
             }
+            refreshPullRequestStatuses()
         }
         leftPanelController.onMoveTask = { [weak self] sourceID, targetID, after, pinned in
             self?.moveTask(
@@ -990,6 +995,9 @@ final class WorkspaceViewController: NSViewController {
         controller.onChange = { [weak self] in
             self?.scheduleSessionSave()
         }
+        controller.onAgentActivityChanged = { [weak self] _ in
+            self?.updateTaskSidebar()
+        }
         if controller.parent !== self {
             addChild(controller)
         }
@@ -1104,6 +1112,7 @@ final class WorkspaceViewController: NSViewController {
                         at: report.path,
                         branchHint: report.branch,
                         taskID: scope.taskID,
+                        branchWasCreated: report.branchWasCreated,
                         from: repository,
                         connection: connection
                     )
@@ -1145,7 +1154,7 @@ final class WorkspaceViewController: NSViewController {
                     title: "Prepare retry",
                     status: .failed,
                     detail: message
-                )]
+                )] + report.steps.filter { $0.title != "Prepare retry" }
             ),
             for: scope
         )
@@ -1343,23 +1352,37 @@ final class WorkspaceViewController: NSViewController {
         var provisionableRepositories: [(repository: RegisteredRepository, connection: SSHConnection?)] = []
         for repository in repositories {
             let scope = TaskRepositoryScope(taskID: task.id, repositoryID: repository.id)
-            let connection: SSHConnection?
-            do {
-                connection = try sshConnection(for: repository)
-            } catch {
-                repositoryErrors[scope] = error.localizedDescription
-                continue
-            }
-            let provisioner = WorktreeProvisioner(
+            let report = WorktreeProvisioner(
                 globalBasePath: worktreeBasePath,
-                branchPrefix: branchPrefix,
-                connection: connection
-            )
-            let report = provisioner.preparing(
+                branchPrefix: branchPrefix
+            ).preparing(
                 repository: repository,
                 taskID: task.id,
                 taskTitle: task.title
             )
+            let connection: SSHConnection?
+            do {
+                connection = try sshConnection(for: repository)
+            } catch {
+                let message = error.localizedDescription
+                let failedReport = WorktreeProvisioningReport(
+                    path: report.path,
+                    branch: report.branch,
+                    baseBranch: report.baseBranch,
+                    steps: [WorktreeProvisioningStep(
+                        title: "Connect to repository",
+                        status: .failed,
+                        detail: message
+                    )]
+                )
+                do {
+                    try storeWorktreeProvisioning(failedReport, for: scope)
+                    repositoryErrors[scope] = message
+                } catch {
+                    repositoryErrors[scope] = error.localizedDescription
+                }
+                continue
+            }
             do {
                 try storeWorktreeProvisioning(report, for: scope)
                 provisionableRepositories.append((repository, connection))
@@ -1746,6 +1769,9 @@ final class WorkspaceViewController: NSViewController {
                             branchHint: attachment.branch
                                 ?? attachment.worktreeProvisioning?.branch,
                             taskID: task.id,
+                            branchWasCreated: attachment.branch != nil
+                                || attachment.worktreeProvisioning?.branchWasCreated == true,
+                            worktreeWasCreated: attachment.worktreePath != nil,
                             from: repository,
                             connection: connection
                         )
@@ -1847,6 +1873,9 @@ final class WorkspaceViewController: NSViewController {
                             branchHint: attachment.branch
                                 ?? attachment.worktreeProvisioning?.branch,
                             taskID: scope.taskID,
+                            branchWasCreated: attachment.branch != nil
+                                || attachment.worktreeProvisioning?.branchWasCreated == true,
+                            worktreeWasCreated: attachment.worktreePath != nil,
                             from: repository,
                             connection: connection
                         )
@@ -2321,6 +2350,12 @@ final class WorkspaceViewController: NSViewController {
                 taskActivities[task.id] = "attaching"
             }
         }
+        let taskAgentActivity = Set(taskWorkspaces.compactMap { taskID, workspace in
+            workspace.tabs.contains { $0.controller.hasActiveAgent } ? taskID : nil
+        })
+        let repositoryAgentActivity = Set(repositoryWorkspaces.compactMap { scope, workspace in
+            workspace.tabs.contains { $0.controller.hasActiveAgent } ? scope : nil
+        })
         leftPanelController.updateTasks(
             tasks,
             selection: activeScope,
@@ -2332,6 +2367,8 @@ final class WorkspaceViewController: NSViewController {
             repositoryBranches: repositoryBranches,
             repositoryRemoteURLs: repositoryRemoteURLs,
             pullRequestStatuses: pullRequestStatusStore.statuses,
+            taskAgentActivity: taskAgentActivity,
+            repositoryAgentActivity: repositoryAgentActivity,
             taskErrors: taskErrors,
             repositoryErrors: displayedRepositoryErrors,
             loadError: taskLoadError

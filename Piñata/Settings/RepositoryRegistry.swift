@@ -331,6 +331,8 @@ struct RepositoryInspector: Sendable {
         at path: String,
         branchHint: String?,
         taskID: UUID? = nil,
+        branchWasCreated: Bool = false,
+        worktreeWasCreated: Bool = false,
         from repository: RegisteredRepository,
         connection: SSHConnection? = nil
     ) throws {
@@ -340,22 +342,28 @@ struct RepositoryInspector: Sendable {
                 connection: connection
             )
         )
-        var worktree = worktrees.first {
-            let pathMatches = connection == nil
-                ? URL(fileURLWithPath: $0.path).standardizedFileURL
-                    == URL(fileURLWithPath: path).standardizedFileURL
-                : $0.path == path
-            return pathMatches
+        let expectedWorktree = worktrees.first {
+            worktreePathsMatch($0.path, path, connection: connection)
         }
-        if worktree == nil, taskID != nil, let branchHint {
-            worktree = worktrees.first { $0.branch == branchHint }
+        let ownedWorktree = ownedWorktree(
+            in: worktrees,
+            taskID: taskID,
+            repository: repository,
+            connection: connection
+        )
+        let worktree: RepositoryWorktree?
+        if let ownedWorktree {
+            worktree = ownedWorktree
+        } else if taskID == nil {
+            worktree = expectedWorktree
+        } else if branchWasCreated, expectedWorktree?.branch == branchHint {
+            worktree = expectedWorktree
+        } else {
+            worktree = nil
         }
-        if worktree == nil {
-            worktree = ownedWorktree(
-                in: worktrees,
-                taskID: taskID,
-                repository: repository,
-                connection: connection
+        if taskID != nil, worktreeWasCreated, expectedWorktree != nil, worktree == nil {
+            throw RepositoryInspectionError.gitFailed(
+                "The expected path is now registered to a different worktree."
             )
         }
         let branch: String?
@@ -370,18 +378,36 @@ struct RepositoryInspector: Sendable {
             branch = worktree?.branch ?? branchHint
         }
         let pathExists = connection == nil && FileManager.default.fileExists(atPath: path)
-        guard worktree != nil || !pathExists else {
+        guard worktree != nil || !pathExists || taskID != nil else {
             throw RepositoryInspectionError.gitFailed(
                 "Could not verify that the path is a Git worktree."
             )
         }
 
         if let worktree {
-            _ = try gitOutput(
-                ["-C", repository.path, "worktree", "remove", "--force", worktree.path],
-                timeout: 15 * 60,
-                connection: connection
-            )
+            do {
+                _ = try gitOutput(
+                    ["-C", repository.path, "worktree", "remove", "--force", worktree.path],
+                    timeout: 15 * 60,
+                    connection: connection
+                )
+            } catch {
+                _ = try? gitOutput(
+                    ["-C", repository.path, "worktree", "prune", "--expire", "now"],
+                    connection: connection
+                )
+                let remainingWorktrees = parseWorktrees(
+                    try gitOutput(
+                        ["-C", repository.path, "worktree", "list", "--porcelain"],
+                        connection: connection
+                    )
+                )
+                if remainingWorktrees.contains(where: {
+                    worktreePathsMatch($0.path, worktree.path, connection: connection)
+                }) {
+                    throw error
+                }
+            }
             let remainingWorktrees = parseWorktrees(
                 try gitOutput(
                     ["-C", repository.path, "worktree", "list", "--porcelain"],
@@ -389,7 +415,7 @@ struct RepositoryInspector: Sendable {
                 )
             )
             if remainingWorktrees.contains(where: {
-                $0.path == worktree.path || $0.branch == branch
+                worktreePathsMatch($0.path, worktree.path, connection: connection)
             }) {
                 throw RepositoryInspectionError.gitFailed(
                     "Could not remove the worktree before deleting its branch."
@@ -397,7 +423,18 @@ struct RepositoryInspector: Sendable {
             }
         }
 
-        if let branch, (taskID != nil || branch.hasPrefix(TaskBranchName.defaultPrefix)), !(try gitOutput(
+        let branchIsCheckedOut = parseWorktrees(
+            try gitOutput(
+                ["-C", repository.path, "worktree", "list", "--porcelain"],
+                connection: connection
+            )
+        ).contains { $0.branch == branch }
+        if let branch,
+           !branchIsCheckedOut,
+           (branchWasCreated
+               || worktree != nil
+               || (taskID == nil && branch.hasPrefix(TaskBranchName.defaultPrefix))),
+           !(try gitOutput(
             ["-C", repository.path, "branch", "--list", branch],
             connection: connection
         )).isEmpty {
@@ -428,6 +465,29 @@ struct RepositoryInspector: Sendable {
             ).trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             return ownerTask == taskValue && ownerRepository == repositoryValue
         }
+    }
+
+    private func worktreePathsMatch(
+        _ first: String,
+        _ second: String,
+        connection: SSHConnection?
+    ) -> Bool {
+        guard connection == nil else { return first == second }
+        return canonicalLocalPath(first) == canonicalLocalPath(second)
+    }
+
+    private func canonicalLocalPath(_ path: String) -> String {
+        var existing = URL(fileURLWithPath: path).standardizedFileURL
+        var missingComponents: [String] = []
+        while existing.path != "/", !FileManager.default.fileExists(atPath: existing.path) {
+            missingComponents.append(existing.lastPathComponent)
+            existing.deleteLastPathComponent()
+        }
+        var resolved = existing.resolvingSymlinksInPath().standardizedFileURL
+        for component in missingComponents.reversed() {
+            resolved.appendPathComponent(component)
+        }
+        return resolved.standardizedFileURL.path
     }
 
     private func gitOutput(
@@ -712,6 +772,24 @@ struct WorktreeProvisioningReport: Codable, Equatable, Sendable {
         steps.first(where: { $0.status == .failed })
             .map { WorktreeProvisioningFailureSummary.summarize($0.detail) }
     }
+
+    var branchWasCreated: Bool {
+        steps.contains { $0.title == "Create branch" && $0.status == .completed }
+    }
+
+    func recoveringFromInterruption() -> Self {
+        guard !succeeded, failureMessage == nil,
+              let index = steps.firstIndex(where: { $0.status != .completed }) else {
+            return self
+        }
+        var recovered = steps
+        recovered[index] = WorktreeProvisioningStep(
+            title: recovered[index].title,
+            status: .failed,
+            detail: "Worktree creation was interrupted. Retry to continue safely."
+        )
+        return Self(path: path, branch: branch, baseBranch: baseBranch, steps: recovered)
+    }
 }
 
 enum WorktreeProvisioningError: LocalizedError {
@@ -750,14 +828,15 @@ struct WorktreeProvisioner {
     ) -> WorktreeProvisioningReport {
         let name = WorktreePathResolver.serializedTaskName(taskTitle)
         let destination: String
-        if connection == nil {
+        switch repository.target {
+        case .local:
             let root = WorktreePathResolver.root(
                 for: repository,
                 globalBasePath: globalBasePath,
                 fileManager: fileManager
             )
             destination = nextAvailableDestination(in: root, named: name).path
-        } else {
+        case .ssh:
             destination = WorktreePathResolver.remoteRoot(
                 for: repository,
                 globalBasePath: globalBasePath
@@ -884,12 +963,59 @@ struct WorktreeProvisioner {
         update(0, status: fetch.status, detail: fetch.detail)
         guard fetch.status == .completed else { return report }
 
+        do {
+            let path = try nextAvailablePath(startingAt: report.path)
+            if path != report.path {
+                report = WorktreeProvisioningReport(
+                    path: path,
+                    branch: report.branch,
+                    baseBranch: report.baseBranch,
+                    steps: report.steps
+                )
+                onUpdate(report)
+            }
+        } catch {
+            update(2, status: .failed, detail: error.localizedDescription)
+            return report
+        }
+
         update(1, status: .running, detail: "Running…")
-        let createBranch = runStep(
-            report.steps[1].title,
-            arguments: ["-C", repository.path, "branch", report.branch, report.baseBranch],
-            onOutput: { _ in }
-        )
+        let requestedBranch = report.branch
+        var createBranch: WorktreeProvisioningStep?
+        for _ in 0..<100 {
+            do {
+                let branch = try nextAvailableBranch(
+                    in: repository,
+                    startingAt: requestedBranch
+                )
+                if branch != report.branch {
+                    report = WorktreeProvisioningReport(
+                        path: report.path,
+                        branch: branch,
+                        baseBranch: report.baseBranch,
+                        steps: report.steps
+                    )
+                    onUpdate(report)
+                }
+            } catch {
+                update(1, status: .failed, detail: error.localizedDescription)
+                return report
+            }
+            let attempt = runStep(
+                report.steps[1].title,
+                arguments: ["-C", repository.path, "branch", report.branch, report.baseBranch],
+                onOutput: { _ in }
+            )
+            createBranch = attempt
+            if attempt.status == .completed
+                || !attempt.detail.localizedCaseInsensitiveContains("already exists") {
+                break
+            }
+        }
+        guard let createBranch else {
+            update(1, status: .failed, detail: "Could not choose an available branch name.")
+            return report
+        }
         update(1, status: createBranch.status, detail: createBranch.detail)
         guard createBranch.status == .completed else { return report }
 
@@ -940,6 +1066,53 @@ struct WorktreeProvisioner {
             destination = root.appendingPathComponent("\(name)-\(suffix)", isDirectory: true)
         }
         return destination
+    }
+
+    private func nextAvailableBranch(
+        in repository: RegisteredRepository,
+        startingAt branch: String
+    ) throws -> String {
+        var suffix = 1
+        var candidate = branch
+        while !(try runGit(
+            ["-C", repository.path, "branch", "--list", candidate],
+            onOutput: { _ in }
+        )).isEmpty {
+            suffix += 1
+            candidate = "\(branch)-\(suffix)"
+        }
+        return candidate
+    }
+
+    private func nextAvailablePath(startingAt path: String) throws -> String {
+        var suffix = 1
+        var candidate = path
+        while try pathExists(candidate) {
+            suffix += 1
+            candidate = "\(path)-\(suffix)"
+        }
+        return candidate
+    }
+
+    private func pathExists(_ path: String) throws -> Bool {
+        guard let connection else {
+            return fileManager.fileExists(atPath: path)
+        }
+        let process = SSHCommand.makeProcess(
+            connection: connection,
+            command: ["test", "-e", path],
+            reuseConnection: true
+        )
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        process.waitUntilExit()
+        switch process.terminationStatus {
+        case 0: return true
+        case 1: return false
+        default:
+            throw WorktreeProvisioningError.gitFailed("Could not inspect the worktree destination.")
+        }
     }
 
     private func runStep(

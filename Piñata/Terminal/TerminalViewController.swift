@@ -127,6 +127,52 @@ struct TerminalSessionSnapshot: Codable, Equatable, Sendable {
     }
 }
 
+struct AgentTitleActivityDetector {
+    private(set) var isActive = false
+
+    mutating func update(title: String) -> Bool {
+        isActive = Self.frame(in: title) != nil
+        return isActive
+    }
+
+    private static func frame(in title: String) -> Character? {
+        let parts = title.split(maxSplits: 2, whereSeparator: \.isWhitespace)
+        guard parts.count >= 2 else { return nil }
+        let indicator = parts.count == 3 && parts[1].count == 1 ? parts[1] : parts[0]
+        guard indicator.count == 1,
+              let frame = indicator.first,
+              isSpinnerFrame(frame)
+        else { return nil }
+        return frame
+    }
+
+    private static func isSpinnerFrame(_ frame: Character) -> Bool {
+        var hasSymbol = false
+        for scalar in frame.unicodeScalars {
+            if isSymbol(scalar) {
+                hasSymbol = true
+                continue
+            }
+            switch scalar.properties.generalCategory {
+            case .nonspacingMark, .enclosingMark, .format:
+                continue
+            default:
+                return false
+            }
+        }
+        return hasSymbol
+    }
+
+    private static func isSymbol(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.properties.generalCategory {
+        case .currencySymbol, .mathSymbol, .modifierSymbol, .otherSymbol:
+            true
+        default:
+            false
+        }
+    }
+}
+
 @MainActor
 final class TerminalViewController: NSViewController {
     private let runtime: GhosttyRuntime
@@ -134,9 +180,13 @@ final class TerminalViewController: NSViewController {
     private var root: PaneNode
     private var activePaneID: PaneID
     private var paneControllers: [PaneID: TerminalPaneViewController] = [:]
+    private var activeAgentPaneIDs = Set<PaneID>()
     private var rootController: NSViewController?
     var onCloseLastPane: (() -> Void)?
     var onChange: (() -> Void)?
+    var onAgentActivityChanged: ((Bool) -> Void)?
+
+    var hasActiveAgent: Bool { !activeAgentPaneIDs.isEmpty }
 
     init(
         runtime: GhosttyRuntime,
@@ -279,8 +329,10 @@ final class TerminalViewController: NSViewController {
             return
         }
         guard let nextRoot = root.removing(paneID) else { return }
+        let wasActive = hasActiveAgent
         let nearest = root.nearestPane(to: paneID)
         if let removed = paneControllers.removeValue(forKey: paneID) {
+            activeAgentPaneIDs.remove(paneID)
             removed.terminateSession()
             removed.view.removeFromSuperview()
             removed.removeFromParent()
@@ -292,6 +344,9 @@ final class TerminalViewController: NSViewController {
         rebuild()
         updateActivePane()
         focusActivePane()
+        if wasActive != hasActiveAgent {
+            onAgentActivityChanged?(hasActiveAgent)
+        }
         onChange?()
     }
 
@@ -315,6 +370,18 @@ final class TerminalViewController: NSViewController {
         }
         controller.didRequestClose = { [weak self] paneID in
             self?.close(paneID)
+        }
+        controller.didChangeAgentActivity = { [weak self] paneID, active in
+            guard let self else { return }
+            let wasActive = self.hasActiveAgent
+            if active {
+                self.activeAgentPaneIDs.insert(paneID)
+            } else {
+                self.activeAgentPaneIDs.remove(paneID)
+            }
+            if wasActive != self.hasActiveAgent {
+                self.onAgentActivityChanged?(self.hasActiveAgent)
+            }
         }
         return controller
     }
@@ -397,6 +464,11 @@ private final class TerminalPaneViewController: NSViewController {
     var didFocus: ((PaneID) -> Void)?
     var didRequestSplit: ((PaneID, SplitAxis) -> Void)?
     var didRequestClose: ((PaneID) -> Void)?
+    var didChangeAgentActivity: ((PaneID, Bool) -> Void)?
+    private static let agentActivityDelay: TimeInterval = 0.5
+    private var agentActivityDetector = AgentTitleActivityDetector()
+    private var pendingAgentActivity: DispatchWorkItem?
+    private var isAgentActive = false
 
     init(
         paneID: PaneID,
@@ -422,8 +494,16 @@ private final class TerminalPaneViewController: NSViewController {
             guard let self else { return }
             self.didFocus?(self.paneID)
         }
-        terminalView.didChangeTitle = { [weak header] title in
+        terminalView.didChangeTitle = { [weak self, weak header] title in
             header?.setTitle(title)
+            guard let self else { return }
+            if self.agentActivityDetector.update(title: title) {
+                self.scheduleAgentActivity()
+            } else {
+                self.pendingAgentActivity?.cancel()
+                self.pendingAgentActivity = nil
+                self.setAgentActivity(false)
+            }
         }
         terminalView.didConnect = { [weak header] in
             header?.setTitle(defaultTitle)
@@ -447,6 +527,24 @@ private final class TerminalPaneViewController: NSViewController {
             guard let self else { return }
             self.didRequestClose?(self.paneID)
         }
+    }
+
+    private func scheduleAgentActivity() {
+        guard !isAgentActive, pendingAgentActivity == nil else { return }
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingAgentActivity = nil
+            guard self.agentActivityDetector.isActive else { return }
+            self.setAgentActivity(true)
+        }
+        pendingAgentActivity = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.agentActivityDelay, execute: workItem)
+    }
+
+    private func setAgentActivity(_ active: Bool) {
+        guard isAgentActive != active else { return }
+        isAgentActive = active
+        didChangeAgentActivity?(paneID, active)
     }
 
     var workingDirectory: String { terminalView.workingDirectory }

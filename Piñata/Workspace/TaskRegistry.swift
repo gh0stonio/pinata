@@ -89,6 +89,33 @@ struct WorkspaceTask: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+func recoverInterruptedWorktreeProvisioning(in tasks: [WorkspaceTask]) -> [WorkspaceTask] {
+    tasks.map { task in
+        let repositories = task.repositories.map { attachment in
+            guard let report = attachment.worktreeProvisioning else { return attachment }
+            let recovered = report.recoveringFromInterruption()
+            guard recovered != report else { return attachment }
+            return TaskRepositoryAttachment(
+                repositoryID: attachment.repositoryID,
+                name: attachment.name,
+                worktreePath: attachment.worktreePath,
+                worktreeProvisioning: recovered,
+                branch: attachment.branch,
+                pullRequests: attachment.pullRequests,
+                pullRequestNumbers: attachment.pullRequestNumbers,
+                pullRequestsFetchedAt: attachment.pullRequestsFetchedAt
+            )
+        }
+        return WorkspaceTask(
+            id: task.id,
+            title: task.title,
+            repositories: repositories,
+            createdAt: task.createdAt,
+            isPinned: task.isPinned
+        )
+    }
+}
+
 func reorderTasks(
     _ tasks: [WorkspaceTask],
     moving sourceID: UUID,
