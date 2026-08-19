@@ -218,7 +218,11 @@ final class WorkspaceViewController: NSViewController {
         let didLoadTaskRegistry: Bool
         let loadError: String?
         do {
-            loadedTasks = try taskStore.load()
+            let storedTasks = try taskStore.load()
+            loadedTasks = recoverInterruptedWorktreeProvisioning(in: storedTasks)
+            if loadedTasks != storedTasks {
+                try? taskStore.save(loadedTasks)
+            }
             didLoadTaskRegistry = true
             loadError = nil
         } catch {
@@ -1108,6 +1112,7 @@ final class WorkspaceViewController: NSViewController {
                         at: report.path,
                         branchHint: report.branch,
                         taskID: scope.taskID,
+                        branchWasCreated: report.branchWasCreated,
                         from: repository,
                         connection: connection
                     )
@@ -1149,7 +1154,7 @@ final class WorkspaceViewController: NSViewController {
                     title: "Prepare retry",
                     status: .failed,
                     detail: message
-                )]
+                )] + report.steps.filter { $0.title != "Prepare retry" }
             ),
             for: scope
         )
@@ -1347,23 +1352,37 @@ final class WorkspaceViewController: NSViewController {
         var provisionableRepositories: [(repository: RegisteredRepository, connection: SSHConnection?)] = []
         for repository in repositories {
             let scope = TaskRepositoryScope(taskID: task.id, repositoryID: repository.id)
-            let connection: SSHConnection?
-            do {
-                connection = try sshConnection(for: repository)
-            } catch {
-                repositoryErrors[scope] = error.localizedDescription
-                continue
-            }
-            let provisioner = WorktreeProvisioner(
+            let report = WorktreeProvisioner(
                 globalBasePath: worktreeBasePath,
-                branchPrefix: branchPrefix,
-                connection: connection
-            )
-            let report = provisioner.preparing(
+                branchPrefix: branchPrefix
+            ).preparing(
                 repository: repository,
                 taskID: task.id,
                 taskTitle: task.title
             )
+            let connection: SSHConnection?
+            do {
+                connection = try sshConnection(for: repository)
+            } catch {
+                let message = error.localizedDescription
+                let failedReport = WorktreeProvisioningReport(
+                    path: report.path,
+                    branch: report.branch,
+                    baseBranch: report.baseBranch,
+                    steps: [WorktreeProvisioningStep(
+                        title: "Connect to repository",
+                        status: .failed,
+                        detail: message
+                    )]
+                )
+                do {
+                    try storeWorktreeProvisioning(failedReport, for: scope)
+                    repositoryErrors[scope] = message
+                } catch {
+                    repositoryErrors[scope] = error.localizedDescription
+                }
+                continue
+            }
             do {
                 try storeWorktreeProvisioning(report, for: scope)
                 provisionableRepositories.append((repository, connection))
@@ -1750,6 +1769,9 @@ final class WorkspaceViewController: NSViewController {
                             branchHint: attachment.branch
                                 ?? attachment.worktreeProvisioning?.branch,
                             taskID: task.id,
+                            branchWasCreated: attachment.branch != nil
+                                || attachment.worktreeProvisioning?.branchWasCreated == true,
+                            worktreeWasCreated: attachment.worktreePath != nil,
                             from: repository,
                             connection: connection
                         )
@@ -1851,6 +1873,9 @@ final class WorkspaceViewController: NSViewController {
                             branchHint: attachment.branch
                                 ?? attachment.worktreeProvisioning?.branch,
                             taskID: scope.taskID,
+                            branchWasCreated: attachment.branch != nil
+                                || attachment.worktreeProvisioning?.branchWasCreated == true,
+                            worktreeWasCreated: attachment.worktreePath != nil,
                             from: repository,
                             connection: connection
                         )
@@ -3225,7 +3250,7 @@ private enum FileEditorStore {
         let data = Data(value.utf8)
         switch target {
         case .local:
-            try data.write(to: URL(fileURLWithPath: path))
+            try data.write(to: URL(fileURLWithPath: path), options: .atomic)
         case .ssh(let connection):
             let temp = "\(path).pinata-\(UUID().uuidString)"
             _ = try run(connection: connection, script: "cat > \(SSHCommand.shellQuote(temp)) && mv \(SSHCommand.shellQuote(temp)) \(SSHCommand.shellQuote(path))", input: data)
