@@ -9,7 +9,14 @@ enum SettingsLayout {
     static let rowControlMaximumWidth: CGFloat = 430
     static let rowColumnGap: CGFloat = 20
     static let splitColumnGap: CGFloat = 20
-    static let contentMinimumWidth: CGFloat = 752
+    static var contentMinimumWidth: CGFloat {
+        pageHorizontalPadding * 2
+            + summaryMinimumWidth
+            + splitColumnGap
+            + rowLabelMinimumWidth
+            + rowColumnGap
+            + rowControlMinimumWidth
+    }
     static let sectionGap: CGFloat = 16
     static let pageHorizontalPadding: CGFloat = 24
     static let pageVerticalPadding: CGFloat = 18
@@ -43,6 +50,20 @@ enum SettingsLayout {
     static let breadcrumbHeight: CGFloat = 24
     static let breadcrumbGap: CGFloat = 6
     static let breadcrumbToContentGap: CGFloat = 2
+    static let themeControlWidth: CGFloat = 122
+    static let intensityControlWidth: CGFloat = 272
+    static let appFontControlWidth: CGFloat = 180
+    static let terminalFontControlWidth: CGFloat = 82
+    static let repositoryPathControlWidth: CGFloat = 300
+    static let choiceHorizontalPadding: CGFloat = 18
+    static let accentCheckmarkSize: CGFloat = 15
+
+    static var valueFont: NSFont {
+        .monospacedSystemFont(
+            ofSize: AppTheme.typography.settingsValue,
+            weight: .regular
+        )
+    }
 
     static func applyControlSurface(_ view: NSView, clipsContents: Bool = false) {
         view.wantsLayer = true
@@ -90,6 +111,7 @@ final class SettingsSplitPageView: NSView, SettingsThemeApplying {
     private var sectionCount = 0
     private var previousSummary: NSView?
     private var previousContent: NSView?
+    private var isSizingDocument = false
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -100,6 +122,11 @@ final class SettingsSplitPageView: NSView, SettingsThemeApplying {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is unavailable")
+    }
+
+    override func layout() {
+        super.layout()
+        sizeDocumentToViewport()
     }
 
     func addSection(title: String, detail: String, content: NSView) {
@@ -146,17 +173,20 @@ final class SettingsSplitPageView: NSView, SettingsThemeApplying {
         document.layer?.backgroundColor = AppTheme.background.cgColor
         leftStack.arrangedSubviews.compactMap { $0 as? SettingsThemeApplying }.forEach { $0.applyTheme() }
         rightStack.arrangedSubviews.compactMap { $0 as? SettingsThemeApplying }.forEach { $0.applyTheme() }
+        document.subviews.compactMap { $0 as? SettingsSplitDivider }.forEach { $0.applyTheme() }
     }
 
     private func installLayout() {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.drawsBackground = false
         scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = true
         scrollView.autohidesScrollers = true
         scrollView.automaticallyAdjustsContentInsets = false
         scrollView.verticalScrollElasticity = .none
+        scrollView.horizontalScrollElasticity = .none
         scrollView.documentView = document
-        document.translatesAutoresizingMaskIntoConstraints = false
+        document.translatesAutoresizingMaskIntoConstraints = true
         document.wantsLayer = true
         [leftStack, rightStack].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
@@ -166,10 +196,6 @@ final class SettingsSplitPageView: NSView, SettingsThemeApplying {
             document.addSubview($0)
         }
         addSubview(scrollView)
-        let viewportHeight = document.heightAnchor.constraint(
-            equalTo: scrollView.contentView.heightAnchor
-        )
-        viewportHeight.priority = .defaultHigh
         let preferredSummaryWidth = leftStack.widthAnchor.constraint(
             equalTo: document.widthAnchor,
             multiplier: 0.25
@@ -180,9 +206,6 @@ final class SettingsSplitPageView: NSView, SettingsThemeApplying {
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollView.topAnchor.constraint(equalTo: topAnchor),
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
-            document.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
-            document.heightAnchor.constraint(greaterThanOrEqualTo: scrollView.contentView.heightAnchor),
-            viewportHeight,
             leftStack.leadingAnchor.constraint(
                 equalTo: document.leadingAnchor,
                 constant: SettingsLayout.pageHorizontalPadding
@@ -214,6 +237,22 @@ final class SettingsSplitPageView: NSView, SettingsThemeApplying {
             ),
         ])
         applyTheme()
+    }
+
+    private func sizeDocumentToViewport() {
+        guard !isSizingDocument else { return }
+        let viewport = scrollView.contentView.bounds.size
+        guard viewport.width > 0, viewport.height > 0 else { return }
+
+        isSizingDocument = true
+        defer { isSizingDocument = false }
+
+        let width = max(viewport.width, SettingsLayout.contentMinimumWidth)
+        document.setFrameSize(NSSize(width: width, height: max(viewport.height, document.frame.height)))
+        document.layoutSubtreeIfNeeded()
+        let contentHeight = max(leftStack.frame.maxY, rightStack.frame.maxY)
+            + SettingsLayout.pageVerticalPadding
+        document.setFrameSize(NSSize(width: width, height: max(viewport.height, contentHeight)))
     }
 }
 
@@ -300,36 +339,6 @@ extension SettingsPageContent where Self: NSView {
 }
 
 @MainActor
-class SettingsHoverView: NSView {
-    private var trackingArea: NSTrackingArea?
-    private(set) var isHovering = false {
-        didSet { hoverStateDidChange() }
-    }
-
-    func hoverStateDidChange() {}
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let trackingArea { removeTrackingArea(trackingArea) }
-        let trackingArea = NSTrackingArea(
-            rect: bounds,
-            options: [.activeInKeyWindow, .mouseEnteredAndExited, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(trackingArea)
-        self.trackingArea = trackingArea
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        isHovering = true
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        isHovering = false
-    }
-}
-
-@MainActor
 func settingsRowStack(_ rows: [SettingsRowView]) -> NSStackView {
     SettingsRowStack(rows: rows)
 }
@@ -357,18 +366,18 @@ private final class SettingsRowStack: NSStackView, SettingsThemeApplying {
 }
 
 @MainActor
-final class SettingsActionButton: NSButton, SettingsThemeApplying {
-    private var trackingArea: NSTrackingArea?
-    private var isHovering = false {
-        didSet { applyTheme() }
-    }
-
+final class SettingsActionButton: AppButton, SettingsThemeApplying {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        isBordered = false
-        bezelStyle = .shadowlessSquare
-        focusRingType = .none
+        role = .link
         applyTheme()
+    }
+
+    convenience init(title: String, target: AnyObject?, action: Selector?) {
+        self.init(frame: .zero)
+        self.title = title
+        self.target = target
+        self.action = action
     }
 
     @available(*, unavailable)
@@ -376,29 +385,9 @@ final class SettingsActionButton: NSButton, SettingsThemeApplying {
         fatalError("init(coder:) is unavailable")
     }
 
-    func applyTheme() {
-        contentTintColor = isHovering ? AppTheme.accent : AppTheme.secondaryText
+    override func applyTheme() {
+        super.applyTheme()
         font = AppTheme.font(ofSize: AppTheme.typography.settingsHeading, weight: 600)
-    }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let trackingArea { removeTrackingArea(trackingArea) }
-        let trackingArea = NSTrackingArea(
-            rect: bounds,
-            options: [.activeInKeyWindow, .mouseEnteredAndExited, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(trackingArea)
-        self.trackingArea = trackingArea
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        isHovering = true
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        isHovering = false
     }
 }
 
@@ -541,6 +530,7 @@ final class SettingsValueLabel: NSTextField, SettingsThemeApplying {
         lineBreakMode = .byWordWrapping
         maximumNumberOfLines = 0
         alignment = .right
+        setContentCompressionResistancePriority(.required, for: .vertical)
         applyTheme()
     }
 
@@ -551,7 +541,7 @@ final class SettingsValueLabel: NSTextField, SettingsThemeApplying {
 
     func applyTheme() {
         textColor = AppTheme.secondaryText
-        font = .monospacedSystemFont(ofSize: AppTheme.typography.settingsBody, weight: .regular)
+        font = SettingsLayout.valueFont
     }
 }
 
@@ -564,12 +554,20 @@ final class SettingsMessageRow: NSView, SettingsThemeApplying {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         label.translatesAutoresizingMaskIntoConstraints = false
+        label.setContentCompressionResistancePriority(.required, for: .vertical)
         addSubview(label)
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: SettingsLayout.rowHeight),
+            heightAnchor.constraint(greaterThanOrEqualToConstant: SettingsLayout.rowHeight),
             label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: SettingsLayout.pageHorizontalPadding),
             label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -SettingsLayout.pageHorizontalPadding),
-            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            label.topAnchor.constraint(
+                equalTo: topAnchor,
+                constant: SettingsLayout.blockVerticalPadding / 2
+            ),
+            label.bottomAnchor.constraint(
+                equalTo: bottomAnchor,
+                constant: -(SettingsLayout.blockVerticalPadding / 2)
+            ),
         ])
         applyTheme()
     }
@@ -613,7 +611,7 @@ final class SettingsTextField: NSTextField, SettingsThemeApplying {
     func applyTheme() {
         textColor = AppTheme.primaryText
         SettingsLayout.applyControlSurface(self, clipsContents: true)
-        font = AppTheme.font(ofSize: AppTheme.typography.settingsBody)
+        font = SettingsLayout.valueFont
         updateBorder()
     }
 
@@ -627,6 +625,21 @@ final class SettingsTextField: NSTextField, SettingsThemeApplying {
         super.textDidEndEditing(notification)
         isEditing = false
         updateBorder()
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        if accepted {
+            isEditing = true
+            updateBorder()
+        }
+        return accepted
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        isEditing = true
+        updateBorder()
+        super.mouseDown(with: event)
     }
 
     private func updateBorder() {
@@ -655,7 +668,7 @@ final class SettingsPopupButton: NSPopUpButton, SettingsThemeApplying {
 
     func applyTheme() {
         contentTintColor = AppTheme.primaryText
-        font = .monospacedSystemFont(ofSize: AppTheme.typography.settingsBody, weight: .regular)
+        font = SettingsLayout.valueFont
         SettingsLayout.applyControlSurface(self, clipsContents: true)
     }
 }

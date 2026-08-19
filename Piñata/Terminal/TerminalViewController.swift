@@ -99,7 +99,10 @@ final class TerminalViewController: NSViewController {
     private var rootController: NSViewController?
     var onCloseLastPane: (() -> Void)?
 
-    init(runtime: GhosttyRuntime) {
+    init(
+        runtime: GhosttyRuntime,
+        workingDirectory: String = FileManager.default.homeDirectoryForCurrentUser.path
+    ) {
         let paneID = UUID()
         self.runtime = runtime
         root = .pane(paneID)
@@ -107,7 +110,7 @@ final class TerminalViewController: NSViewController {
         super.init(nibName: nil, bundle: nil)
         paneControllers[paneID] = makePaneController(
             paneID: paneID,
-            workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path
+            workingDirectory: workingDirectory
         )
     }
 
@@ -148,8 +151,13 @@ final class TerminalViewController: NSViewController {
     func applyTheme() {
         view.layer?.backgroundColor = AppTheme.background.cgColor
         paneControllers.values.forEach { $0.applyTheme() }
-        rebuild()
+        if let rootController { invalidateSplitViews(in: rootController.view) }
         updateActivePane()
+    }
+
+    private func invalidateSplitViews(in view: NSView) {
+        if view is PaneSplitView { view.needsDisplay = true }
+        view.subviews.forEach(invalidateSplitViews)
     }
 
     private func split(_ paneID: PaneID, axis: SplitAxis) {
@@ -276,8 +284,8 @@ final class TerminalViewController: NSViewController {
             }
             let first = NSSplitViewItem(viewController: makeNodeController(split.first))
             let second = NSSplitViewItem(viewController: makeNodeController(split.second))
-            first.minimumThickness = 80
-            second.minimumThickness = 80
+            first.minimumThickness = AppTheme.paneMinimumSize
+            second.minimumThickness = AppTheme.paneMinimumSize
             controller.addSplitViewItem(first)
             controller.addSplitViewItem(second)
             controller.scheduleInitialRatio()
@@ -366,10 +374,9 @@ private final class TerminalPaneViewController: NSViewController {
         view = container
     }
 
-
     func setActive(_ active: Bool, canClose: Bool) {
         header.setActive(active, canClose: canClose)
-        terminalView.alphaValue = active ? 1 : 0.82
+        terminalView.alphaValue = active ? 1 : AppTheme.inactivePaneAlpha
     }
 
     func applyTheme() {
@@ -416,7 +423,10 @@ private final class PaneHeaderView: NSView {
         icon.translatesAutoresizingMaskIntoConstraints = false
         icon.image = NSImage(systemSymbolName: "terminal", accessibilityDescription: nil)
         icon.contentTintColor = AppTheme.tertiaryText
-        icon.symbolConfiguration = .init(pointSize: 14, weight: .medium)
+        icon.symbolConfiguration = .init(
+            pointSize: AppTheme.paneHeaderIconPointSize,
+            weight: .medium
+        )
         icon.imageScaling = .scaleProportionallyUpOrDown
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -425,7 +435,6 @@ private final class PaneHeaderView: NSView {
         titleLabel.textColor = AppTheme.secondaryText
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
 
         for button in [verticalButton, horizontalButton, closeButton] {
             addSubview(button)
@@ -441,18 +450,36 @@ private final class PaneHeaderView: NSView {
         closeButton.action = #selector(closePane)
 
         NSLayoutConstraint.activate([
-            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            icon.leadingAnchor.constraint(
+                equalTo: leadingAnchor,
+                constant: AppTheme.workspaceContentInset
+            ),
             icon.centerYAnchor.constraint(equalTo: centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 18),
-            icon.heightAnchor.constraint(equalToConstant: 14),
-            titleLabel.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 6),
+            icon.widthAnchor.constraint(equalToConstant: AppTheme.paneHeaderIconWidth),
+            icon.heightAnchor.constraint(equalToConstant: AppTheme.paneHeaderIconHeight),
+            titleLabel.leadingAnchor.constraint(
+                equalTo: icon.trailingAnchor,
+                constant: AppTheme.paneHeaderContentGap
+            ),
             titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            verticalButton.leadingAnchor.constraint(greaterThanOrEqualTo: titleLabel.trailingAnchor, constant: 6),
-            closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            verticalButton.leadingAnchor.constraint(
+                greaterThanOrEqualTo: titleLabel.trailingAnchor,
+                constant: AppTheme.paneHeaderContentGap
+            ),
+            closeButton.trailingAnchor.constraint(
+                equalTo: trailingAnchor,
+                constant: -AppTheme.paneHeaderTrailingInset
+            ),
             closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            horizontalButton.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -2),
+            horizontalButton.trailingAnchor.constraint(
+                equalTo: closeButton.leadingAnchor,
+                constant: -AppTheme.paneHeaderActionGap
+            ),
             horizontalButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            verticalButton.trailingAnchor.constraint(equalTo: horizontalButton.leadingAnchor, constant: -2),
+            verticalButton.trailingAnchor.constraint(
+                equalTo: horizontalButton.leadingAnchor,
+                constant: -AppTheme.paneHeaderActionGap
+            ),
             verticalButton.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
@@ -502,7 +529,7 @@ private final class PaneHeaderView: NSView {
     func setActive(_ active: Bool, canClose: Bool) {
         self.active = active
         titleLabel.textColor = active ? AppTheme.secondaryText : AppTheme.tertiaryText
-        alphaValue = active ? 1 : 0.7
+        alphaValue = active ? 1 : AppTheme.inactivePaneHeaderAlpha
         closeButton.isEnabled = canClose
     }
 
@@ -520,28 +547,21 @@ private final class PaneHeaderView: NSView {
 }
 
 @MainActor
-private final class PaneActionButton: NSButton {
+private final class PaneActionButton: AppButton {
     init(symbolName: String, accessibilityLabel: String, toolTip: String) {
         super.init(frame: .zero)
+        role = .icon
         translatesAutoresizingMaskIntoConstraints = false
-        isBordered = false
-        bezelStyle = .regularSquare
         image = NSImage(systemSymbolName: symbolName, accessibilityDescription: accessibilityLabel)
         imageScaling = .scaleProportionallyDown
-        contentTintColor = AppTheme.tertiaryText
-        focusRingType = .none
+        layer?.cornerRadius = AppTheme.workspaceControlCornerRadius
         self.toolTip = toolTip
         setAccessibilityLabel(accessibilityLabel)
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: 22),
-            heightAnchor.constraint(equalToConstant: 22),
+            widthAnchor.constraint(equalToConstant: AppTheme.paneHeaderActionSize),
+            heightAnchor.constraint(equalToConstant: AppTheme.paneHeaderActionSize),
         ])
     }
-
-    func applyTheme() {
-        contentTintColor = AppTheme.tertiaryText
-    }
-
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is unavailable")
@@ -586,8 +606,8 @@ private final class PaneSplitView: NSSplitView {
             )
         }
         let hitArea = divider.insetBy(
-            dx: isVertical ? -4 : 0,
-            dy: isVertical ? 0 : -4
+            dx: isVertical ? -AppTheme.splitHitSlop : 0,
+            dy: isVertical ? 0 : -AppTheme.splitHitSlop
         )
         let hovering = hitArea.contains(point)
         guard hovering != hoveringDivider else { return }
@@ -668,7 +688,7 @@ private final class SplitHostController: NSSplitViewController {
         ofDividerAt dividerIndex: Int
     ) -> NSRect {
         splitView.isVertical
-            ? proposedEffectiveRect.insetBy(dx: -4, dy: 0)
-            : proposedEffectiveRect.insetBy(dx: 0, dy: -4)
+            ? proposedEffectiveRect.insetBy(dx: -AppTheme.splitHitSlop, dy: 0)
+            : proposedEffectiveRect.insetBy(dx: 0, dy: -AppTheme.splitHitSlop)
     }
 }

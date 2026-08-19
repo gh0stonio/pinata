@@ -75,6 +75,10 @@ final class PinataApp: NSObject, NSApplicationDelegate {
         workspaceViewController?.toggleLeftPanel(sender)
     }
 
+    @objc private func createTask(_ sender: Any?) {
+        workspaceViewController?.presentNewTask(sender)
+    }
+
     @objc private func createTerminalTab(_ sender: Any?) {
         workspaceViewController?.createTerminalTab(sender)
     }
@@ -147,6 +151,17 @@ final class PinataApp: NSObject, NSApplicationDelegate {
         )
         appItem.submenu = appMenu
         mainMenu.addItem(appItem)
+
+        let fileItem = NSMenuItem()
+        let fileMenu = NSMenu(title: "File")
+        let newTaskItem = fileMenu.addItem(
+            withTitle: "New Task",
+            action: #selector(createTask(_:)),
+            keyEquivalent: "n"
+        )
+        newTaskItem.target = self
+        fileItem.submenu = fileMenu
+        mainMenu.addItem(fileItem)
 
         let viewItem = NSMenuItem()
         let viewMenu = NSMenu(title: "View")

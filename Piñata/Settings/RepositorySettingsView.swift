@@ -4,7 +4,6 @@ import AppKit
 final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageContent {
     private let store = RepositoryRegistryStore()
     private let defaultsStore = RepositoryDefaultsStore()
-    private let inspector = RepositoryInspector()
     private let page = SettingsSplitPageView()
     private let errorLabel = NSTextField(wrappingLabelWithString: "")
     private let registerAction = RepositoryRegisterActionView()
@@ -13,8 +12,10 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
     private let repositoryRows = NSStackView()
     private var detailView: RepositoryDetailView?
     private var repositories: [RegisteredRepository] = []
+    private var registryLoaded = false
     private var selectedRepositoryID: UUID?
     private var contextTask: Task<Void, Never>?
+    private var registrationTask: Task<Void, Never>?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -39,6 +40,8 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
     }
 
     func didDeselect() {
+        registrationTask?.cancel()
+        registrationTask = nil
         resetToList()
     }
 
@@ -68,7 +71,7 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
             title: "Default worktree base",
             description: "Used by every repository without an override. Changes only affect future worktrees.",
             control: defaultWorktreeField,
-            controlWidth: 300,
+            controlWidth: SettingsLayout.repositoryPathControlWidth,
             minimumHeight: SettingsLayout.rowHeight
         )
 
@@ -119,16 +122,40 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
     }
 
     private func register(directory: URL) {
+        guard registryLoaded else {
+            setError("Repository registry is unavailable.")
+            return
+        }
+        registrationTask?.cancel()
+        let worker = Task.detached(priority: .userInitiated) {
+            try RepositoryInspector().inspect(directory: directory)
+        }
+        registrationTask = Task { [weak self] in
+            do {
+                let repository = try await withTaskCancellationHandler {
+                    try await worker.value
+                } onCancel: {
+                    worker.cancel()
+                }
+                guard !Task.isCancelled, let self else { return }
+                self.finishRegistration(repository)
+            } catch is CancellationError {
+                return
+            } catch {
+                self?.setError(error.localizedDescription)
+            }
+        }
+    }
+
+    private func finishRegistration(_ repository: RegisteredRepository) {
         do {
-            let repository = try inspector.inspect(directory: directory)
-            guard !repositories.contains(where: {
-                $0.path == repository.path || $0.name.caseInsensitiveCompare(repository.name) == .orderedSame
-            }) else {
+            guard !repositories.contains(where: { $0.path == repository.path }) else {
                 setError("Repository already registered.")
                 return
             }
-            repositories.append(repository)
-            try store.save(repositories)
+            let updatedRepositories = repositories + [repository]
+            try store.save(updatedRepositories)
+            repositories = updatedRepositories
             setError(nil)
             reloadRepositories(selecting: repository.id)
         } catch {
@@ -137,16 +164,29 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
     }
 
     private func reloadRepositories(selecting repositoryID: UUID? = nil) {
-        repositories = store.load().sorted {
-            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        do {
+            repositories = try store.load().sorted {
+                $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+            }
+            registryLoaded = true
+            setError(nil)
+        } catch {
+            repositories = []
+            registryLoaded = false
+            setError("Could not load registered repositories: \(error.localizedDescription)")
         }
-        let rows: [NSView] = repositories.isEmpty
-            ? [SettingsMessageRow("No repositories yet. Register one to attach code to tasks.")]
-            : repositories.map { repository in
+        let rows: [NSView]
+        if !registryLoaded {
+            rows = []
+        } else if repositories.isEmpty {
+            rows = [SettingsMessageRow("No repositories yet. Register one to attach code to tasks.")]
+        } else {
+            rows = repositories.map { repository in
                 let row = RepositoryRowView(repository: repository)
                 row.onSelect = { [weak self] in self?.select(repository.id) }
                 return row
             }
+        }
         repositoryRows.arrangedSubviews.forEach {
             repositoryRows.removeArrangedSubview($0)
             $0.removeFromSuperview()
@@ -169,18 +209,34 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
         contextTask?.cancel()
         showDetails(RepositoryDetailView(repository: repository))
 
+        let worker = Task.detached(priority: .userInitiated) { () throws -> (RegisteredRepository, RepositoryContext) in
+            let inspector = RepositoryInspector()
+            let refreshedRepository = try inspector.refresh(repository)
+            return (refreshedRepository, try inspector.context(for: refreshedRepository))
+        }
         contextTask = Task { [weak self] in
-            let (refreshedRepository, context) = await Task.detached {
-                let inspector = RepositoryInspector()
-                let refreshedRepository = inspector.refresh(repository)
-                return (refreshedRepository, inspector.context(for: refreshedRepository))
-            }.value
-            guard
-                !Task.isCancelled,
-                let self,
-                self.selectedRepositoryID == repositoryID
-            else { return }
-            self.installDetails(for: refreshedRepository, context: context)
+            do {
+                let (refreshedRepository, context) = try await withTaskCancellationHandler {
+                    try await worker.value
+                } onCancel: {
+                    worker.cancel()
+                }
+                guard
+                    !Task.isCancelled,
+                    let self,
+                    self.selectedRepositoryID == repositoryID
+                else { return }
+                self.installDetails(for: refreshedRepository, context: context)
+            } catch is CancellationError {
+                return
+            } catch {
+                guard
+                    !Task.isCancelled,
+                    let self,
+                    self.selectedRepositoryID == repositoryID
+                else { return }
+                self.installInspectionError(for: repository, error: error)
+            }
         }
     }
 
@@ -192,8 +248,13 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
             repository: repository,
             context: context
         )
-        details.onSave = { [weak self] repository in self?.save(repository) }
+        details.onSave = { [weak self] repository in self?.save(repository) ?? false }
         showDetails(details)
+        applyTheme()
+    }
+
+    private func installInspectionError(for repository: RegisteredRepository, error: Error) {
+        showDetails(RepositoryDetailView(repository: repository, errorMessage: error.localizedDescription))
         applyTheme()
     }
 
@@ -211,24 +272,39 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
         page.isHidden = true
     }
 
-    private func save(_ repository: RegisteredRepository) {
+    private func save(_ repository: RegisteredRepository) -> Bool {
+        guard registryLoaded else {
+            presentSaveError("Repository registry is unavailable.")
+            return false
+        }
         guard WorktreePathValidator.error(
             for: repository.worktreeBasePath ?? "",
             allowRepositoryRelative: true
         ) == nil else {
-            return
+            return false
         }
-        guard let index = repositories.firstIndex(where: { $0.id == repository.id }) else { return }
-        repositories[index] = repository
+        guard let index = repositories.firstIndex(where: { $0.id == repository.id }) else {
+            return false
+        }
+        var updatedRepositories = repositories
+        updatedRepositories[index] = repository
         do {
-            try store.save(repositories)
+            try store.save(updatedRepositories)
+            repositories = updatedRepositories
             setError(nil)
-            if detailView == nil {
-                reloadRepositories()
-            }
+            return true
         } catch {
-            setError(error.localizedDescription)
+            presentSaveError(error.localizedDescription)
+            return false
         }
+    }
+
+    private func presentSaveError(_ message: String) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Could not save repository settings"
+        alert.informativeText = message
+        alert.runModal()
     }
 
     private func closeDetails() {
@@ -238,6 +314,7 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
         detailView?.removeFromSuperview()
         detailView = nil
         page.isHidden = false
+        reloadRepositories()
         page.scrollToTop()
     }
 
@@ -263,12 +340,12 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
 }
 
 @MainActor
-private final class RepositoryRowView: SettingsHoverView, SettingsThemeApplying {
+private final class RepositoryRowView: AppHoverView, SettingsThemeApplying {
     var onSelect: (() -> Void)?
 
     private let nameLabel: NSTextField
     private let metadataLabel: NSTextField
-    private let button = NSButton(title: "", target: nil, action: nil)
+    private let button = AppButton(role: .hitTarget)
     private let repositoryIcon = NSImageView()
     private let chevron = NSImageView()
 
@@ -295,7 +372,6 @@ private final class RepositoryRowView: SettingsHoverView, SettingsThemeApplying 
             $0.translatesAutoresizingMaskIntoConstraints = false
             addSubview($0)
         }
-        button.isBordered = false
         button.target = self
         button.action = #selector(selectRepository)
         button.setAccessibilityLabel("Configure \(repository.name)")
@@ -343,7 +419,8 @@ private final class RepositoryRowView: SettingsHoverView, SettingsThemeApplying 
     }
 
     func applyTheme() {
-        layer?.backgroundColor = isHovering ? AppTheme.surface.cgColor : .clear
+        let appearance = AppTheme.buttonAppearance(role: .naked, hovered: isHovering)
+        layer?.backgroundColor = appearance.background.cgColor
         nameLabel.textColor = AppTheme.primaryText
         nameLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsHeading, weight: 600)
         metadataLabel.textColor = AppTheme.tertiaryText
@@ -362,12 +439,12 @@ private final class RepositoryRowView: SettingsHoverView, SettingsThemeApplying 
 }
 
 @MainActor
-private final class RepositoryRegisterActionView: SettingsHoverView, SettingsThemeApplying {
+private final class RepositoryRegisterActionView: AppHoverView, SettingsThemeApplying {
     var onAction: (() -> Void)?
 
     private let icon = NSImageView()
     private let label = NSTextField(labelWithString: "Register a repository")
-    private let button = NSButton(title: "", target: nil, action: nil)
+    private let button = AppButton(role: .hitTarget)
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -378,7 +455,6 @@ private final class RepositoryRegisterActionView: SettingsHoverView, SettingsThe
             $0.translatesAutoresizingMaskIntoConstraints = false
             addSubview($0)
         }
-        button.isBordered = false
         button.target = self
         button.action = #selector(registerRepository)
         button.setAccessibilityLabel("Register a repository")
@@ -409,9 +485,9 @@ private final class RepositoryRegisterActionView: SettingsHoverView, SettingsThe
     }
 
     func applyTheme() {
-        let color = isHovering ? AppTheme.accent : AppTheme.secondaryText
-        icon.contentTintColor = color
-        label.textColor = color
+        let appearance = AppTheme.buttonAppearance(role: .link, hovered: isHovering)
+        icon.contentTintColor = appearance.foreground
+        label.textColor = appearance.foreground
         label.font = AppTheme.font(ofSize: AppTheme.typography.settingsHeading, weight: 600)
     }
 
@@ -483,10 +559,11 @@ private enum RepositoryDetailText {
 @MainActor
 private final class RepositoryDetailView: NSView, NSTextFieldDelegate, SettingsThemeApplying {
     var onBack: (() -> Void)?
-    var onSave: ((RegisteredRepository) -> Void)?
+    var onSave: ((RegisteredRepository) -> Bool)?
 
     private var repository: RegisteredRepository
     private let context: RepositoryContext?
+    private let errorMessage: String?
     private let breadcrumb: RepositoryBreadcrumbView
     private let page = SettingsSplitPageView()
     private let branchPopup = SettingsPopupButton()
@@ -494,10 +571,12 @@ private final class RepositoryDetailView: NSView, NSTextFieldDelegate, SettingsT
 
     init(
         repository: RegisteredRepository,
-        context: RepositoryContext? = nil
+        context: RepositoryContext? = nil,
+        errorMessage: String? = nil
     ) {
         self.repository = repository
         self.context = context
+        self.errorMessage = errorMessage
         breadcrumb = RepositoryBreadcrumbView(repositoryName: repository.name)
         super.init(frame: .zero)
         installLayout()
@@ -541,6 +620,15 @@ private final class RepositoryDetailView: NSView, NSTextFieldDelegate, SettingsT
             page.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
         breadcrumb.onBack = { [weak self] in self?.onBack?() }
+
+        if let errorMessage {
+            page.addSection(
+                title: "Repository unavailable",
+                detail: "Git metadata could not be loaded.",
+                content: SettingsMessageRow(errorMessage)
+            )
+            return
+        }
 
         guard let context else {
             installSkeleton()
@@ -593,7 +681,7 @@ private final class RepositoryDetailView: NSView, NSTextFieldDelegate, SettingsT
         )
 
         worktreeField.stringValue = repository.worktreeBasePath ?? ""
-        worktreeField.placeholderString = "./worktrees (inside this repo folder)"
+        worktreeField.placeholderString = "Example: ./worktrees (inside this repository)"
         worktreeField.delegate = self
         let override = makeControlRow(
             RepositoryDetailText.worktreeOverride,
@@ -681,8 +769,12 @@ private final class RepositoryDetailView: NSView, NSTextFieldDelegate, SettingsT
 
     @objc private func defaultBranchChanged() {
         guard let branch = branchPopup.selectedItem?.title else { return }
+        let previousBranch = repository.defaultBranch
         repository.defaultBranch = branch
-        onSave?(repository)
+        if onSave?(repository) == false {
+            repository.defaultBranch = previousBranch
+            branchPopup.selectItem(withTitle: previousBranch)
+        }
     }
 
     func controlTextDidEndEditing(_ notification: Notification) {
@@ -694,8 +786,12 @@ private final class RepositoryDetailView: NSView, NSTextFieldDelegate, SettingsT
             return
         }
         worktreeField.toolTip = nil
+        let previousPath = repository.worktreeBasePath
         repository.worktreeBasePath = path.isEmpty ? nil : path
-        onSave?(repository)
+        if onSave?(repository) == false {
+            repository.worktreeBasePath = previousPath
+            worktreeField.stringValue = previousPath ?? ""
+        }
     }
 }
 
