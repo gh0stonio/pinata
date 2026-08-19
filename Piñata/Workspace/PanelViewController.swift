@@ -2196,7 +2196,6 @@ private final class SidebarPullRequestRowsView: NSView {
 final class SidebarPullRequestInfoView: NSView {
     var onChecksHover: ((NSView, [PullRequestCheck], Bool) -> Void)?
 
-    private let pullRequestIcon = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "Pull requests")
     private let refreshIndicator = NSProgressIndicator()
     private let countLabel = NSTextField(labelWithString: "")
@@ -2221,10 +2220,6 @@ final class SidebarPullRequestInfoView: NSView {
         self.trackedPullRequestNumbers = trackedPullRequestNumbers
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-        pullRequestIcon.image = PullRequestIconAsset.image()
-        pullRequestIcon.imageScaling = .scaleProportionallyDown
-        pullRequestIcon.setAccessibilityLabel("Pull request status")
-        pullRequestIcon.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         refreshIndicator.style = .spinning
         refreshIndicator.controlSize = .small
@@ -2235,17 +2230,12 @@ final class SidebarPullRequestInfoView: NSView {
         countLabel.alignment = .right
         rowsView.translatesAutoresizingMaskIntoConstraints = false
         rowsHeightConstraint = rowsView.heightAnchor.constraint(equalToConstant: 22)
-        addSubview(pullRequestIcon)
         addSubview(titleLabel)
         addSubview(refreshIndicator)
         addSubview(countLabel)
         addSubview(rowsView)
         NSLayoutConstraint.activate([
-            pullRequestIcon.leadingAnchor.constraint(equalTo: leadingAnchor),
-            pullRequestIcon.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
-            pullRequestIcon.widthAnchor.constraint(equalToConstant: 16),
-            pullRequestIcon.heightAnchor.constraint(equalToConstant: 16),
-            titleLabel.leadingAnchor.constraint(equalTo: pullRequestIcon.trailingAnchor, constant: 6),
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
             titleLabel.firstBaselineAnchor.constraint(equalTo: countLabel.firstBaselineAnchor),
             refreshIndicator.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 6),
             refreshIndicator.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
@@ -2341,23 +2331,6 @@ final class SidebarPullRequestInfoView: NSView {
             refreshIndicator.startAnimation(nil)
         } else {
             refreshIndicator.stopAnimation(nil)
-        }
-        if !relatedPullRequests.isEmpty,
-           (status.availability == .loaded || status.availability == .loading)
-        {
-            pullRequestIcon.isHidden = false
-            pullRequestIcon.toolTip = nil
-            if relatedPullRequests.count == 1, let summary = relatedPullRequests.first {
-                pullRequestIcon.contentTintColor = AppTheme.pullRequestColor(summary.displayStatus)
-                pullRequestIcon.setAccessibilityValue(summary.displayStatus.label)
-            } else {
-                pullRequestIcon.contentTintColor = AppTheme.tertiaryText
-                pullRequestIcon.setAccessibilityValue("\(relatedPullRequests.count) pull requests")
-            }
-        } else {
-            pullRequestIcon.isHidden = true
-            pullRequestIcon.toolTip = nil
-            pullRequestIcon.setAccessibilityValue(nil)
         }
         rowViews.forEach { $0.removeFromSuperview() }
         rowViews.removeAll(keepingCapacity: true)

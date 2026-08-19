@@ -757,6 +757,7 @@ final class WorkspaceViewController: NSViewController {
             if repositoryActionMenu != nil, repositoryActionMenuScope != scope {
                 dismissRepositoryActionMenu()
             }
+            refreshPullRequestStatuses()
         }
         leftPanelController.onMoveTask = { [weak self] sourceID, targetID, after, pinned in
             self?.moveTask(
