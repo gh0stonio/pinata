@@ -95,19 +95,25 @@ final class CoreLogicTests: XCTestCase {
     }
 
 
-    func testAgentTitleActivityRecognizesSpinnerFrame() {
+    func testAgentTitleActivityRecognizesRepeatedSpinnerTransitions() {
         var detector = AgentTitleActivityDetector()
 
-        XCTAssertTrue(detector.update(title: "⠋ Fix terminal spinner"))
-        XCTAssertTrue(detector.update(title: "⠙ Fix terminal spinner"))
-        XCTAssertTrue(detector.update(title: "◐ Saving changes"))
+        XCTAssertFalse(detector.update(title: "π ⠋ Fix terminal spinner", at: 0))
+        XCTAssertFalse(detector.update(title: "π ⠙ Fix terminal spinner", at: 0.1))
+        XCTAssertTrue(detector.update(title: "π ⠹ Fix terminal spinner", at: 0.2))
+        XCTAssertTrue(detector.update(title: "π ⠸ Fix terminal spinner", at: 0.3))
     }
 
-    func testAgentTitleActivityStopsWithoutSpinnerFrame() {
+    func testAgentTitleActivityRejectsStaticSymbolsAndStopsOnIdleTitle() {
         var detector = AgentTitleActivityDetector()
 
-        XCTAssertTrue(detector.update(title: "⠋ Fix terminal spinner"))
-        XCTAssertFalse(detector.update(title: "Fix terminal spinner"))
+        XCTAssertFalse(detector.update(title: "π > lifttof-plug-crud", at: 0))
+        XCTAssertFalse(detector.update(title: "π > lifttof-plug-crud", at: 0.1))
+        XCTAssertFalse(detector.update(title: "π ⠋ Fix terminal spinner", at: 1))
+        XCTAssertFalse(detector.update(title: "π ⠙ Fix terminal spinner", at: 2))
+        XCTAssertFalse(detector.update(title: "π ⠹ Fix terminal spinner", at: 2.1))
+        XCTAssertTrue(detector.update(title: "π ⠸ Fix terminal spinner", at: 2.2))
+        XCTAssertFalse(detector.update(title: "π > lifttof-plug-crud", at: 2.3))
     }
 
     @MainActor
@@ -147,6 +153,12 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertEqual(openedURLs.map(\.absoluteString), expectedURLs)
 
         let firstRow = view.visiblePullRequestRows[0]
+        let title = descendants(of: firstRow)
+            .compactMap { $0 as? NSTextField }
+            .first { $0.stringValue.hasPrefix("#57509 ") }!
+        let titleTop = firstRow.convert(title.bounds, from: title).maxY
+        XCTAssertEqual(firstRow.subviews.first?.frame.maxY, titleTop)
+        XCTAssertEqual(firstRow.subviews.last?.frame.maxY, titleTop)
         firstRow.mouseDown(with: NSEvent())
         XCTAssertEqual(openedURLs.last?.absoluteString, expectedURLs[0])
     }
@@ -184,6 +196,83 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertEqual(loadingView.visibleMessageAlignment, .center)
         XCTAssertFalse(loadingView.isShowingBackgroundRefresh)
 
+        loadingView.update(
+            status: PullRequestRepositoryStatus(
+                availability: .loaded,
+                pullRequests: [
+                    makeTestPullRequest(number: 57509, head: "feature/loading", base: "main"),
+                ],
+                failureMessage: nil
+            ),
+            branch: "feature/loading"
+        )
+        let loadedRow = loadingView.visiblePullRequestRows.first
+        XCTAssertEqual(loadedRow?.frame.size, NSSize(width: 368, height: 44))
+        XCTAssertTrue(loadedRow?.subviews.allSatisfy { !$0.frame.isEmpty } == true)
+
+        loadingView.frame.size.height = loadingView.intrinsicContentSize.height
+        loadingView.layoutSubtreeIfNeeded()
+    }
+
+    @MainActor
+    func testHiddenRepositoryPopoverIsRebuiltAfterPullRequestsLoad() {
+        let repositoryID = UUID()
+        let branch = "feature/loading"
+        let loadingStatus = PullRequestRepositoryStatus(
+            availability: .loading,
+            pullRequests: [],
+            failureMessage: nil
+        )
+        let row = SidebarRepositoryRow(
+            repository: TaskRepositoryAttachment(
+                repositoryID: repositoryID,
+                name: "repository",
+                branch: branch
+            ),
+            selected: false,
+            menuActive: false,
+            activity: nil,
+            error: nil,
+            context: SidebarRepositoryContext(
+                repositoryID: repositoryID,
+                name: "repository",
+                remoteURL: nil,
+                branch: branch,
+                path: nil,
+                target: .local,
+                connectionID: nil,
+                connectionName: nil,
+                status: .disabled,
+                pullRequestStatus: loadingStatus,
+                trackedPullRequestNumbers: []
+            ),
+            suppressActions: false,
+            connectionStatusMonitor: SSHConnectionStatusMonitor()
+        )
+        row.frame = NSRect(x: 0, y: 0, width: 368, height: 34)
+        let window = NSWindow(
+            contentRect: row.frame,
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = row
+        window.orderFrontRegardless()
+        defer { window.orderOut(nil) }
+
+        row.mouseEntered(with: NSEvent())
+        row.mouseExited(with: NSEvent())
+        XCTAssertTrue(row.hasCachedInfoPopoverForTesting)
+
+        row.updatePullRequestStatus(
+            PullRequestRepositoryStatus(
+                availability: .loaded,
+                pullRequests: [makeTestPullRequest(number: 57509, head: branch, base: "main")],
+                failureMessage: nil
+            )
+        )
+
+        XCTAssertFalse(row.hasCachedInfoPopoverForTesting)
     }
 
     @MainActor
@@ -578,7 +667,7 @@ final class CoreLogicTests: XCTestCase {
     }
 
     func testRemoteWorktreePathUsesRemoteBaseWithoutExpandingHome() {
-        let repository = RegisteredRepository(
+        var repository = RegisteredRepository(
             name: "pinata",
             path: "/srv/pinata",
             branches: ["main"],
@@ -591,6 +680,15 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertEqual(
             WorktreePathResolver.remoteRoot(for: repository, globalBasePath: "~/.pinata/worktrees"),
             "~/.pinata/worktrees/pinata"
+        )
+        repository.target = .ssh(UUID())
+        XCTAssertEqual(
+            WorktreeProvisioner(globalBasePath: "~/.pinata/worktrees").preparing(
+                repository: repository,
+                taskID: UUID(),
+                taskTitle: "Remote Task"
+            ).path,
+            "~/.pinata/worktrees/pinata/remote-task"
         )
     }
 
@@ -1305,6 +1403,23 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: worktreeURL.path))
         XCTAssertTrue(try runGit(["-C", repositoryURL.path, "branch", "--list", branch]).isEmpty)
 
+        let missingWorktreeURL = directoryURL.appendingPathComponent("missing-worktree", isDirectory: true)
+        let missingBranch = "pinata/missing-worktree"
+        _ = try runGit(["-C", repositoryURL.path, "branch", missingBranch, "main"])
+        _ = try runGit([
+            "-C", repositoryURL.path, "worktree", "add", missingWorktreeURL.path, missingBranch,
+        ])
+        try FileManager.default.removeItem(at: missingWorktreeURL)
+        try inspector.removeWorktree(
+            at: missingWorktreeURL.path,
+            branchHint: missingBranch,
+            from: repository
+        )
+        let missingBranches = try runGit([
+            "-C", repositoryURL.path, "branch", "--list", missingBranch,
+        ])
+        XCTAssertTrue(missingBranches.isEmpty, missingBranches)
+
         let secondWorktreeURL = directoryURL.appendingPathComponent("temporary-checkout", isDirectory: true)
         let ownedBranch = "pinata/temporary-checkout"
         let temporaryBranch = "temporary"
@@ -1314,16 +1429,57 @@ final class CoreLogicTests: XCTestCase {
             "-C", repositoryURL.path,
             "worktree", "add", secondWorktreeURL.path, ownedBranch,
         ])
+        let temporaryTaskID = UUID()
+        _ = try runGit(["-C", repositoryURL.path, "config", "extensions.worktreeConfig", "true"])
+        _ = try runGit([
+            "-C", secondWorktreeURL.path,
+            "config", "--worktree", "pinata.task-id", temporaryTaskID.uuidString,
+        ])
+        _ = try runGit([
+            "-C", secondWorktreeURL.path,
+            "config", "--worktree", "pinata.repository-id", repository.id.uuidString,
+        ])
         _ = try runGit(["-C", secondWorktreeURL.path, "checkout", temporaryBranch])
         XCTAssertNil(try inspector.renamedBranch(at: secondWorktreeURL.path, from: ownedBranch))
         try inspector.removeWorktree(
             at: secondWorktreeURL.path,
             branchHint: ownedBranch,
-            taskID: UUID(),
+            taskID: temporaryTaskID,
+            branchWasCreated: true,
             from: repository
         )
         XCTAssertTrue(try runGit(["-C", repositoryURL.path, "branch", "--list", ownedBranch]).isEmpty)
         XCTAssertFalse(try runGit(["-C", repositoryURL.path, "branch", "--list", temporaryBranch]).isEmpty)
+
+        let externalWorktreeURL = directoryURL.appendingPathComponent(
+            "external-task",
+            isDirectory: true
+        )
+        let externalBranch = "antoine.leveque/external-task"
+        _ = try runGit(["-C", repositoryURL.path, "branch", externalBranch, "main"])
+        _ = try runGit([
+            "-C", repositoryURL.path,
+            "worktree", "add", externalWorktreeURL.path, externalBranch,
+        ])
+        try inspector.removeWorktree(
+            at: directoryURL.appendingPathComponent("stale-task").path,
+            branchHint: externalBranch,
+            taskID: UUID(),
+            from: repository
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: externalWorktreeURL.path))
+        XCTAssertFalse(try runGit([
+            "-C", repositoryURL.path, "branch", "--list", externalBranch,
+        ]).isEmpty)
+        XCTAssertThrowsError(try inspector.removeWorktree(
+            at: externalWorktreeURL.path,
+            branchHint: "antoine.leveque/expected-task-branch",
+            taskID: UUID(),
+            branchWasCreated: true,
+            worktreeWasCreated: true,
+            from: repository
+        ))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: externalWorktreeURL.path))
 
         let unrelatedURL = directoryURL.appendingPathComponent("unrelated", isDirectory: true)
         try FileManager.default.createDirectory(at: unrelatedURL, withIntermediateDirectories: true)
@@ -1357,6 +1513,16 @@ final class CoreLogicTests: XCTestCase {
         _ = try runGit(["-C", repositoryURL.path, "branch", "-m", pinataBranch, renamedBranch])
         let inspector = RepositoryInspector()
         let repository = try inspector.inspect(directory: repositoryURL)
+        let taskID = UUID()
+        _ = try runGit(["-C", repositoryURL.path, "config", "extensions.worktreeConfig", "true"])
+        _ = try runGit([
+            "-C", worktreeURL.path,
+            "config", "--worktree", "pinata.task-id", taskID.uuidString,
+        ])
+        _ = try runGit([
+            "-C", worktreeURL.path,
+            "config", "--worktree", "pinata.repository-id", repository.id.uuidString,
+        ])
 
         XCTAssertEqual(
             try inspector.renamedBranch(at: worktreeURL.path, from: pinataBranch),
@@ -1366,7 +1532,8 @@ final class CoreLogicTests: XCTestCase {
         try inspector.removeWorktree(
             at: worktreeURL.path,
             branchHint: pinataBranch,
-            taskID: UUID(),
+            taskID: taskID,
+            branchWasCreated: true,
             from: repository
         )
 
@@ -1595,6 +1762,187 @@ final class CoreLogicTests: XCTestCase {
             taskID: taskID,
             from: repository
         )
+
+    }
+
+    func testWorktreeProvisioningRetryCleansBranchAfterCheckoutHookFailure() throws {
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+        let repositoryURL = try makeGitRepository(in: directoryURL)
+        let repository = RegisteredRepository(
+            name: "source",
+            path: repositoryURL.path,
+            branches: ["main"],
+            defaultBranch: "main",
+            currentBranch: "main",
+            remoteURL: nil,
+            organization: nil
+        )
+        let hookURL = repositoryURL.appendingPathComponent(".git/hooks/post-checkout")
+        try "#!/bin/sh\nexit 1\n".write(to: hookURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: hookURL.path
+        )
+
+        let taskID = UUID()
+        let provisioner = WorktreeProvisioner(
+            globalBasePath: directoryURL.appendingPathComponent("worktrees").path,
+            branchPrefix: "antoine.leveque"
+        )
+        let failed = provisioner.provision(
+            repository: repository,
+            taskID: taskID,
+            taskTitle: "Hook Failure"
+        )
+        XCTAssertFalse(failed.succeeded)
+
+        try RepositoryInspector().removeWorktree(
+            at: failed.path,
+            branchHint: failed.branch,
+            taskID: taskID,
+            branchWasCreated: failed.branchWasCreated,
+            from: repository
+        )
+        try FileManager.default.removeItem(at: hookURL)
+
+        let retry = provisioner.provision(
+            repository: repository,
+            taskID: taskID,
+            taskTitle: "Hook Failure"
+        )
+        XCTAssertTrue(retry.succeeded)
+        try RepositoryInspector().removeWorktree(
+            at: retry.path,
+            branchHint: retry.branch,
+            taskID: taskID,
+            from: repository
+        )
+
+    }
+
+    func testWorktreeProvisioningUsesUniqueBranchWhenExpectedBranchIsCheckedOut() throws {
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+        let repositoryURL = try makeGitRepository(in: directoryURL)
+        let repository = RegisteredRepository(
+            name: "source",
+            path: repositoryURL.path,
+            branches: ["main"],
+            defaultBranch: "main",
+            currentBranch: "main",
+            remoteURL: nil,
+            organization: nil
+        )
+        let taskID = UUID()
+        let provisioner = WorktreeProvisioner(
+            globalBasePath: directoryURL.appendingPathComponent("worktrees").path,
+            branchPrefix: "antoine.leveque"
+        )
+        let expected = provisioner.preparing(
+            repository: repository,
+            taskID: taskID,
+            taskTitle: "Branch Collision"
+        )
+        let externalURL = directoryURL.appendingPathComponent("external", isDirectory: true)
+        _ = try runGit(["-C", repositoryURL.path, "branch", expected.branch, "main"])
+        _ = try runGit([
+            "-C", repositoryURL.path, "worktree", "add", externalURL.path, expected.branch,
+        ])
+
+        try RepositoryInspector().removeWorktree(
+            at: expected.path,
+            branchHint: expected.branch,
+            taskID: taskID,
+            from: repository
+        )
+        let retry = provisioner.provision(
+            repository: repository,
+            taskID: taskID,
+            taskTitle: "Branch Collision"
+        )
+
+        XCTAssertTrue(retry.succeeded)
+        XCTAssertEqual(retry.branch, expected.branch + "-2")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: externalURL.path))
+        XCTAssertEqual(
+            try runGit(["-C", externalURL.path, "branch", "--show-current"]),
+            expected.branch
+        )
+        try RepositoryInspector().removeWorktree(
+            at: retry.path,
+            branchHint: retry.branch,
+            taskID: taskID,
+            from: repository
+        )
+
+        let unattachedBranch = expected.branch + "-unattached"
+        try FileManager.default.createDirectory(
+            at: URL(fileURLWithPath: expected.path),
+            withIntermediateDirectories: true
+        )
+        _ = try runGit(["-C", repositoryURL.path, "branch", unattachedBranch, "main"])
+        try RepositoryInspector().removeWorktree(
+            at: expected.path,
+            branchHint: unattachedBranch,
+            taskID: taskID,
+            from: repository
+        )
+        XCTAssertFalse(try runGit([
+            "-C", repositoryURL.path, "branch", "--list", unattachedBranch,
+        ]).isEmpty)
+        try RepositoryInspector().removeWorktree(
+            at: expected.path,
+            branchHint: unattachedBranch,
+            taskID: taskID,
+            branchWasCreated: true,
+            from: repository
+        )
+        XCTAssertTrue(try runGit([
+            "-C", repositoryURL.path, "branch", "--list", unattachedBranch,
+        ]).isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: expected.path))
+    }
+
+    func testInterruptedWorktreeProvisioningBecomesRetryableAfterRestart() {
+        let repositoryID = UUID()
+        let task = WorkspaceTask(
+            title: "Interrupted",
+            repositories: [TaskRepositoryAttachment(
+                repositoryID: repositoryID,
+                name: "source",
+                worktreeProvisioning: WorktreeProvisioningReport(
+                    path: "/tmp/interrupted",
+                    branch: "pinata/interrupted",
+                    baseBranch: "origin/main",
+                    steps: [
+                        WorktreeProvisioningStep(
+                            title: "Fetch origin",
+                            status: .completed,
+                            detail: ""
+                        ),
+                        WorktreeProvisioningStep(
+                            title: "Create branch",
+                            status: .completed,
+                            detail: ""
+                        ),
+                        WorktreeProvisioningStep(
+                            title: "Create worktree",
+                            status: .running,
+                            detail: "Running…"
+                        ),
+                    ]
+                )
+            )]
+        )
+
+        let recovered = recoverInterruptedWorktreeProvisioning(in: [task])
+        let report = recovered[0].repositories[0].worktreeProvisioning
+
+        XCTAssertEqual(report?.failureMessage, "Worktree creation was interrupted. Retry to continue safely.")
+        XCTAssertEqual(report?.branchWasCreated, true)
     }
 
     func testPaneTreeReplacementAndRatios() {
