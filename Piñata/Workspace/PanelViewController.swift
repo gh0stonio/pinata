@@ -1605,7 +1605,7 @@ private final class SidebarRepositoryRow: AppHoverView {
         errorIcon.isHidden = error == nil
         activityIndicator.isHidden = activity == nil || error != nil
         statusLabel.isHidden = error == nil && activity == nil
-        connectionStatusDot.isHidden = connectionID == nil
+        connectionStatusDot.isHidden = connectionID == nil || connectionStatus != .disconnected
     }
 
     private func updatePullRequestIcon() {
