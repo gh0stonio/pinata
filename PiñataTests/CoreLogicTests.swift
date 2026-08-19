@@ -17,7 +17,7 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertFalse(profiles[1].isActive)
     }
 
-    func testPullRequestStatusSummarizesChecksAndIssues() {
+    func testPullRequestStatusUsesGitHubLifecycle() {
         let pullRequest = PullRequestSummary(
             number: 42,
             title: "Ship sidebar PR status",
@@ -37,7 +37,7 @@ final class CoreLogicTests: XCTestCase {
             url: "https://github.com/gh0stonio/pinata/pull/42"
         )
 
-        XCTAssertEqual(pullRequest.displayStatus, .issue)
+        XCTAssertEqual(pullRequest.displayStatus, .ready)
         XCTAssertEqual(pullRequest.checks.map(\.status), [.passed, .failed, .pending])
     }
 
@@ -95,20 +95,19 @@ final class CoreLogicTests: XCTestCase {
     }
 
 
-    func testAgentTitleActivityRecognizesChangingSymbolFrames() {
+    func testAgentTitleActivityRecognizesSpinnerFrame() {
         var detector = AgentTitleActivityDetector()
 
-        XCTAssertFalse(detector.update(title: "◐ Liftoff workflow"))
-        XCTAssertTrue(detector.update(title: "◓ Liftoff workflow"))
-        XCTAssertTrue(detector.update(title: "⠹ Saving changes"))
+        XCTAssertTrue(detector.update(title: "⠋ Fix terminal spinner"))
+        XCTAssertTrue(detector.update(title: "⠙ Fix terminal spinner"))
+        XCTAssertTrue(detector.update(title: "◐ Saving changes"))
     }
 
-    func testAgentTitleActivityStopsWithoutSymbolFrame() {
+    func testAgentTitleActivityStopsWithoutSpinnerFrame() {
         var detector = AgentTitleActivityDetector()
 
-        _ = detector.update(title: "◐ Liftoff workflow")
-        XCTAssertTrue(detector.update(title: "◓ Liftoff workflow"))
-        XCTAssertFalse(detector.update(title: "Liftoff workflow"))
+        XCTAssertTrue(detector.update(title: "⠋ Fix terminal spinner"))
+        XCTAssertFalse(detector.update(title: "Fix terminal spinner"))
     }
 
     @MainActor

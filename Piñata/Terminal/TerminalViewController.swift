@@ -128,43 +128,22 @@ struct TerminalSessionSnapshot: Codable, Equatable, Sendable {
 }
 
 struct AgentTitleActivityDetector {
-    private struct Frame: Equatable {
-        let indicator: Character
-        let content: Substring
-    }
-
-    private var previousFrame: Frame?
     private(set) var isActive = false
 
     mutating func update(title: String) -> Bool {
-        let frame = Self.frame(in: title)
-        defer { previousFrame = frame }
-
-        guard let frame else {
-            isActive = false
-            return false
-        }
-
-        if let previousFrame,
-           previousFrame.content == frame.content,
-           previousFrame.indicator != frame.indicator
-        {
-            isActive = true
-        }
-
+        isActive = Self.frame(in: title) != nil
         return isActive
     }
 
-    private static func frame(in title: String) -> Frame? {
+    private static func frame(in title: String) -> Character? {
         guard let indicator = title.first,
               indicator.unicodeScalars.allSatisfy(isSymbol),
-              let separator = title.firstIndex(where: \.isWhitespace)
+              let separator = title.firstIndex(where: \.isWhitespace),
+              title.index(after: separator) < title.endIndex
         else { return nil }
-
-        let content = title[title.index(after: separator)...]
-        guard !content.isEmpty else { return nil }
-        return Frame(indicator: indicator, content: content)
+        return indicator
     }
+
 
     private static func isSymbol(_ scalar: Unicode.Scalar) -> Bool {
         switch scalar.properties.generalCategory {
@@ -468,7 +447,9 @@ private final class TerminalPaneViewController: NSViewController {
     var didRequestSplit: ((PaneID, SplitAxis) -> Void)?
     var didRequestClose: ((PaneID) -> Void)?
     var didChangeAgentActivity: ((PaneID, Bool) -> Void)?
+    private static let agentActivityDelay: TimeInterval = 0.5
     private var agentActivityDetector = AgentTitleActivityDetector()
+    private var pendingAgentActivity: DispatchWorkItem?
     private var isAgentActive = false
 
     init(
@@ -498,10 +479,13 @@ private final class TerminalPaneViewController: NSViewController {
         terminalView.didChangeTitle = { [weak self, weak header] title in
             header?.setTitle(title)
             guard let self else { return }
-            let active = self.agentActivityDetector.update(title: title)
-            guard self.isAgentActive != active else { return }
-            self.isAgentActive = active
-            self.didChangeAgentActivity?(self.paneID, active)
+            if self.agentActivityDetector.update(title: title) {
+                self.scheduleAgentActivity()
+            } else {
+                self.pendingAgentActivity?.cancel()
+                self.pendingAgentActivity = nil
+                self.setAgentActivity(false)
+            }
         }
         terminalView.didConnect = { [weak header] in
             header?.setTitle(defaultTitle)
@@ -525,6 +509,24 @@ private final class TerminalPaneViewController: NSViewController {
             guard let self else { return }
             self.didRequestClose?(self.paneID)
         }
+    }
+
+    private func scheduleAgentActivity() {
+        guard !isAgentActive, pendingAgentActivity == nil else { return }
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingAgentActivity = nil
+            guard self.agentActivityDetector.isActive else { return }
+            self.setAgentActivity(true)
+        }
+        pendingAgentActivity = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.agentActivityDelay, execute: workItem)
+    }
+
+    private func setAgentActivity(_ active: Bool) {
+        guard isAgentActive != active else { return }
+        isAgentActive = active
+        didChangeAgentActivity?(paneID, active)
     }
 
     var workingDirectory: String { terminalView.workingDirectory }

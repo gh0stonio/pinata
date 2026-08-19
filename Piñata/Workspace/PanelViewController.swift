@@ -1716,11 +1716,13 @@ private final class SidebarRepositoryRow: AppHoverView {
 @MainActor
 private final class SidebarHoverPopover: NSPanel {
     private static weak var activePopover: SidebarHoverPopover?
-    private static let showDelay: TimeInterval = 0.75
+    private static let showDelay: TimeInterval = 0.5
     private static let pointerPollInterval: TimeInterval = 0.04
+    private static let closeDelay: TimeInterval = 0.15
     private let chromeView: SidebarHoverPopoverView
     private var pointerTimer: Timer?
     private var pendingShow: DispatchWorkItem?
+    private var pendingClose: DispatchWorkItem?
     private weak var sourceView: NSView?
     private var isHovering = false
     var onHoverChanged: ((Bool) -> Void)?
@@ -1757,6 +1759,8 @@ private final class SidebarHoverPopover: NSPanel {
         guard view.window != nil else { return }
         sourceView = view
         pendingShow?.cancel()
+        pendingClose?.cancel()
+        pendingClose = nil
         let workItem = DispatchWorkItem { [weak self, weak view] in
             guard let self,
                   let view,
@@ -1783,7 +1787,7 @@ private final class SidebarHoverPopover: NSPanel {
         let size = frame.size
         setFrame(
             NSRect(
-                x: screenRect.maxX,
+                x: screenRect.maxX + 6,
                 y: screenRect.maxY - size.height,
                 width: size.width,
                 height: size.height
@@ -1808,7 +1812,7 @@ private final class SidebarHoverPopover: NSPanel {
     func scheduleClose() {
         pendingShow?.cancel()
         pendingShow = nil
-        close()
+        scheduleDelayedClose()
     }
 
     private func startPointerTracking() {
@@ -1831,7 +1835,32 @@ private final class SidebarHoverPopover: NSPanel {
         let pointerInsidePopover = frame.contains(mouseLocation)
         let pointerInsideSource = sourceView.map(pointerInsideSourceView) ?? false
         if pointerInsidePopover || pointerInsideSource {
+            pendingClose?.cancel()
+            pendingClose = nil
             setHovering(true)
+        } else {
+            scheduleDelayedClose()
+        }
+    }
+
+    private func scheduleDelayedClose() {
+        guard isVisible, pendingClose == nil else { return }
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingClose = nil
+            self.closeIfPointerOutside()
+        }
+        pendingClose = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.closeDelay, execute: workItem)
+    }
+
+    private func closeIfPointerOutside() {
+        guard isVisible else { return }
+        let mouseLocation = NSEvent.mouseLocation
+        guard !frame.contains(mouseLocation),
+              !(sourceView.map(pointerInsideSourceView) ?? false)
+        else {
+            updatePointerState()
             return
         }
         close()
@@ -1858,6 +1887,8 @@ private final class SidebarHoverPopover: NSPanel {
         stopPointerTracking()
         pendingShow?.cancel()
         pendingShow = nil
+        pendingClose?.cancel()
+        pendingClose = nil
         sourceView = nil
         setHovering(false)
         if Self.activePopover === self {
@@ -1882,6 +1913,13 @@ private final class SidebarHoverPopoverView: NSView {
                 height: contentSize.height
             )
         )
+        wantsLayer = true
+        layer?.cornerRadius = 12
+        layer?.cornerCurve = .continuous
+        layer?.shadowOpacity = 0.18
+        layer?.shadowRadius = 8
+        layer?.shadowOffset = NSSize(width: 0, height: -2)
+        layer?.shadowColor = NSColor.black.cgColor
         content.translatesAutoresizingMaskIntoConstraints = false
         addSubview(content)
         NSLayoutConstraint.activate([
@@ -1917,7 +1955,7 @@ private final class SidebarHoverPopoverView: NSView {
         )
         AppTheme.surface.setFill()
         path.fill()
-        AppTheme.border.withAlphaComponent(0.32).setStroke()
+        AppTheme.border.setStroke()
         path.lineWidth = 1
         path.stroke()
     }
@@ -2074,29 +2112,21 @@ private final class SidebarRepositoryInfoCard: NSView {
 }
 
 @MainActor
-private final class SidebarPullRequestRowsView: NSView {
+private final class SidebarPullRequestRowsView: NSStackView {
     static let spacing: CGFloat = 4
 
     override var isFlipped: Bool { true }
 
-    override func setFrameSize(_ newSize: NSSize) {
-        super.setFrameSize(newSize)
-        layoutRows()
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        orientation = .vertical
+        alignment = .leading
+        distribution = .fill
+        spacing = Self.spacing
     }
 
-    override func didAddSubview(_ subview: NSView) {
-        super.didAddSubview(subview)
-        layoutRows()
-    }
-
-    private func layoutRows() {
-        var y: CGFloat = 0
-        for view in subviews {
-            let height: CGFloat = view is SidebarPullRequestInfoRow ? 44 : 22
-            view.frame = NSRect(x: 0, y: y, width: bounds.width, height: height)
-            y += height + Self.spacing
-        }
-    }
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
 }
 
 @MainActor
@@ -2239,7 +2269,10 @@ final class SidebarPullRequestInfoView: NSView {
         } else {
             refreshIndicator.stopAnimation(nil)
         }
-        rowViews.forEach { $0.removeFromSuperview() }
+        rowViews.forEach {
+            rowsView.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
         rowViews.removeAll(keepingCapacity: true)
         switch status.availability {
         case .idle:
@@ -2302,13 +2335,14 @@ final class SidebarPullRequestInfoView: NSView {
 
     private func addMessage(_ message: String, centered: Bool = false) {
         let label = NSTextField(labelWithString: message)
-        label.translatesAutoresizingMaskIntoConstraints = true
+        label.translatesAutoresizingMaskIntoConstraints = false
         label.usesSingleLineMode = true
         label.lineBreakMode = .byTruncatingTail
         label.alignment = centered ? .center : .natural
         label.toolTip = message
         rowViews.append(label)
-        rowsView.addSubview(label)
+        rowsView.addArrangedSubview(label)
+        label.widthAnchor.constraint(equalTo: rowsView.widthAnchor).isActive = true
     }
 
     private func addRows(_ pullRequests: [PullRequestSummary]) {
@@ -2320,9 +2354,9 @@ final class SidebarPullRequestInfoView: NSView {
             row.onChecksHover = { [weak self] source, checks, hovering in
                 self?.onChecksHover?(source, checks, hovering)
             }
-            row.translatesAutoresizingMaskIntoConstraints = true
             rowViews.append(row)
-            rowsView.addSubview(row)
+            rowsView.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: rowsView.widthAnchor).isActive = true
         }
     }
 }
