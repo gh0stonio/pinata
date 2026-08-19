@@ -125,6 +125,9 @@ final class ZmxTerminalClient: @unchecked Sendable {
             return
         }
         if pid == 0 {
+            var signals = sigset_t()
+            sigemptyset(&signals)
+            _ = pthread_sigmask(SIG_SETMASK, &signals, nil)
             launchConfiguration.exec()
         }
 
