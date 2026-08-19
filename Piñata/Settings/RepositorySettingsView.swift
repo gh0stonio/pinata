@@ -31,7 +31,12 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
     }
 
     func scrollToTop() {
-        detailView?.scrollToTop() ?? page.scrollToTop()
+        if let detailView {
+            detailView.scrollToTop()
+        } else {
+            reloadRepositories()
+            page.scrollToTop()
+        }
     }
 
     private func resetToList() {
@@ -47,7 +52,7 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
 
     func applyTheme() {
         page.applyTheme()
-        errorLabel.textColor = .systemRed
+        errorLabel.textColor = AppTheme.error
         errorLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsBody)
         registerAction.applyTheme()
         repositoryRows.arrangedSubviews.compactMap { $0 as? SettingsThemeApplying }.forEach {
@@ -86,9 +91,12 @@ final class RepositorySettingsView: NSView, NSTextFieldDelegate, SettingsPageCon
         repositoryRows.orientation = .vertical
         repositoryRows.alignment = .leading
         repositoryRows.spacing = 0
+        repositoryRows.setContentHuggingPriority(.required, for: .vertical)
+        registerAction.setContentHuggingPriority(.required, for: .vertical)
         repositoryContent.addArrangedSubview(repositoryRows)
         repositoryContent.addArrangedSubview(registerAction)
         repositoryContent.addArrangedSubview(errorLabel)
+        repositoryContent.setCustomSpacing(8, after: repositoryRows)
         errorLabel.widthAnchor.constraint(equalTo: repositoryContent.widthAnchor).isActive = true
         repositoryRows.widthAnchor.constraint(equalTo: repositoryContent.widthAnchor).isActive = true
         registerAction.widthAnchor.constraint(equalTo: repositoryContent.widthAnchor).isActive = true
@@ -518,8 +526,8 @@ private enum RepositoryDetailText {
         title: "Worktrees",
         detail: "Overrides for this repository only."
     )
-    static let localCheckout = RepositoryDetailCopy(
-        title: "Local checkout",
+    static let checkout = RepositoryDetailCopy(
+        title: "Repository checkout",
         detail: "Where this repository lives"
     )
     static let organization = RepositoryDetailCopy(
@@ -560,12 +568,13 @@ private enum RepositoryDetailText {
 private final class RepositoryDetailView: NSView, NSTextFieldDelegate, SettingsThemeApplying {
     var onBack: (() -> Void)?
     var onSave: ((RegisteredRepository) -> Bool)?
+    var onRemove: ((RegisteredRepository) -> Void)?
 
     private var repository: RegisteredRepository
     private let context: RepositoryContext?
     private let errorMessage: String?
     private let breadcrumb: RepositoryBreadcrumbView
-    private let page = SettingsSplitPageView()
+    private let page = SettingsSplitPageView(topPadding: SettingsLayout.detailPageTopPadding)
     private let branchPopup = SettingsPopupButton()
     private let worktreeField = SettingsTextField()
 
@@ -580,6 +589,7 @@ private final class RepositoryDetailView: NSView, NSTextFieldDelegate, SettingsT
         breadcrumb = RepositoryBreadcrumbView(repositoryName: repository.name)
         super.init(frame: .zero)
         installLayout()
+        page.showVerticalScroller()
         applyTheme()
     }
 
@@ -603,12 +613,12 @@ private final class RepositoryDetailView: NSView, NSTextFieldDelegate, SettingsT
         addSubview(page)
         NSLayoutConstraint.activate([
             breadcrumb.leadingAnchor.constraint(
-                equalTo: leadingAnchor,
-                constant: SettingsLayout.pageHorizontalPadding
+                equalTo: page.contentLeadingAnchor,
+                constant: -SettingsLayout.breadcrumbBackOffset
             ),
             breadcrumb.topAnchor.constraint(
                 equalTo: topAnchor,
-                constant: SettingsLayout.blockVerticalPadding / 2
+                constant: SettingsLayout.detailHeaderTopPadding
             ),
             breadcrumb.heightAnchor.constraint(equalToConstant: SettingsLayout.breadcrumbHeight),
             page.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -636,7 +646,7 @@ private final class RepositoryDetailView: NSView, NSTextFieldDelegate, SettingsT
         }
 
         let sourceRows = [
-            makeValueRow(RepositoryDetailText.localCheckout, value: repository.path),
+            makeValueRow(RepositoryDetailText.checkout, value: repository.path),
             makeValueRow(
                 RepositoryDetailText.organization,
                 value: repository.organization ?? "None"
@@ -708,7 +718,7 @@ private final class RepositoryDetailView: NSView, NSTextFieldDelegate, SettingsT
             title: RepositoryDetailText.source.title,
             detail: RepositoryDetailText.source.detail,
             content: settingsRowStack([
-                makeSkeletonRow(RepositoryDetailText.localCheckout),
+                makeSkeletonRow(RepositoryDetailText.checkout),
                 makeSkeletonRow(RepositoryDetailText.organization),
                 makeSkeletonRow(RepositoryDetailText.origin),
             ])
@@ -741,6 +751,7 @@ private final class RepositoryDetailView: NSView, NSTextFieldDelegate, SettingsT
             title: copy.title,
             description: copy.detail,
             control: SettingsValueLabel(value),
+            controlWidth: SettingsLayout.repositoryPathControlWidth,
             controlHeight: nil
         )
     }
@@ -753,6 +764,7 @@ private final class RepositoryDetailView: NSView, NSTextFieldDelegate, SettingsT
             title: copy.title,
             description: copy.detail,
             control: control,
+            controlWidth: SettingsLayout.repositoryPathControlWidth,
             minimumHeight: SettingsLayout.rowHeight
         )
     }
@@ -762,6 +774,7 @@ private final class RepositoryDetailView: NSView, NSTextFieldDelegate, SettingsT
             title: copy.title,
             description: copy.detail,
             control: SettingsSkeletonValueView(),
+            controlWidth: SettingsLayout.repositoryPathControlWidth,
             controlHeight: SettingsLayout.skeletonHeight,
             minimumHeight: SettingsLayout.rowHeight
         )

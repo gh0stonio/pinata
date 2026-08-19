@@ -10,6 +10,7 @@ final class PinataApp: NSObject, NSApplicationDelegate {
     private var settings = UserSettings.defaults
 
     static func main() {
+        if TerminalServiceEntryPoint.runIfRequested() { return }
         let application = NSApplication.shared
         let delegate = PinataApp()
         application.delegate = delegate
@@ -38,7 +39,12 @@ final class PinataApp: NSObject, NSApplicationDelegate {
         ghosttyRuntime = runtime
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: AppTheme.minimumWindowWidth, height: 640),
+            contentRect: NSRect(
+                x: 0,
+                y: 0,
+                width: AppTheme.minimumWindowWidth,
+                height: AppTheme.defaultWindowHeight
+            ),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -48,7 +54,10 @@ final class PinataApp: NSObject, NSApplicationDelegate {
         window.titlebarAppearsTransparent = true
         window.titlebarSeparatorStyle = .none
         window.backgroundColor = AppTheme.background
-        window.minSize = NSSize(width: AppTheme.minimumWindowWidth, height: 600)
+        window.minSize = NSSize(
+            width: AppTheme.minimumWindowWidth,
+            height: AppTheme.minimumWindowHeight
+        )
         let workspaceViewController = WorkspaceViewController(runtime: runtime)
         window.contentViewController = workspaceViewController
         self.workspaceViewController = workspaceViewController
@@ -126,6 +135,10 @@ final class PinataApp: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        workspaceViewController?.persistSession()
     }
 
     private func installMenu() {

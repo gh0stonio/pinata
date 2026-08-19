@@ -58,12 +58,46 @@ final class WorkspaceViewController: NSViewController {
                 activeTabID = nil
             }
         }
+
+        init(runtime: GhosttyRuntime, snapshot: StoredTerminalWorkspace) {
+            title = snapshot.title
+            workingDirectory = snapshot.workingDirectory
+            tabs = snapshot.tabs.compactMap { tab in
+                guard tab.terminal.isValid else { return nil }
+                return TerminalTab(
+                    id: tab.id,
+                    title: tab.title,
+                    controller: TerminalViewController(runtime: runtime, snapshot: tab.terminal)
+                )
+            }
+            activeTabID = tabs.contains(where: { $0.id == snapshot.activeTabID })
+                ? snapshot.activeTabID
+                : tabs.first?.id
+            nextTabNumber = max(2, snapshot.nextTabNumber)
+        }
+
+        func snapshot(for scope: StoredWorkspaceScope) -> StoredTerminalWorkspace {
+            StoredTerminalWorkspace(
+                scope: scope,
+                title: title,
+                workingDirectory: workingDirectory,
+                tabs: tabs.map {
+                    StoredTerminalTab(
+                        id: $0.id,
+                        title: $0.title,
+                        terminal: $0.controller.sessionSnapshot
+                    )
+                },
+                activeTabID: activeTabID,
+                nextTabNumber: nextTabNumber
+            )
+        }
     }
 
     private static let sidebarDefaultsKey = "pinata.sidebar.presentation.v1"
     private static let leftPanelWidthDefaultsKey = "pinata.panel.left.width.v1"
-    private static let revealDelay: TimeInterval = 0.15
     private static let dismissDelay: TimeInterval = 0.30
+    private static let exitRevealGracePeriod: TimeInterval = 0.75
     private static let revealAnimationDuration: TimeInterval = 0.12
     private static let dismissAnimationDuration: TimeInterval = 0.10
 
@@ -74,8 +108,8 @@ final class WorkspaceViewController: NSViewController {
     private let workspaceHeader = WorkspaceHeaderView()
     private let leftPanelController = PanelViewController()
     private let leftResizeHandle = PanelResizeHandle()
-    private let edgeRevealZone = EdgeRevealView()
     private let taskStore: TaskRegistryStore
+    private let sessionStore = AppSessionStore()
     private let repositoryStore = RepositoryRegistryStore()
     private var taskWorkspaces: [UUID: TerminalWorkspace] = [:]
     private var repositoryWorkspaces: [TaskRepositoryScope: TerminalWorkspace] = [:]
@@ -84,6 +118,8 @@ final class WorkspaceViewController: NSViewController {
     private var expandedTaskIDs = Set<UUID>()
     private var taskErrors: [UUID: String] = [:]
     private var repositoryErrors: [TaskRepositoryScope: String] = [:]
+    private var retryingRepositoryScopes = Set<TaskRepositoryScope>()
+    private var automaticProvisioningFocus: [UUID: TaskRepositoryScope] = [:]
     private var taskDeletionStates: [UUID: TaskDeletionState] = [:]
     private var repositoryRemovalStates: [TaskRepositoryScope: RepositoryRemovalState] = [:]
     private var taskLoadError: String?
@@ -107,6 +143,7 @@ final class WorkspaceViewController: NSViewController {
     private var workspaceBottomConstraint: NSLayoutConstraint!
     private var workspaceTrailingConstraint: NSLayoutConstraint!
     private var workspaceHeaderHeightConstraint: NSLayoutConstraint!
+    private var workspaceMinimumWidthConstraint: NSLayoutConstraint!
 
     private var sidebarPresentation: SidebarPresentation
     private var leftPanelWidth = AppTheme.leftPanelWidth
@@ -115,17 +152,48 @@ final class WorkspaceViewController: NSViewController {
     private var keyEventMonitor: Any?
     private weak var observedWindow: NSWindow?
     private var trafficLightBaselineY: CGFloat?
+    private var trafficLightBaselineX: [NSWindow.ButtonType: CGFloat] = [:]
+    private var sessionSaveWorkItem: DispatchWorkItem?
 
     init(runtime: GhosttyRuntime) {
         self.runtime = runtime
         taskStore = TaskRegistryStore()
+        let loadedTasks: [WorkspaceTask]
+        let didLoadTaskRegistry: Bool
+        let loadError: String?
         do {
-            tasks = try taskStore.load().sorted { $0.createdAt > $1.createdAt }
-            taskRegistryLoaded = true
+            loadedTasks = try taskStore.load()
+            didLoadTaskRegistry = true
+            loadError = nil
         } catch {
-            tasks = []
-            taskRegistryLoaded = false
-            taskLoadError = "Could not load tasks: \(error.localizedDescription)"
+            loadedTasks = []
+            didLoadTaskRegistry = false
+            loadError = "Could not load tasks: \(error.localizedDescription)"
+        }
+        tasks = loadedTasks
+        taskRegistryLoaded = didLoadTaskRegistry
+        taskLoadError = loadError
+        let restoredSession = try? sessionStore.load()
+        expandedTaskIDs = restoredSession?.expandedTaskIDs.filter { taskID in
+            loadedTasks.contains(where: { $0.id == taskID })
+        } ?? []
+        activeScope = restoredSession?.activeScope.flatMap { scope in
+            Self.workspaceScope(from: scope, in: loadedTasks)
+        }
+        if let restoredSession {
+            for snapshot in restoredSession.terminalWorkspaces {
+                guard !snapshot.tabs.isEmpty,
+                      let scope = Self.workspaceScope(from: snapshot.scope, in: loadedTasks)
+                else { continue }
+                let workspace = TerminalWorkspace(runtime: runtime, snapshot: snapshot)
+                guard !workspace.tabs.isEmpty else { continue }
+                switch scope {
+                case .task(let taskID):
+                    taskWorkspaces[taskID] = workspace
+                case .repository(let repositoryScope):
+                    repositoryWorkspaces[repositoryScope] = workspace
+                }
+            }
         }
         let stored = UserDefaults.standard.string(forKey: Self.sidebarDefaultsKey)
         sidebarPresentation = stored == SidebarPresentation.hidden.rawValue ? .hidden : .docked
@@ -145,7 +213,10 @@ final class WorkspaceViewController: NSViewController {
     }
 
     override func loadView() {
-        let rootView = NSView()
+        let rootView = WorkspaceTrackingView()
+        rootView.onExitLeft = { [weak self] in
+            self?.revealTransientSidebar()
+        }
         rootView.wantsLayer = true
         rootView.layer?.backgroundColor = AppTheme.chromeBackground.cgColor
         view = rootView
@@ -218,6 +289,7 @@ final class WorkspaceViewController: NSViewController {
                     title: "Terminal",
                     workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path
                 )
+                scheduleSessionSave()
                 installActiveWorkspace()
                 return
             }
@@ -238,6 +310,7 @@ final class WorkspaceViewController: NSViewController {
         }
         workspace.tabs.append(tab)
         workspace.activeTabID = id
+        scheduleSessionSave()
         if isViewLoaded {
             installActiveWorkspace()
         }
@@ -338,6 +411,7 @@ final class WorkspaceViewController: NSViewController {
         workspaceCard.layer?.backgroundColor = AppTheme.background.cgColor
         workspaceCard.layer?.borderColor = AppTheme.border.cgColor
         mainColumn.layer?.backgroundColor = AppTheme.background.cgColor
+        terminalHost.layer?.backgroundColor = AppTheme.background.cgColor
         workspaceHeader.applyTheme()
         leftPanelController.applyTheme()
         allTerminalWorkspaces.forEach { workspace in
@@ -380,13 +454,15 @@ final class WorkspaceViewController: NSViewController {
         mainColumn.addSubview(terminalHost)
         rootView.addSubview(leftPanel)
         rootView.addSubview(leftResizeHandle)
-        rootView.addSubview(edgeRevealZone)
         updateTaskSidebar()
     }
 
     private func configureConstraints(in rootView: NSView) {
         let leftPanel = leftPanelController.view
 
+        workspaceMinimumWidthConstraint = rootView.widthAnchor.constraint(
+            greaterThanOrEqualToConstant: AppTheme.minimumWindowWidth
+        )
         leftWidthConstraint = leftPanel.widthAnchor.constraint(equalToConstant: leftPanelWidth)
         leftPanelLeadingConstraint = leftPanel.leadingAnchor.constraint(equalTo: rootView.leadingAnchor)
         leftPanelTopConstraint = leftPanel.topAnchor.constraint(equalTo: rootView.topAnchor)
@@ -415,6 +491,7 @@ final class WorkspaceViewController: NSViewController {
             equalToConstant: AppTheme.mainHeaderHeight
         )
         NSLayoutConstraint.activate([
+            workspaceMinimumWidthConstraint,
             leftPanelLeadingConstraint,
             leftPanelTopConstraint,
             leftPanelBottomConstraint,
@@ -444,10 +521,6 @@ final class WorkspaceViewController: NSViewController {
             leftResizeHandle.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
             leftResizeHandle.widthAnchor.constraint(equalToConstant: AppTheme.resizeHandleWidth),
 
-            edgeRevealZone.leadingAnchor.constraint(equalTo: rootView.leadingAnchor),
-            edgeRevealZone.topAnchor.constraint(equalTo: rootView.topAnchor),
-            edgeRevealZone.bottomAnchor.constraint(equalTo: rootView.bottomAnchor),
-            edgeRevealZone.widthAnchor.constraint(equalToConstant: AppTheme.edgeRevealWidth),
         ])
     }
 
@@ -476,6 +549,14 @@ final class WorkspaceViewController: NSViewController {
         leftPanelController.onToggleTaskExpansion = { [weak self] taskID in
             self?.toggleTaskExpansion(taskID)
         }
+        leftPanelController.onMoveTask = { [weak self] sourceID, targetID, after, pinned in
+            self?.moveTask(
+                sourceID,
+                relativeTo: targetID,
+                after: after,
+                pinned: pinned
+            )
+        }
         leftPanelController.onShowTaskMenu = { [weak self] taskID, anchorRect in
             self?.presentTaskActionMenu(taskID: taskID, anchorRect: anchorRect)
         }
@@ -488,14 +569,6 @@ final class WorkspaceViewController: NSViewController {
                 self.cancelTransientDismissal()
             } else {
                 self.scheduleTransientDismissal()
-            }
-        }
-        edgeRevealZone.onHoverChanged = { [weak self] hovering in
-            guard let self else { return }
-            if hovering {
-                self.scheduleTransientReveal()
-            } else {
-                self.cancelScheduledReveal()
             }
         }
         leftResizeHandle.onDrag = { [weak self] delta in
@@ -562,6 +635,7 @@ final class WorkspaceViewController: NSViewController {
             workspace.tabs.contains(where: { $0.id == id })
         else { return }
         workspace.activeTabID = id
+        scheduleSessionSave()
         installActiveWorkspace()
     }
 
@@ -578,7 +652,11 @@ final class WorkspaceViewController: NSViewController {
            let report = attachment.worktreeProvisioning,
            !report.succeeded {
             setWorkspaceHeaderVisible(false)
-            installWorktreeProvisioning(report, repositoryName: attachment.name)
+            installWorktreeProvisioning(
+                report,
+                repositoryName: attachment.name,
+                scope: scope
+            )
             return
         }
         guard let workspace = activeTerminalWorkspace else {
@@ -605,6 +683,9 @@ final class WorkspaceViewController: NSViewController {
         controller.onCloseLastPane = { [weak self] in
             self?.closeTerminalTab(activeTabID)
         }
+        controller.onChange = { [weak self] in
+            self?.scheduleSessionSave()
+        }
         if controller.parent !== self {
             addChild(controller)
         }
@@ -623,12 +704,16 @@ final class WorkspaceViewController: NSViewController {
 
     private func installWorktreeProvisioning(
         _ report: WorktreeProvisioningReport,
-        repositoryName: String
+        repositoryName: String,
+        scope: TaskRepositoryScope
     ) {
         let view = WorktreeProvisioningView(
             repositoryName: repositoryName,
             report: report
         )
+        view.onRetry = { [weak self] in
+            self?.retryWorktreeProvisioning(scope)
+        }
         view.translatesAutoresizingMaskIntoConstraints = false
         terminalHost.addSubview(view)
         NSLayoutConstraint.activate([
@@ -639,12 +724,92 @@ final class WorkspaceViewController: NSViewController {
         ])
     }
 
+    private func retryWorktreeProvisioning(_ scope: TaskRepositoryScope) {
+        guard
+            let task = tasks.first(where: { $0.id == scope.taskID }),
+            let attachment = task.repositories.first(where: {
+                $0.repositoryID == scope.repositoryID
+            }),
+            let report = attachment.worktreeProvisioning,
+            report.failureMessage != nil,
+            taskDeletionStates[scope.taskID] == nil,
+            repositoryRemovalStates[scope] == nil,
+            retryingRepositoryScopes.insert(scope).inserted
+        else { return }
+        repositoryErrors.removeValue(forKey: scope)
+        updateTaskSidebar()
+
+        let repository: RegisteredRepository
+        do {
+            let repositories = try repositoryStore.load()
+            guard let match = repositories.first(where: { $0.id == scope.repositoryID }) else {
+                throw WorkspaceTaskError.repositoryUnavailable(attachment.name)
+            }
+            repository = match
+        } catch {
+            failWorktreeRetry(error.localizedDescription, report: report, for: scope)
+            return
+        }
+
+        Task { @MainActor [weak self] in
+            let failure = await Task.detached { [report, repository] in
+                do {
+                    try RepositoryInspector().removeWorktree(
+                        at: report.path,
+                        branchHint: report.branch,
+                        from: repository
+                    )
+                    return nil as String?
+                } catch {
+                    return error.localizedDescription
+                }
+            }.value
+            guard let self else { return }
+            retryingRepositoryScopes.remove(scope)
+            if let failure {
+                failWorktreeRetry(failure, report: report, for: scope)
+                return
+            }
+            guard
+                taskDeletionStates[scope.taskID] == nil,
+                repositoryRemovalStates[scope] == nil,
+                let currentTask = tasks.first(where: { $0.id == scope.taskID })
+            else {
+                updateTaskSidebar()
+                return
+            }
+            saveAndProvision([repository], for: currentTask)
+        }
+    }
+
+    private func failWorktreeRetry(
+        _ message: String,
+        report: WorktreeProvisioningReport,
+        for scope: TaskRepositoryScope
+    ) {
+        retryingRepositoryScopes.remove(scope)
+        updateWorktreeProvisioning(
+            WorktreeProvisioningReport(
+                path: report.path,
+                branch: report.branch,
+                baseBranch: report.baseBranch,
+                steps: [WorktreeProvisioningStep(
+                    title: "Prepare retry",
+                    status: .failed,
+                    detail: message
+                )]
+            ),
+            for: scope
+        )
+    }
+
     private func closeTerminalTab(_ id: UUID) {
         guard
             let workspace = activeTerminalWorkspace,
             let index = workspace.tabs.firstIndex(where: { $0.id == id })
         else { return }
         let tab = workspace.tabs.remove(at: index)
+        tab.controller.terminateSessions()
         tab.controller.view.removeFromSuperview()
         tab.controller.removeFromParent()
         if workspace.activeTabID == id {
@@ -652,6 +817,7 @@ final class WorkspaceViewController: NSViewController {
                 ? nil
                 : workspace.tabs[min(index, workspace.tabs.count - 1)].id
         }
+        scheduleSessionSave()
         installActiveWorkspace()
     }
 
@@ -753,6 +919,7 @@ final class WorkspaceViewController: NSViewController {
             expandedTaskIDs.insert(task.id)
         }
         updateTaskSidebar()
+        scheduleSessionSave()
         installActiveWorkspace()
         DispatchQueue.main.async { [weak self] in
             self?.saveAndProvision(repositories, for: task)
@@ -776,12 +943,14 @@ final class WorkspaceViewController: NSViewController {
             repositories: task.repositories + additions.map {
                 TaskRepositoryAttachment(repositoryID: $0.id, name: $0.name)
             },
-            createdAt: task.createdAt
+            createdAt: task.createdAt,
+            isPinned: task.isPinned
         )
         dismissNewTaskModal()
         tasks[taskIndex] = updatedTask
         expandedTaskIDs.insert(task.id)
         updateTaskSidebar()
+        scheduleSessionSave()
         DispatchQueue.main.async { [weak self] in
             self?.saveAndProvision(additions, for: updatedTask)
         }
@@ -828,12 +997,15 @@ final class WorkspaceViewController: NSViewController {
             }
         }
         if let firstRepository = provisionableRepositories.first {
-            activeScope = .repository(TaskRepositoryScope(
+            let scope = TaskRepositoryScope(
                 taskID: task.id,
                 repositoryID: firstRepository.id
-            ))
+            )
+            activeScope = .repository(scope)
+            automaticProvisioningFocus[task.id] = scope
         }
         updateTaskSidebar()
+        scheduleSessionSave()
         installActiveWorkspace()
 
         let updates = AsyncStream<(TaskRepositoryScope, WorktreeProvisioningReport)> { continuation in
@@ -884,21 +1056,26 @@ final class WorkspaceViewController: NSViewController {
         leftPanelController.setTaskMenuTask(taskID)
 
         let menu = SidebarActionMenuView(items: [
+            .init(
+                title: task.isPinned ? "Unpin task" : "Pin task",
+                symbol: task.isPinned ? "pin.slash" : "pin"
+            ),
             .init(title: "Rename", symbol: "square.and.pencil"),
-            .init(title: "Attach repositories…", symbol: "book.closed"),
+            .init(title: "Attach repositories", symbol: "book.closed"),
             .init(title: "Delete task…", symbol: "trash", destructive: true),
         ])
         menu.onSelect = { [weak self] index in
             self?.dismissTaskActionMenu()
             switch index {
-            case 0: self?.presentTaskModal(editingTask: task, focusTitle: true)
-            case 1: self?.presentTaskModal(editingTask: task, focusTitle: false)
-            case 2: self?.confirmTaskDeletion(task.id)
+            case 0: self?.toggleTaskPin(task.id)
+            case 1: self?.presentTaskModal(editingTask: task, focusTitle: true)
+            case 2: self?.presentTaskModal(editingTask: task, focusTitle: false)
+            case 3: self?.confirmTaskDeletion(task.id)
             default: break
             }
         }
         let anchor = view.convert(anchorRect, from: nil)
-        let size = NSSize(width: 174, height: 110)
+        let size = NSSize(width: 174, height: 139)
         menu.frame = NSRect(
             x: min(anchor.maxX + 6, view.bounds.maxX - size.width - 8),
             y: min(max(8, anchor.maxY - size.height), view.bounds.maxY - size.height - 8),
@@ -916,6 +1093,27 @@ final class WorkspaceViewController: NSViewController {
             }
             return event
         }
+    }
+
+    private func toggleTaskPin(_ taskID: UUID) {
+        guard let taskIndex = tasks.firstIndex(where: { $0.id == taskID }) else { return }
+        let task = tasks[taskIndex]
+        var updatedTasks = tasks
+        updatedTasks[taskIndex] = WorkspaceTask(
+            id: task.id,
+            title: task.title,
+            repositories: task.repositories,
+            createdAt: task.createdAt,
+            isPinned: !task.isPinned
+        )
+        do {
+            try taskStore.save(updatedTasks)
+            tasks = updatedTasks
+            taskErrors.removeValue(forKey: taskID)
+        } catch {
+            taskErrors[taskID] = error.localizedDescription
+        }
+        updateTaskSidebar()
     }
 
     private func dismissTaskActionMenu() {
@@ -1182,6 +1380,7 @@ final class WorkspaceViewController: NSViewController {
                 activeScope = tasks.first.map { .task($0.id) }
             }
             updateTaskSidebar()
+            scheduleSessionSave()
             installActiveWorkspace()
         }
     }
@@ -1204,6 +1403,7 @@ final class WorkspaceViewController: NSViewController {
             if let workspace = repositoryWorkspaces.removeValue(forKey: scope) {
                 closeTerminals(in: workspace)
             }
+            scheduleSessionSave()
             repositoryRemovalStates[scope] = .removing("Removing worktree and branch")
             updateTaskSidebar()
             installActiveWorkspace()
@@ -1247,7 +1447,8 @@ final class WorkspaceViewController: NSViewController {
                 repositories: tasks[taskIndex].repositories.filter {
                     $0.repositoryID != scope.repositoryID
                 },
-                createdAt: task.createdAt
+                createdAt: task.createdAt,
+                isPinned: task.isPinned
             )
             var updatedTasks = tasks
             updatedTasks[taskIndex] = updatedTask
@@ -1262,6 +1463,7 @@ final class WorkspaceViewController: NSViewController {
             repositoryErrors.removeValue(forKey: scope)
             activeScope = .task(task.id)
             updateTaskSidebar()
+            scheduleSessionSave()
             installActiveWorkspace()
         }
     }
@@ -1280,6 +1482,7 @@ final class WorkspaceViewController: NSViewController {
 
     private func closeTerminals(in workspace: TerminalWorkspace) {
         for tab in workspace.tabs {
+            tab.controller.terminateSessions()
             if tab.controller.isViewLoaded {
                 tab.controller.view.removeFromSuperview()
             }
@@ -1313,7 +1516,9 @@ final class WorkspaceViewController: NSViewController {
     ) {
         do {
             try storeWorktreeProvisioning(report, for: scope)
-            repositoryWorkspaces.removeValue(forKey: scope)
+            if let workspace = repositoryWorkspaces.removeValue(forKey: scope) {
+                closeTerminals(in: workspace)
+            }
             if let failureMessage = report.failureMessage {
                 repositoryErrors[scope] = failureMessage
             } else if report.succeeded,
@@ -1332,10 +1537,45 @@ final class WorkspaceViewController: NSViewController {
         } catch {
             repositoryErrors[scope] = error.localizedDescription
         }
+        let changedFocus = updateAutomaticProvisioningFocus(for: scope.taskID)
         updateTaskSidebar()
-        if activeScope == .repository(scope) {
+        scheduleSessionSave()
+        if changedFocus || activeScope == .repository(scope) {
             installActiveWorkspace()
         }
+    }
+
+    private func updateAutomaticProvisioningFocus(for taskID: UUID) -> Bool {
+        guard let focusedScope = automaticProvisioningFocus[taskID] else { return false }
+        guard activeScope == .repository(focusedScope) else {
+            automaticProvisioningFocus.removeValue(forKey: taskID)
+            return false
+        }
+        guard let task = tasks.first(where: { $0.id == taskID }) else {
+            automaticProvisioningFocus.removeValue(forKey: taskID)
+            return false
+        }
+        guard let focusedAttachment = task.repositories.first(where: {
+            $0.repositoryID == focusedScope.repositoryID
+        }) else {
+            automaticProvisioningFocus.removeValue(forKey: taskID)
+            return false
+        }
+        if focusedAttachment.worktreePath != nil {
+            automaticProvisioningFocus.removeValue(forKey: taskID)
+            return false
+        }
+        guard focusedAttachment.worktreeProvisioning?.failureMessage != nil else { return false }
+        guard let successfulAttachment = task.repositories.first(where: {
+            $0.worktreePath != nil
+        }) else { return false }
+
+        activeScope = .repository(TaskRepositoryScope(
+            taskID: taskID,
+            repositoryID: successfulAttachment.repositoryID
+        ))
+        automaticProvisioningFocus.removeValue(forKey: taskID)
+        return true
     }
 
     private func storeWorktreeProvisioning(
@@ -1361,7 +1601,8 @@ final class WorkspaceViewController: NSViewController {
             id: task.id,
             title: task.title,
             repositories: attachments,
-            createdAt: task.createdAt
+            createdAt: task.createdAt,
+            isPinned: task.isPinned
         )
         try taskStore.save(updatedTasks)
         tasks = updatedTasks
@@ -1369,12 +1610,14 @@ final class WorkspaceViewController: NSViewController {
 
     private func selectTask(_ taskID: UUID) {
         guard tasks.contains(where: { $0.id == taskID }) else { return }
+        automaticProvisioningFocus.removeValue(forKey: taskID)
         if settingsController != nil { dismissSettings() }
         activeScope = .task(taskID)
         if let task = tasks.first(where: { $0.id == taskID }), !task.repositories.isEmpty {
             expandedTaskIDs.insert(taskID)
         }
         updateTaskSidebar()
+        scheduleSessionSave()
         installActiveWorkspace()
     }
 
@@ -1383,12 +1626,14 @@ final class WorkspaceViewController: NSViewController {
             let task = tasks.first(where: { $0.id == scope.taskID }),
             let attachment = task.repositories.first(where: { $0.repositoryID == scope.repositoryID })
         else { return }
+        automaticProvisioningFocus.removeValue(forKey: scope.taskID)
         if settingsController != nil { dismissSettings() }
         activeScope = .repository(scope)
         expandedTaskIDs.insert(scope.taskID)
 
         if taskDeletionStates[scope.taskID] != nil || repositoryRemovalStates[scope] != nil {
             updateTaskSidebar()
+            scheduleSessionSave()
             installActiveWorkspace()
             return
         }
@@ -1396,6 +1641,7 @@ final class WorkspaceViewController: NSViewController {
         if let report = attachment.worktreeProvisioning, let failureMessage = report.failureMessage {
             repositoryErrors[scope] = failureMessage
             updateTaskSidebar()
+            scheduleSessionSave()
             installActiveWorkspace()
             return
         }
@@ -1419,6 +1665,7 @@ final class WorkspaceViewController: NSViewController {
             }
         }
         updateTaskSidebar()
+        scheduleSessionSave()
         installActiveWorkspace()
     }
 
@@ -1452,19 +1699,65 @@ final class WorkspaceViewController: NSViewController {
             expandedTaskIDs.insert(taskID)
         }
         updateTaskSidebar()
+        scheduleSessionSave()
+    }
+
+    private func moveTask(
+        _ sourceID: UUID,
+        relativeTo targetID: UUID?,
+        after: Bool,
+        pinned: Bool
+    ) {
+        let reordered = reorderTasks(
+            tasks,
+            moving: sourceID,
+            relativeTo: targetID,
+            after: after,
+            inPinnedSection: pinned
+        )
+        guard reordered != tasks else { return }
+        do {
+            try taskStore.save(reordered)
+            tasks = reordered
+            taskErrors.removeValue(forKey: sourceID)
+        } catch {
+            taskErrors[sourceID] = error.localizedDescription
+        }
+        updateTaskSidebar()
     }
 
     private func updateTaskSidebar() {
-        let repositoryActivities = repositoryRemovalStates.compactMapValues { state in
+        var displayedRepositoryErrors = repositoryErrors
+        for task in tasks {
+            for repository in task.repositories {
+                guard let failure = repository.worktreeProvisioning?.failureMessage else { continue }
+                let scope = TaskRepositoryScope(
+                    taskID: task.id,
+                    repositoryID: repository.repositoryID
+                )
+                if displayedRepositoryErrors[scope] == nil {
+                    displayedRepositoryErrors[scope] = failure
+                }
+            }
+        }
+        var repositoryActivities = repositoryRemovalStates.compactMapValues { state in
             if case .removing = state { "detaching" } else { nil }
+        }
+        for scope in retryingRepositoryScopes where repositoryActivities[scope] == nil {
+            repositoryActivities[scope] = "retrying"
         }
         var taskActivities = taskDeletionStates.compactMapValues { state in
             if case .deleting = state { "deleting" } else { nil }
         }
         for task in tasks where taskActivities[task.id] == nil {
-            if repositoryActivities.keys.contains(where: { $0.taskID == task.id }) {
+            let repositoryActivityValues = repositoryActivities.compactMap {
+                $0.key.taskID == task.id ? $0.value : nil
+            }
+            if repositoryActivityValues.contains("detaching") {
                 taskActivities[task.id] = "detaching"
-            } else if task.repositories.contains(where: {
+            } else if repositoryActivityValues.contains("retrying") {
+                taskActivities[task.id] = "retrying"
+            } else if !expandedTaskIDs.contains(task.id), task.repositories.contains(where: {
                 guard let report = $0.worktreeProvisioning else { return false }
                 return !report.succeeded && report.failureMessage == nil
             }) {
@@ -1478,7 +1771,7 @@ final class WorkspaceViewController: NSViewController {
             taskActivities: taskActivities,
             repositoryActivities: repositoryActivities,
             taskErrors: taskErrors,
-            repositoryErrors: repositoryErrors,
+            repositoryErrors: displayedRepositoryErrors,
             loadError: taskLoadError
         )
     }
@@ -1534,25 +1827,15 @@ final class WorkspaceViewController: NSViewController {
         leftPanel.layer?.masksToBounds = sidebarPresentation == .transient
 
         leftResizeHandle.setEnabled(docked)
-        edgeRevealZone.setEnabled(sidebarPresentation == .hidden)
         leftPanelController.setToggleActive(docked)
         leftPanelController.setFullScreen(fullScreen)
+        leftPanelController.setResizable(docked)
         updateTrafficLights()
         view.layoutSubtreeIfNeeded()
         updateWindowMinimumSize()
     }
 
-    private func scheduleTransientReveal() {
-        guard sidebarPresentation == .hidden else { return }
-        cancelScheduledReveal()
-        perform(
-            #selector(revealTransientSidebar),
-            with: nil,
-            afterDelay: Self.revealDelay
-        )
-    }
-
-    @objc private func revealTransientSidebar() {
+    private func revealTransientSidebar() {
         guard sidebarPresentation == .hidden else { return }
         cancelScheduledTransitions()
         sidebarPresentation = .transient
@@ -1564,9 +1847,10 @@ final class WorkspaceViewController: NSViewController {
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             leftPanelController.view.animator().alphaValue = 1
         }
+        scheduleTransientDismissal(after: Self.exitRevealGracePeriod)
     }
 
-    private func scheduleTransientDismissal() {
+    private func scheduleTransientDismissal(after delay: TimeInterval? = nil) {
         guard sidebarPresentation == .transient else { return }
         NSObject.cancelPreviousPerformRequests(
             withTarget: self,
@@ -1576,7 +1860,7 @@ final class WorkspaceViewController: NSViewController {
         perform(
             #selector(attemptTransientDismissal),
             with: nil,
-            afterDelay: Self.dismissDelay
+            afterDelay: delay ?? Self.dismissDelay
         )
     }
 
@@ -1630,7 +1914,13 @@ final class WorkspaceViewController: NSViewController {
     }
 
     private var shouldKeepTransientSidebarOpen: Bool {
-        if menuTracking || NSEvent.pressedMouseButtons != 0 {
+        if menuTracking
+            || taskActionMenu != nil
+            || repositoryActionMenu != nil
+            || newTaskModal != nil
+            || deleteTaskModal != nil
+            || NSEvent.pressedMouseButtons != 0
+        {
             return true
         }
         guard
@@ -1647,16 +1937,7 @@ final class WorkspaceViewController: NSViewController {
         NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     }
 
-    private func cancelScheduledReveal() {
-        NSObject.cancelPreviousPerformRequests(
-            withTarget: self,
-            selector: #selector(revealTransientSidebar),
-            object: nil
-        )
-    }
-
     private func cancelScheduledTransitions() {
-        cancelScheduledReveal()
         NSObject.cancelPreviousPerformRequests(
             withTarget: self,
             selector: #selector(attemptTransientDismissal),
@@ -1672,6 +1953,77 @@ final class WorkspaceViewController: NSViewController {
     private func persistSidebarPresentation() {
         guard sidebarPresentation != .transient else { return }
         UserDefaults.standard.set(sidebarPresentation.rawValue, forKey: Self.sidebarDefaultsKey)
+    }
+
+    func persistSession() {
+        sessionSaveWorkItem?.cancel()
+        sessionSaveWorkItem = nil
+        do {
+            try sessionStore.save(AppSession(
+                activeScope: storedScope(from: activeScope),
+                expandedTaskIDs: expandedTaskIDs,
+                terminalWorkspaces: storedTerminalWorkspaces
+            ))
+        } catch {
+            NSLog("Could not persist app session: \(error.localizedDescription)")
+        }
+    }
+
+    private func scheduleSessionSave() {
+        sessionSaveWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in self?.persistSession() }
+        sessionSaveWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: workItem)
+    }
+
+    private var storedTerminalWorkspaces: [StoredTerminalWorkspace] {
+        let taskSnapshots = taskWorkspaces
+            .sorted { $0.key.uuidString < $1.key.uuidString }
+            .map { taskID, workspace in
+                workspace.snapshot(for: .task(taskID))
+            }
+        let repositorySnapshots = repositoryWorkspaces
+            .sorted {
+                if $0.key.taskID != $1.key.taskID {
+                    return $0.key.taskID.uuidString < $1.key.taskID.uuidString
+                }
+                return $0.key.repositoryID.uuidString < $1.key.repositoryID.uuidString
+            }
+            .map { scope, workspace in
+                workspace.snapshot(for: .repository(
+                    taskID: scope.taskID,
+                    repositoryID: scope.repositoryID
+                ))
+            }
+        return taskSnapshots + repositorySnapshots
+    }
+
+    private func storedScope(from scope: WorkspaceScope?) -> StoredWorkspaceScope? {
+        switch scope {
+        case .task(let taskID):
+            .task(taskID)
+        case .repository(let scope):
+            .repository(taskID: scope.taskID, repositoryID: scope.repositoryID)
+        case nil:
+            nil
+        }
+    }
+
+    private static func workspaceScope(
+        from storedScope: StoredWorkspaceScope,
+        in tasks: [WorkspaceTask]
+    ) -> WorkspaceScope? {
+        switch storedScope {
+        case .task(let taskID):
+            return tasks.contains(where: { $0.id == taskID }) ? .task(taskID) : nil
+        case .repository(let taskID, let repositoryID):
+            guard tasks.contains(where: {
+                $0.id == taskID && $0.repositories.contains(where: { $0.repositoryID == repositoryID })
+            }) else {
+                return nil
+            }
+            return .repository(TaskRepositoryScope(taskID: taskID, repositoryID: repositoryID))
+        }
     }
 
     private func observeWindowIfNeeded() {
@@ -1755,9 +2107,11 @@ final class WorkspaceViewController: NSViewController {
     private func updateTrafficLights() {
         guard let window = view.window else { return }
         let types: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
-        let buttons = types.compactMap(window.standardWindowButton)
+        let buttons = types.compactMap { type in
+            window.standardWindowButton(type).map { (type, $0) }
+        }
         let visible = fullScreen || sidebarPresentation != .hidden
-        buttons.forEach { $0.isHidden = !visible }
+        buttons.forEach { $0.1.isHidden = !visible }
 
         guard
             !fullScreen,
@@ -1767,9 +2121,13 @@ final class WorkspaceViewController: NSViewController {
         }
         let baselineY = trafficLightBaselineY ?? anchor.frame.origin.y
         trafficLightBaselineY = baselineY
-        for button in buttons {
+        let panelOffset = sidebarPresentation == .transient ? AppTheme.workspaceInset : 0
+        for (type, button) in buttons {
+            let baselineX = trafficLightBaselineX[type] ?? button.frame.origin.x
+            trafficLightBaselineX[type] = baselineX
             var frame = button.frame
-            frame.origin.y = baselineY - AppTheme.trafficLightVerticalOffset
+            frame.origin.x = baselineX + panelOffset
+            frame.origin.y = baselineY - AppTheme.trafficLightVerticalOffset - panelOffset
             button.frame = frame
         }
     }
@@ -1782,6 +2140,7 @@ final class WorkspaceViewController: NSViewController {
     @objc private func windowDidExitFullScreen(_ notification: Notification) {
         fullScreen = false
         trafficLightBaselineY = nil
+        trafficLightBaselineX.removeAll()
         applySidebarPresentation()
     }
 
@@ -1814,30 +2173,33 @@ final class WorkspaceViewController: NSViewController {
 
     private func updateWindowMinimumSize() {
         guard let window = view.window else { return }
-
-        let settingsMinimumWidth = AppTheme.settingsRailWidth
+        let sidebarWidth = leftPanelWidth
+        let settingsWidth = AppTheme.settingsRailWidth
             + SettingsLayout.dividerThickness
-            + SettingsLayout.contentMinimumWidth
-        let sidebarWidth = sidebarPresentation == .docked ? leftPanelWidth : 0
-        let minimumWidth = max(
-            AppTheme.minimumWindowWidth,
-            sidebarWidth + AppTheme.workspaceInset * 2 + settingsMinimumWidth
+            + SettingsLayout.minimumPageWidth
+        let requiredWidth = sidebarWidth
+            + AppTheme.workspaceInset * 2
+            + settingsWidth
+        let minimumWidth = max(AppTheme.minimumWindowWidth, requiredWidth)
+        workspaceMinimumWidthConstraint.constant = minimumWidth
+        window.minSize = NSSize(
+            width: minimumWidth,
+            height: AppTheme.minimumWindowHeight
         )
-
-        window.minSize = NSSize(width: minimumWidth, height: 600)
-        guard window.contentView?.bounds.width ?? 0 < minimumWidth else { return }
-        window.setContentSize(
-            NSSize(width: minimumWidth, height: window.contentView?.bounds.height ?? 600)
-        )
+        if window.contentView?.bounds.width ?? 0 < minimumWidth {
+            window.setContentSize(
+                NSSize(
+                    width: minimumWidth,
+                    height: window.contentView?.bounds.height ?? AppTheme.minimumWindowHeight
+                )
+            )
+        }
     }
 
     private func resizeLeftPanel(by delta: CGFloat) {
         guard sidebarPresentation == .docked else { return }
-        let minimumCenterWidth = AppTheme.settingsRailWidth
-            + SettingsLayout.dividerThickness
-            + SettingsLayout.contentMinimumWidth
         let maximumFromWindow = (leftResizeWindowWidth ?? view.bounds.width)
-            - minimumCenterWidth
+            - AppTheme.minimumCenterWidth
             - AppTheme.workspaceInset * 2
         let maximum = max(
             AppTheme.leftPanelRange.lowerBound,
@@ -1870,6 +2232,8 @@ final class WorkspaceViewController: NSViewController {
 
 @MainActor
 private final class WorktreeProvisioningView: NSView, SettingsThemeApplying {
+    var onRetry: (() -> Void)?
+
     private let content = NSStackView()
     private let artwork: WorkspaceEmptyArtworkView
     private let repositoryLabel: NSTextField
@@ -1900,8 +2264,10 @@ private final class WorktreeProvisioningView: NSView, SettingsThemeApplying {
     }
 
     func applyTheme() {
-        repositoryLabel.textColor = report.failureMessage == nil ? AppTheme.primaryText : .systemRed
-        detailLabel.textColor = .systemRed
+        repositoryLabel.textColor = report.failureMessage == nil
+            ? AppTheme.primaryText
+            : AppTheme.error
+        detailLabel.textColor = AppTheme.error
         artwork.needsDisplay = true
         currentAction.applyTheme()
     }
@@ -1938,7 +2304,20 @@ private final class WorktreeProvisioningView: NSView, SettingsThemeApplying {
             content.setCustomSpacing(12, after: currentAction)
             content.addArrangedSubview(detailLabel)
             detailLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 480).isActive = true
+            content.setCustomSpacing(24, after: detailLabel)
+            let retryButton = WorkspaceEmptyActionButton(
+                title: "Retry",
+                symbolName: "arrow.clockwise"
+            )
+            retryButton.target = self
+            retryButton.action = #selector(retry(_:))
+            content.addArrangedSubview(retryButton)
         }
+    }
+
+    @objc private func retry(_ sender: AppButton) {
+        sender.isEnabled = false
+        onRetry?()
     }
 
     private static func visibleStep(in report: WorktreeProvisioningReport) -> WorktreeProvisioningStep {
@@ -1978,8 +2357,8 @@ private final class WorktreeCurrentActionView: NSView, SettingsThemeApplying {
     }
 
     func applyTheme() {
-        titleLabel.textColor = step.status == .failed ? .systemRed : AppTheme.secondaryText
-        statusIcon.contentTintColor = step.status == .failed ? .systemRed : .systemGreen
+        titleLabel.textColor = step.status == .failed ? AppTheme.error : AppTheme.secondaryText
+        statusIcon.contentTintColor = step.status == .failed ? AppTheme.error : AppTheme.success
     }
 
     private func installContent() {
@@ -2129,7 +2508,7 @@ private final class WorkspaceEmptyStateView: NSStackView {
 
         let titleLabel = NSTextField(labelWithString: title)
         titleLabel.font = AppTheme.font(ofSize: AppTheme.typography.title, weight: 650)
-        titleLabel.textColor = state.isError ? .systemRed : AppTheme.primaryText
+        titleLabel.textColor = state.isError ? AppTheme.error : AppTheme.primaryText
         addArrangedSubview(titleLabel)
         setCustomSpacing(12, after: titleLabel)
 
@@ -2314,7 +2693,7 @@ private final class WorkspaceEmptyArtworkView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        let color = kind == .error ? NSColor.systemRed : AppTheme.panelAccentIcon
+        let color = kind == .error ? AppTheme.error : AppTheme.panelAccentIcon
         let card = NSRect(x: 28, y: 12, width: 128, height: 92)
         let shadow = card.offsetBy(dx: -13, dy: 11)
         drawCard(shadow, fill: AppTheme.controlSelection, border: AppTheme.border)
@@ -2452,28 +2831,24 @@ private final class WorkspaceEmptyArtworkView: NSView {
         triangle.stroke()
         color.setFill()
         NSBezierPath(
-            roundedRect: NSRect(x: rect.midX - 2, y: rect.minY + 47, width: 4, height: 18),
+            roundedRect: NSRect(x: rect.midX - 2, y: rect.minY + 42, width: 4, height: 18),
             xRadius: 2,
             yRadius: 2
         ).fill()
         NSBezierPath(
-            ovalIn: NSRect(x: rect.midX - 3, y: rect.minY + 38, width: 6, height: 6)
+            ovalIn: NSRect(x: rect.midX - 3, y: rect.minY + 33, width: 6, height: 6)
         ).fill()
     }
 
 }
 
 @MainActor
-private final class EdgeRevealView: NSView {
-    var onHoverChanged: ((Bool) -> Void)?
-    private var enabled = false
+private final class WorkspaceTrackingView: NSView {
+    var onExitLeft: (() -> Void)?
     private var trackingArea: NSTrackingArea?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        translatesAutoresizingMaskIntoConstraints = false
-        isHidden = true
-        setAccessibilityElement(false)
     }
 
     @available(*, unavailable)
@@ -2486,10 +2861,6 @@ private final class EdgeRevealView: NSView {
         if let trackingArea {
             removeTrackingArea(trackingArea)
         }
-        guard enabled else {
-            trackingArea = nil
-            return
-        }
         let trackingArea = NSTrackingArea(
             rect: bounds,
             options: [.activeInKeyWindow, .mouseEnteredAndExited, .inVisibleRect],
@@ -2499,21 +2870,10 @@ private final class EdgeRevealView: NSView {
         self.trackingArea = trackingArea
     }
 
-    override func mouseEntered(with event: NSEvent) {
-        guard enabled else { return }
-        onHoverChanged?(true)
-    }
-
     override func mouseExited(with event: NSEvent) {
-        guard enabled else { return }
-        onHoverChanged?(false)
-    }
-
-    func setEnabled(_ enabled: Bool) {
-        guard enabled != self.enabled else { return }
-        self.enabled = enabled
-        isHidden = !enabled
-        updateTrackingAreas()
+        let location = convert(event.locationInWindow, from: nil)
+        guard location.x <= bounds.minX else { return }
+        onExitLeft?()
     }
 }
 

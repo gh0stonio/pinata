@@ -252,12 +252,14 @@ struct RepositoryInspector: Sendable {
 
     static func organization(from remoteURL: String) -> String? {
         let trimmed = remoteURL.trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: ".git", with: "")
+        let normalized = trimmed.hasSuffix(".git")
+            ? String(trimmed.dropLast(4))
+            : trimmed
         let repositoryPath: Substring?
-        if let url = URL(string: trimmed), url.host != nil {
+        if let url = URL(string: normalized), url.host != nil {
             repositoryPath = url.path.split(separator: "/").first
-        } else if let separator = trimmed.lastIndex(of: ":") {
-            repositoryPath = trimmed[trimmed.index(after: separator)...]
+        } else if let separator = normalized.lastIndex(of: ":") {
+            repositoryPath = normalized[normalized.index(after: separator)...]
                 .split(separator: "/")
                 .first
         } else {
@@ -363,6 +365,9 @@ enum WorktreeProvisioningFailureSummary {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
 
+        guard !lines.isEmpty else {
+            return "Worktree creation stopped before completion."
+        }
         if lines.count <= 3, cleaned.count <= 360 {
             return lines.joined(separator: "\n")
         }
@@ -636,10 +641,14 @@ struct WorktreeProvisioner {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = arguments
+        var environment = ProcessInfo.processInfo.environment
+        environment["GIT_TERMINAL_PROMPT"] = "0"
+        process.environment = environment
         process.standardOutput = pipe
         process.standardError = pipe
         try process.run()
         try pipe.fileHandleForWriting.close()
+        defer { try? pipe.fileHandleForReading.close() }
 
         var data = Data()
         var pending = ""

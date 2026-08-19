@@ -29,18 +29,67 @@ struct WorkspaceTask: Codable, Equatable, Identifiable, Sendable {
     let title: String
     let repositories: [TaskRepositoryAttachment]
     let createdAt: Date
+    let isPinned: Bool
 
     init(
         id: UUID = UUID(),
         title: String,
         repositories: [TaskRepositoryAttachment] = [],
-        createdAt: Date = Date()
+        createdAt: Date = Date(),
+        isPinned: Bool = false
     ) {
         self.id = id
         self.title = title
         self.repositories = repositories
         self.createdAt = createdAt
+        self.isPinned = isPinned
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, repositories, createdAt, isPinned
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(UUID.self, forKey: .id)
+        title = try values.decode(String.self, forKey: .title)
+        repositories = try values.decode([TaskRepositoryAttachment].self, forKey: .repositories)
+        createdAt = try values.decode(Date.self, forKey: .createdAt)
+        isPinned = try values.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+    }
+}
+
+func reorderTasks(
+    _ tasks: [WorkspaceTask],
+    moving sourceID: UUID,
+    relativeTo targetID: UUID?,
+    after: Bool,
+    inPinnedSection isPinned: Bool
+) -> [WorkspaceTask] {
+    guard let sourceIndex = tasks.firstIndex(where: { $0.id == sourceID }) else { return tasks }
+    if targetID == sourceID, tasks[sourceIndex].isPinned == isPinned { return tasks }
+
+    var reordered = tasks
+    let current = reordered.remove(at: sourceIndex)
+    let source = WorkspaceTask(
+        id: current.id,
+        title: current.title,
+        repositories: current.repositories,
+        createdAt: current.createdAt,
+        isPinned: isPinned
+    )
+    if let targetID {
+        guard
+            let targetIndex = reordered.firstIndex(where: { $0.id == targetID }),
+            reordered[targetIndex].isPinned == isPinned
+        else { return tasks }
+        reordered.insert(source, at: targetIndex + (after ? 1 : 0))
+    } else {
+        let sectionStart = reordered.firstIndex(where: { $0.isPinned == isPinned })
+            ?? reordered.endIndex
+        reordered.insert(source, at: sectionStart)
+    }
+    return reordered
 }
 
 struct TaskRepositoryScope: Hashable, Sendable {

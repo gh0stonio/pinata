@@ -47,11 +47,17 @@ The current `main` branch includes:
 - macOS 14 or newer.
 - App version `0.0.1`, build `1`.
 - Native Ghostty terminal tabs and split panes.
-- Resizable task sidebar.
-- Workspace-native appearance and repository settings.
-- Local repository registration, Git metadata, branches, tags, and worktree defaults.
+- Task sidebar with pinned tasks, drag sorting, and collapsed/transient presentation.
+- Create, rename, pin, attach repositories to, detach repositories from, and delete tasks.
+- Local repository registration, Git metadata, branches, tags, and global or per-repository worktree defaults.
+- Per-task Git worktrees with a Piñata branch, created from a freshly fetched repository default branch.
+- Parallel worktree provisioning with current-step status, failure recovery, and retry actions.
+- Theme, accent, font-size, terminal-size, and light/dark appearance settings.
+- Worktree-aware terminals, task and repository action menus, and safe cleanup of Piñata-owned worktrees and branches.
+- App-session restoration for selected scope, expanded tasks, terminal tabs, split layout, active pane, and working directories.
+- Durable local terminal sessions: restored Ghostty panes reconnect to their existing shell or agent process after an app quit, with native Ghostty scrolling and no tmux dependency.
 
-Tasks, file browsing, diffs, reviews, checks, and pull request workflows are not implemented yet.
+File browsing, diffs, reviews, checks, pull request workflows, and Pi discussion/daemon support are not implemented yet.
 
 ## Project Structure
 
@@ -62,12 +68,14 @@ Piñata/
   Assets.xcassets/      Application assets and icon catalog
   Settings/             Shared settings layout, appearance, and repositories
   Terminal/             Ghostty runtime, surface, and AppKit host
-  Workspace/            Workspace shell and side panels
+  Workspace/            Workspace shell, session persistence, and side panels
 Scripts/                Local dependency bootstrap
 DerivedData/            Generated local Xcode output, ignored by Git
 ```
 
 Xcode generates the application bundle, `Info.plist`, compiled assets, and local development signature. Build settings such as the bundle identifier, version, deployment target, and Swift language mode live in `Piñata.xcodeproj/project.pbxproj`.
+
+See the [documentation map](docs/README.md) for the product workflow, current architecture, terminal sessions, and incoming Pi proposal.
 
 ## Development
 
@@ -97,9 +105,9 @@ If necessary:
 sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
 ```
 
-### Bootstrap Ghostty
+### Bootstrap terminal dependencies
 
-Download the pinned `GhosttyKit` artifact and its matching source resources:
+Download the pinned Ghostty artifact:
 
 ```bash
 ./Scripts/bootstrap-ghostty.sh
@@ -163,6 +171,17 @@ xcodebuild \
   -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath DerivedData \
   analyze
+```
+
+### Test
+
+```bash
+xcodebuild \
+  -project Piñata.xcodeproj \
+  -scheme Piñata \
+  -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath DerivedData \
+  test
 ```
 
 ### Clean

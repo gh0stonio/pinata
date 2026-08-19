@@ -33,7 +33,7 @@ struct AppButtonAppearance {
 @MainActor
 enum AppTheme {
     static let leftPanelWidth: CGFloat = 264
-    static let settingsRailWidth: CGFloat = 210
+    static let settingsRailWidth: CGFloat = 260
     static let panelContentInset: CGFloat = 14
     static let fullScreenSidebarWidth: CGFloat = 320
     static let leftPanelRange: ClosedRange<CGFloat> = 200...440
@@ -46,30 +46,34 @@ enum AppTheme {
     static let terminalVerticalInset: CGFloat = 2
     static let workspaceCornerRadius: CGFloat = 10
     static let minimumCenterWidth: CGFloat = 480
-    static let minimumWindowWidth: CGFloat = 1_250
-    static let edgeRevealWidth: CGFloat = 6
+    static var minimumWindowWidth: CGFloat {
+        leftPanelWidth
+            + workspaceInset * 2
+            + settingsRailWidth
+            + SettingsLayout.dividerThickness
+            + SettingsLayout.minimumPageWidth
+    }
+    static let minimumWindowHeight: CGFloat = 600
+    static let defaultWindowHeight: CGFloat = 640
     static let resizeHandleWidth: CGFloat = 10
     static let keyboardResizeStep: CGFloat = 12
-    static let panelSectionSpacing: CGFloat = 16
+    static let sidebarSectionSpacing: CGFloat = 22
     static let sidebarBrandSize: CGFloat = 34
     static let sidebarToggleLeading: CGFloat = 82
     static let fullScreenSidebarToggleLeading: CGFloat = 12
     static var sidebarNewTaskIconSize: CGFloat { typography.body + 5 }
     static let sidebarNewTaskHeight: CGFloat = 38
     static let sidebarNewTaskTopSpacing: CGFloat = 20
-    static let sidebarNewTaskBottomSpacing: CGFloat = 20
+    static let sidebarNewTaskBottomSpacing: CGFloat = sidebarSectionSpacing
     static let sidebarTaskListTopSpacing: CGFloat = 8
     static let sidebarSectionTitleInset: CGFloat = 28
     static let sidebarItemInset: CGFloat = 10
     static let sidebarTaskRowHeight: CGFloat = 29
-    static func sidebarTrailingInset(for visualInset: CGFloat) -> CGFloat {
-        visualInset - resizeHandleWidth / 2
-    }
     static let sidebarDisclosureSymbolSize: CGFloat = 8
     static let sidebarDisclosureLeadingInset: CGFloat = 2
     static let sidebarDisclosureControlWidth: CGFloat = 18
     static let sidebarDisclosureControlHeight: CGFloat = 22
-    static let sidebarTaskTitleDisclosureInset: CGFloat = 21
+    static let sidebarTaskTitleDisclosureInset: CGFloat = 22
     static let sidebarRepositoryTitleInset: CGFloat = 26
     static let taskModalCardWidth: CGFloat = 522
     static let taskModalPadding: CGFloat = 16
@@ -149,6 +153,8 @@ enum AppTheme {
     static private(set) var primaryText = color(0xD9D9D9)
     static private(set) var secondaryText = color(0xB6BDC0)
     static private(set) var tertiaryText = color(0xA6AEB2)
+    static private(set) var error = color(0xF25555)
+    static private(set) var success = color(0x31C971)
     static private(set) var accent = color(0xFF746B)
     static private(set) var panelAccentIcon = color(0xFF746B)
     static private(set) var panelAccentBackground = color(0xFF746B).withAlphaComponent(0.14)
@@ -188,6 +194,8 @@ enum AppTheme {
         primaryText = color(palette.primaryText)
         secondaryText = color(palette.secondaryText)
         tertiaryText = color(palette.tertiaryText)
+        error = color(settings.theme == .dark ? 0xF25555 : 0xBC2C2C)
+        success = color(settings.theme == .dark ? 0x31C971 : 0x208A4F)
 
         accent = accentColor(for: settings.accent)
         let panelAccent = panelAccentColors(
@@ -305,9 +313,9 @@ enum AppTheme {
 
         switch role {
         case .accent:
-            let foreground = hovered ? panelAccentHoverIcon : panelAccentIcon
+            let foreground = panelAccentIcon
             return AppButtonAppearance(
-                background: hovered ? panelAccentHoverBackground : panelAccentBackground,
+                background: panelAccentBackground,
                 foreground: foreground,
                 border: foreground.withAlphaComponent(0.55),
                 borderWidth: 1
@@ -357,7 +365,7 @@ enum AppTheme {
         case .segmented:
             return AppButtonAppearance(
                 background: selected
-                    ? hovered ? interactiveHoverBackground : controlSelection
+                    ? controlSelection
                     : hovered ? interactiveHoverBackground : .clear,
                 foreground: selected || hovered ? interactiveHoverForeground : secondaryText,
                 border: .clear,
@@ -371,6 +379,10 @@ enum AppTheme {
                 borderWidth: hovered ? 2 : 0
             )
         }
+    }
+
+    static func renderedBackground(_ background: NSColor) -> NSColor {
+        composited(background, over: chromeBackground)
     }
 
     private static func panelAccentColors(
@@ -519,6 +531,7 @@ class AppHoverView: NSView {
         )
         addTrackingArea(trackingArea)
         trackingAreaReference = trackingArea
+        updateHoverStateForCurrentPointer()
     }
 
     override func mouseEntered(with event: NSEvent) {
