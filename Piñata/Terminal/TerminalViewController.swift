@@ -127,6 +127,14 @@ struct TerminalSessionSnapshot: Codable, Equatable, Sendable {
     }
 }
 
+enum AgentTitleActivity {
+    private static let spinnerFrames = Set("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+
+    static func isActive(_ title: String) -> Bool {
+        title.contains { spinnerFrames.contains($0) }
+    }
+}
+
 @MainActor
 final class TerminalViewController: NSViewController {
     private let runtime: GhosttyRuntime
@@ -134,9 +142,13 @@ final class TerminalViewController: NSViewController {
     private var root: PaneNode
     private var activePaneID: PaneID
     private var paneControllers: [PaneID: TerminalPaneViewController] = [:]
+    private var activeAgentPaneIDs = Set<PaneID>()
     private var rootController: NSViewController?
     var onCloseLastPane: (() -> Void)?
     var onChange: (() -> Void)?
+    var onAgentActivityChanged: ((Bool) -> Void)?
+
+    var hasActiveAgent: Bool { !activeAgentPaneIDs.isEmpty }
 
     init(
         runtime: GhosttyRuntime,
@@ -279,8 +291,10 @@ final class TerminalViewController: NSViewController {
             return
         }
         guard let nextRoot = root.removing(paneID) else { return }
+        let wasActive = hasActiveAgent
         let nearest = root.nearestPane(to: paneID)
         if let removed = paneControllers.removeValue(forKey: paneID) {
+            activeAgentPaneIDs.remove(paneID)
             removed.terminateSession()
             removed.view.removeFromSuperview()
             removed.removeFromParent()
@@ -292,6 +306,9 @@ final class TerminalViewController: NSViewController {
         rebuild()
         updateActivePane()
         focusActivePane()
+        if wasActive != hasActiveAgent {
+            onAgentActivityChanged?(hasActiveAgent)
+        }
         onChange?()
     }
 
@@ -315,6 +332,18 @@ final class TerminalViewController: NSViewController {
         }
         controller.didRequestClose = { [weak self] paneID in
             self?.close(paneID)
+        }
+        controller.didChangeAgentActivity = { [weak self] paneID, active in
+            guard let self else { return }
+            let wasActive = self.hasActiveAgent
+            if active {
+                self.activeAgentPaneIDs.insert(paneID)
+            } else {
+                self.activeAgentPaneIDs.remove(paneID)
+            }
+            if wasActive != self.hasActiveAgent {
+                self.onAgentActivityChanged?(self.hasActiveAgent)
+            }
         }
         return controller
     }
@@ -397,6 +426,8 @@ private final class TerminalPaneViewController: NSViewController {
     var didFocus: ((PaneID) -> Void)?
     var didRequestSplit: ((PaneID, SplitAxis) -> Void)?
     var didRequestClose: ((PaneID) -> Void)?
+    var didChangeAgentActivity: ((PaneID, Bool) -> Void)?
+    private var isAgentActive = false
 
     init(
         paneID: PaneID,
@@ -422,8 +453,13 @@ private final class TerminalPaneViewController: NSViewController {
             guard let self else { return }
             self.didFocus?(self.paneID)
         }
-        terminalView.didChangeTitle = { [weak header] title in
+        terminalView.didChangeTitle = { [weak self, weak header] title in
             header?.setTitle(title)
+            guard let self else { return }
+            let active = AgentTitleActivity.isActive(title)
+            guard self.isAgentActive != active else { return }
+            self.isAgentActive = active
+            self.didChangeAgentActivity?(self.paneID, active)
         }
         terminalView.didConnect = { [weak header] in
             header?.setTitle(defaultTitle)

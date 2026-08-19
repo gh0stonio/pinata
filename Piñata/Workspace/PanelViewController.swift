@@ -248,6 +248,8 @@ final class PanelViewController: NSViewController {
         repositoryBranches: [UUID: String] = [:],
         repositoryRemoteURLs: [UUID: String] = [:],
         pullRequestStatuses: [UUID: PullRequestRepositoryStatus] = [:],
+        taskAgentActivity: Set<UUID> = [],
+        repositoryAgentActivity: Set<TaskRepositoryScope> = [],
         taskErrors: [UUID: String],
         repositoryErrors: [TaskRepositoryScope: String],
         loadError: String?
@@ -276,9 +278,11 @@ final class PanelViewController: NSViewController {
                 expanded: expandedTaskIDs.contains(task.id),
                 menuActive: taskMenuTaskID == task.id,
                 activity: taskActivities[task.id],
+                agentActive: taskAgentActivity.contains(task.id),
                 taskError: taskErrors[task.id],
                 repositoryMenuScope: repositoryMenuScope,
                 repositoryActivities: repositoryActivities,
+                repositoryAgentActivity: repositoryAgentActivity,
                 repositoryErrors: repositoryErrors,
                 repositoryTargets: repositoryTargets,
                 repositoryPaths: repositoryPaths,
@@ -583,9 +587,11 @@ private final class SidebarTaskGroupView: NSStackView {
         expanded: Bool,
         menuActive: Bool,
         activity: String?,
+        agentActive: Bool,
         taskError: String?,
         repositoryMenuScope: TaskRepositoryScope?,
         repositoryActivities: [TaskRepositoryScope: String],
+        repositoryAgentActivity: Set<TaskRepositoryScope>,
         repositoryErrors: [TaskRepositoryScope: String],
         repositoryTargets: [UUID: RepositoryTarget],
         repositoryPaths: [UUID: String],
@@ -638,6 +644,7 @@ private final class SidebarTaskGroupView: NSStackView {
             selected: selection == .task(task.id),
             menuActive: menuActive,
             activity: activity,
+            agentActive: agentActive,
             error: taskError ?? collapsedRepositoryError,
             repositoryContexts: repositoryContexts,
             connectionStatusMonitor: connectionStatusMonitor,
@@ -668,6 +675,7 @@ private final class SidebarTaskGroupView: NSStackView {
                     activity: repositoryActivities[scope] ?? (repository.worktreeProvisioning.map {
                         !$0.succeeded && $0.failureMessage == nil
                     } == true ? "creating" : nil),
+                    agentActive: repositoryAgentActivity.contains(scope),
                     error: repositoryErrors[scope],
                     context: context,
                     suppressActions: activity == "deleting",
@@ -843,6 +851,7 @@ private final class SidebarTaskRow: AppHoverView {
     private let hasRepositories: Bool
     private var menuActive: Bool
     private let activity: String?
+    private let agentActive: Bool
     private let error: String?
     private let selectButton = SidebarTaskSelectButton(role: .hitTarget)
     private let disclosureButton = SidebarDisclosureButton(role: .icon)
@@ -867,6 +876,7 @@ private final class SidebarTaskRow: AppHoverView {
         selected: Bool,
         menuActive: Bool,
         activity: String?,
+        agentActive: Bool,
         error: String?,
         repositoryContexts: [SidebarRepositoryContext],
         connectionStatusMonitor: SSHConnectionStatusMonitor,
@@ -876,6 +886,7 @@ private final class SidebarTaskRow: AppHoverView {
         self.hasRepositories = hasRepositories
         self.menuActive = menuActive
         self.activity = activity
+        self.agentActive = agentActive
         self.error = error
         self.repositoryContexts = repositoryContexts
         self.connectionStatusMonitor = connectionStatusMonitor
@@ -944,7 +955,7 @@ private final class SidebarTaskRow: AppHoverView {
         )
         activityIndicator.style = .spinning
         activityIndicator.controlSize = .small
-        if activity != nil, error == nil {
+        if agentActive || (activity != nil && error == nil) {
             activityIndicator.startAnimation(nil)
         }
 
@@ -987,7 +998,7 @@ private final class SidebarTaskRow: AppHoverView {
                 constant: -6
             ),
             activityIndicator.centerYAnchor.constraint(equalTo: centerYAnchor),
-            activityIndicator.widthAnchor.constraint(equalToConstant: activity == nil ? 0 : 12),
+            activityIndicator.widthAnchor.constraint(equalToConstant: activity == nil && !agentActive ? 0 : 12),
             activityIndicator.heightAnchor.constraint(equalToConstant: 12),
             errorIcon.trailingAnchor.constraint(equalTo: activityIndicator.leadingAnchor),
             errorIcon.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -1087,7 +1098,7 @@ private final class SidebarTaskRow: AppHoverView {
         menuOverlay.isHidden = !showsMenu
         disclosureButton.isHidden = !hasRepositories
         errorIcon.isHidden = error == nil
-        activityIndicator.isHidden = activity == nil || error != nil
+        activityIndicator.isHidden = !agentActive && (activity == nil || error != nil)
         statusLabel.isHidden = activity == nil
     }
 
@@ -1361,6 +1372,7 @@ private final class SidebarRepositoryRow: AppHoverView {
     private let selected: Bool
     private var menuActive: Bool
     private let activity: String?
+    private let agentActive: Bool
     private let error: String?
     private let suppressActions: Bool
     private let button = AppButton(role: .hitTarget)
@@ -1389,6 +1401,7 @@ private final class SidebarRepositoryRow: AppHoverView {
         selected: Bool,
         menuActive: Bool,
         activity: String?,
+        agentActive: Bool,
         error: String?,
         context: SidebarRepositoryContext?,
         suppressActions: Bool,
@@ -1398,6 +1411,7 @@ private final class SidebarRepositoryRow: AppHoverView {
         self.selected = selected
         self.menuActive = menuActive
         self.activity = activity
+        self.agentActive = agentActive
         self.error = error
         self.suppressActions = suppressActions
         self.connectionStatusMonitor = connectionStatusMonitor
@@ -1460,7 +1474,7 @@ private final class SidebarRepositoryRow: AppHoverView {
         pullRequestIcon.setAccessibilityLabel("Pull request status")
         pullRequestCountLabel.alignment = .center
         pullRequestCountLabel.setAccessibilityLabel("Pull request count")
-        if activity != nil, error == nil {
+        if agentActive || (activity != nil && error == nil) {
             activityIndicator.startAnimation(nil)
         }
 
@@ -1487,7 +1501,7 @@ private final class SidebarRepositoryRow: AppHoverView {
             menuOverlay.topAnchor.constraint(equalTo: topAnchor),
             menuOverlay.bottomAnchor.constraint(equalTo: bottomAnchor),
             menuOverlay.widthAnchor.constraint(equalToConstant: 88),
-            activityIndicator.widthAnchor.constraint(equalToConstant: activity == nil ? 0 : 12),
+            activityIndicator.widthAnchor.constraint(equalToConstant: activity == nil && !agentActive ? 0 : 12),
             activityIndicator.heightAnchor.constraint(equalToConstant: 12),
             errorIcon.widthAnchor.constraint(equalToConstant: error == nil ? 0 : 14),
             errorIcon.heightAnchor.constraint(equalToConstant: 12),
@@ -1603,7 +1617,7 @@ private final class SidebarRepositoryRow: AppHoverView {
             && (isHovering || infoPopoverHovering || menuActive)
         menuOverlay.isHidden = !showsMenu
         errorIcon.isHidden = error == nil
-        activityIndicator.isHidden = activity == nil || error != nil
+        activityIndicator.isHidden = !agentActive && (activity == nil || error != nil)
         statusLabel.isHidden = error == nil && activity == nil
         connectionStatusDot.isHidden = connectionID == nil || connectionStatus != .disconnected
     }

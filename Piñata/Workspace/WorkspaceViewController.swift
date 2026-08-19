@@ -990,6 +990,9 @@ final class WorkspaceViewController: NSViewController {
         controller.onChange = { [weak self] in
             self?.scheduleSessionSave()
         }
+        controller.onAgentActivityChanged = { [weak self] _ in
+            self?.updateTaskSidebar()
+        }
         if controller.parent !== self {
             addChild(controller)
         }
@@ -2321,6 +2324,12 @@ final class WorkspaceViewController: NSViewController {
                 taskActivities[task.id] = "attaching"
             }
         }
+        let taskAgentActivity = Set(taskWorkspaces.compactMap { taskID, workspace in
+            workspace.tabs.contains { $0.controller.hasActiveAgent } ? taskID : nil
+        })
+        let repositoryAgentActivity = Set(repositoryWorkspaces.compactMap { scope, workspace in
+            workspace.tabs.contains { $0.controller.hasActiveAgent } ? scope : nil
+        })
         leftPanelController.updateTasks(
             tasks,
             selection: activeScope,
@@ -2332,6 +2341,8 @@ final class WorkspaceViewController: NSViewController {
             repositoryBranches: repositoryBranches,
             repositoryRemoteURLs: repositoryRemoteURLs,
             pullRequestStatuses: pullRequestStatusStore.statuses,
+            taskAgentActivity: taskAgentActivity,
+            repositoryAgentActivity: repositoryAgentActivity,
             taskErrors: taskErrors,
             repositoryErrors: displayedRepositoryErrors,
             loadError: taskLoadError

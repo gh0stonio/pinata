@@ -128,6 +128,11 @@ final class CoreLogicTests: XCTestCase {
         )
     }
 
+    func testAgentTitleActivityRecognizesKnownSpinnerFrames() {
+        XCTAssertTrue(AgentTitleActivity.isActive("⠹ Piñata"))
+        XCTAssertFalse(AgentTitleActivity.isActive("Piñata"))
+    }
+
     @MainActor
     func testPullRequestViewRoutesEachStackedRowToItsOwnURL() {
         let summaries = [
