@@ -58,6 +58,9 @@ The current `main` branch includes:
 - Durable terminal sessions through bundled `zmx`, with native Ghostty scrolling and remote reattachment.
 - Independently resizable right workspace panel with a cached local and SSH file browser.
 - Incremental folder loading, bounded prefetch, live filesystem refresh, and colored or monochrome file icons.
+- Editable local and SSH file tabs with single-click preview tabs, double-click permanent tabs, dirty indicators, and `Cmd+S` saving.
+- Pinata syntax highlighting for common programming and configuration languages, including full Markdown token support.
+- Editor font-size settings and a loading state while file contents are read.
 
 Diffs, reviews, checks, pull request workflows, and Pi discussion/daemon support are not implemented yet.
 

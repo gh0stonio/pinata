@@ -29,7 +29,7 @@ flowchart TB
 | Owner | Owns | Does not own |
 | --- | --- | --- |
 | `PinataApp` | App lifecycle, menu installation, root workspace. | Task persistence or terminal pane layout. |
-| `WorkspaceViewController` | Selected scope, task actions, provisioning coordination, terminal workspaces, app-session persistence. | Ghostty rendering or PTY I/O. |
+| `WorkspaceViewController` | Selected scope, task actions, provisioning coordination, terminal workspaces, ephemeral file tabs, and app-session persistence. | Ghostty rendering or PTY I/O. |
 | `PanelViewController` | Left task sidebar presentation and user gestures. | Right workspace-panel layout or file browsing. |
 | `WorkspacePanelViewController` | Right panel tabs, file-tree loading, caching, and refresh. | Left sidebar presentation or registry data source of truth. |
 | `TerminalViewController` | Terminal tab's split tree, panes, active pane, and pane actions. | Durable PTY process. |
@@ -93,6 +93,14 @@ classDiagram
 
 `TaskRepositoryAttachment` intentionally stores the attachment name, worktree path, branch, and latest provisioning report. This lets the sidebar and failure state remain understandable even while repository inspection is unavailable or a worktree operation fails.
 
+## File editor
+
+`WorkspaceViewController` owns ephemeral file tabs for the active task or repository workspace. Each tab stores its path, editor controller, and preview state. A single click reuses the current preview tab when previews are enabled, while a double click promotes the file to a permanent tab. The tab title shows `*` while the editor has unsaved changes.
+
+`FileEditorStore` reads and writes local files directly and uses the registered SSH target for remote files. Reads and writes run away from the main actor. The editor accepts UTF-8 text files up to 4 MB, shows a loading state while reading, and saves with `Cmd+S`.
+
+`SyntaxHighlighter` detects the language from the file name and applies the Pinata palette. It supports common programming and configuration formats plus Markdown headings, emphasis, links, fenced code, and inline code. File tabs and unsaved editor contents are not part of the terminal session snapshot.
+
 ## Local persistence
 
 All persisted data is local to the macOS user account.
@@ -116,7 +124,7 @@ flowchart LR
 | SSH connection names, aliases, and enabled state | `ssh-connections.json` | Connection edit or enable change. |
 | UI and terminal layout snapshot | `app-session.json` | Relevant workspace change, with a short coalescing delay, and app termination. |
 | File-tree listings and expanded paths | `file-tree-cache-v1.json` | Workspace change, right-panel close, and app termination. |
-| Appearance and small UI preferences | `UserDefaults` | Settings or panel presentation change. |
+| Appearance and small UI preferences | `UserDefaults` | Settings or panel presentation change, including editor font size and file preview behavior. |
 
 JSON writes use atomic replacement. Session files use a version number. An unsupported version is ignored rather than decoded as a partially compatible layout.
 
@@ -179,6 +187,7 @@ Piñata keeps error state with the resource that failed:
 | Fetch, branch, or worktree failure | Failed repository attachment with concise error. | Retry provisioning. |
 | Detach or task cleanup failure | Deleting or failed state remains visible. | Retry cleanup. |
 | Missing zmx session | zmx creates a fresh named shell session. | Start a new shell. |
+| SSH terminal connection | The pane stays open with the SSH failure and a disconnected header. | Reconnect. |
 | Local or SSH folder load | The affected folder shows an error and retry action. | Retry the folder load. |
 | Invalid session snapshot | Ignore unsupported or stale entries. | Restore the remaining valid UI. |
 

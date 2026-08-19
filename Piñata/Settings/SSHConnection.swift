@@ -1,4 +1,134 @@
-import Foundation
+import AppKit
+
+enum SSHConnectionStatus: Equatable, Sendable {
+    case disabled
+    case checking
+    case connected
+    case disconnected
+
+    var label: String {
+        switch self {
+        case .disabled: "Disabled"
+        case .checking: "Checking…"
+        case .connected: "Connected"
+        case .disconnected: "Disconnected"
+        }
+    }
+}
+
+@MainActor
+final class SSHConnectionStatusMonitor {
+    private(set) var statuses: [UUID: SSHConnectionStatus] = [:]
+    private var connections: [UUID: SSHConnection] = [:]
+    private var checkTasks: [UUID: Task<Void, Never>] = [:]
+    private var pollingTask: Task<Void, Never>?
+    private var observers: [UUID: () -> Void] = [:]
+
+    deinit {
+        checkTasks.values.forEach { $0.cancel() }
+        pollingTask?.cancel()
+    }
+
+    @discardableResult
+    func addObserver(_ observer: @escaping () -> Void) -> UUID {
+        let id = UUID()
+        observers[id] = observer
+        return id
+    }
+
+    func removeObserver(_ id: UUID) {
+        observers[id] = nil
+    }
+
+    func sync(_ values: [SSHConnection]) {
+        let next = Dictionary(uniqueKeysWithValues: values.map { ($0.id, $0) })
+        for id in connections.keys where next[id] == nil {
+            checkTasks[id]?.cancel()
+            checkTasks[id] = nil
+            statuses[id] = nil
+        }
+        connections = next
+
+        for connection in values {
+            guard connection.isEnabled else {
+                checkTasks[connection.id]?.cancel()
+                checkTasks[connection.id] = nil
+                setStatus(.disabled, for: connection.id)
+                continue
+            }
+            if checkTasks[connection.id] == nil,
+               statuses[connection.id] == nil || statuses[connection.id] == .disabled
+            {
+                startCheck(for: connection)
+            }
+        }
+
+        if values.contains(where: \.isEnabled) {
+            startPolling()
+        } else {
+            pollingTask?.cancel()
+            pollingTask = nil
+        }
+    }
+
+    func refresh() {
+        connections.values.filter(\.isEnabled).forEach {
+            guard checkTasks[$0.id] == nil else { return }
+            startCheck(for: $0)
+        }
+    }
+
+    func status(for connectionID: UUID) -> SSHConnectionStatus {
+        statuses[connectionID] ?? .disabled
+    }
+
+    func name(for connectionID: UUID) -> String? {
+        connections[connectionID]?.name
+    }
+
+    private func startCheck(for connection: SSHConnection) {
+        guard checkTasks[connection.id] == nil else { return }
+        setStatus(.checking, for: connection.id)
+        let task = Task { [weak self] in
+            let status = await Task.detached(priority: .utility) {
+                do {
+                    try SSHCommand.test(connection: connection, reuseConnection: true)
+                    return SSHConnectionStatus.connected
+                } catch is CancellationError {
+                    return SSHConnectionStatus.checking
+                } catch {
+                    return SSHConnectionStatus.disconnected
+                }
+            }.value
+            guard !Task.isCancelled,
+                  status != .checking,
+                  let self,
+                  self.connections[connection.id] == connection,
+                  connection.isEnabled
+            else { return }
+            self.checkTasks[connection.id] = nil
+            self.setStatus(status, for: connection.id)
+        }
+        checkTasks[connection.id] = task
+    }
+
+    private func startPolling() {
+        guard pollingTask == nil else { return }
+        pollingTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 20 * 1_000_000_000)
+                guard !Task.isCancelled, let self, NSApp.isActive else { continue }
+                self.refresh()
+            }
+        }
+    }
+
+    private func setStatus(_ status: SSHConnectionStatus, for connectionID: UUID) {
+        guard statuses[connectionID] != status else { return }
+        statuses[connectionID] = status
+        observers.values.forEach { $0() }
+    }
+}
 
 struct SSHConfigHost: Equatable, Sendable {
     let alias: String
@@ -295,20 +425,82 @@ enum TerminalTarget: Codable, Equatable, Sendable {
 }
 
 enum SSHCommand {
-    static func makeProcess(connection: SSHConnection, command: [String]) -> Process {
+    static let connectionTimeout = 10
+
+    static func makeProcess(
+        connection: SSHConnection,
+        command: [String],
+        reuseConnection: Bool = false
+    ) -> Process {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-        process.arguments = [
-            "-A",
-            "-S", "none",
-            "-o", "BatchMode=yes",
-            "-o", "ClearAllForwardings=yes",
-            "-o", "ControlMaster=no",
-            "--", connection.host,
-            command.map(shellQuote).joined(separator: " "),
-        ]
+        process.arguments = arguments(
+            connection: connection,
+            command: command.map(shellQuote).joined(separator: " "),
+            reuseConnection: reuseConnection
+        )
         process.standardInput = FileHandle.nullDevice
         return process
+    }
+
+    static func arguments(
+        connection: SSHConnection,
+        command: String,
+        allocateTTY: Bool = false,
+        includeExecutableName: Bool = false,
+        reuseConnection: Bool = false
+    ) -> [String] {
+        (includeExecutableName ? ["ssh"] : []) + [
+            "-A",
+            "-o", "BatchMode=yes",
+            "-o", "ConnectTimeout=\(connectionTimeout)",
+            "-o", "ConnectionAttempts=1",
+            "-o", "ClearAllForwardings=yes",
+        ] + (reuseConnection
+            ? [
+                "-o", "ControlMaster=auto",
+                "-o", "ControlPersist=60",
+            ]
+            : ["-S", "none", "-o", "ControlMaster=no"])
+            + (allocateTTY ? ["-tt"] : [])
+            + ["--", connection.host, command]
+    }
+
+    static func test(connection: SSHConnection, reuseConnection: Bool = false) throws {
+        let process = makeProcess(
+            connection: connection,
+            command: ["exit"],
+            reuseConnection: reuseConnection
+        )
+        let error = Pipe()
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = error
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            let output = String(
+                decoding: error.fileHandleForReading.readDataToEndOfFile(),
+                as: UTF8.self
+            )
+            throw SSHConnectionError.failed(message(for: output, connection: connection))
+        }
+    }
+
+    static func message(for output: String, connection: SSHConnection) -> String {
+        let output = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        if output.localizedCaseInsensitiveContains("permission denied") {
+            return "Authentication failed for \(connection.name)."
+        }
+        if output.localizedCaseInsensitiveContains("host key verification") {
+            return "Host key verification failed for \(connection.name)."
+        }
+        if output.localizedCaseInsensitiveContains("could not resolve hostname") {
+            return "Could not resolve \(connection.host)."
+        }
+        if output.localizedCaseInsensitiveContains("connection timed out") {
+            return "Connection to \(connection.name) timed out."
+        }
+        return output.isEmpty ? "Could not connect to \(connection.name)." : output
     }
 
     static func shellQuote(_ value: String) -> String {
@@ -317,6 +509,17 @@ enum SSHCommand {
             return "\"$HOME\"/\(shellQuote(String(value.dropFirst(2))))"
         }
         return "'\(value.replacingOccurrences(of: "'", with: "'\"'\"'"))'"
+    }
+
+}
+
+enum SSHConnectionError: LocalizedError {
+    case failed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .failed(let message): message
+        }
     }
 }
 
@@ -648,7 +851,7 @@ struct FileTreeInspector: Sendable {
     static func remoteListingScript(paths: [String]) -> String {
         paths.enumerated().map { index, path in
             let root = SSHCommand.shellQuote(path)
-            return "if [ -d \(root) ]; then printf 'r\\0\(index)\\0%s\\0' \(root); for entry in \(root)/* \(root)/.[!.]* \(root)/..?*; do [ -e \"$entry\" ] || [ -L \"$entry\" ] || continue; if [ -d \"$entry\" ] && [ ! -L \"$entry\" ]; then printf 'd\\0\(index)\\0%s\\0' \"$entry\"; else printf 'f\\0\(index)\\0%s\\0' \"$entry\"; fi; done; fi"
+            return "root=\(root); if [ -d \"$root\" ]; then printf 'r\\0%s\\0%s\\0' \(index) \"$root\"; for entry in \"$root\"/* \"$root\"/.[!.]* \"$root\"/..?*; do [ -e \"$entry\" ] || [ -L \"$entry\" ] || continue; if [ -d \"$entry\" ] && [ ! -L \"$entry\" ]; then printf 'd\\0%s\\0%s\\0' \(index) \"$entry\"; else printf 'f\\0%s\\0%s\\0' \(index) \"$entry\"; fi; done; fi"
         }.joined(separator: "; ")
     }
 
@@ -725,7 +928,14 @@ struct RemoteDirectoryInspector: Sendable {
 
         let process = SSHCommand.makeProcess(
             connection: connection,
-            command: ["find", path, "-mindepth", "1", "-maxdepth", "1", "-type", "d", "-print"]
+            command: [
+                "find", path,
+                "-mindepth", "1",
+                "-maxdepth", "1",
+                "-type", "d",
+                "-print0",
+            ],
+            reuseConnection: true
         )
         process.standardOutput = output
         process.standardError = error
@@ -764,7 +974,7 @@ struct RemoteDirectoryInspector: Sendable {
     }
 
     static func parseDirectories(_ output: String) -> [String] {
-        sortDirectories(output.split(whereSeparator: \.isNewline)
+        sortDirectories(output.split { $0 == "\0" || $0.isNewline }
             .map(String.init)
             .filter { !$0.isEmpty })
     }

@@ -10,7 +10,7 @@ Piñata is a native macOS workspace for coding tasks. A task can stay a note, or
 | [Application map](application-map.md) | Current screens, navigation, and local versus SSH repository paths. | Implemented |
 | [Application architecture](application-architecture.md) | AppKit components, ownership, persistence, concurrency, and data schemas. | Implemented |
 | [Terminal session architecture](terminal-session-architecture.md) | Ghostty, PTY services, session restoration, and recovery limits. | Implemented |
-| [File browser architecture](file-browser-architecture.md) | Right-panel ownership, local and SSH loading, caching, refresh, and performance constraints. | Implemented |
+| [File browser architecture](file-browser-architecture.md) | Right-panel ownership, local and SSH loading, file opening, caching, refresh, and performance constraints. | Implemented |
 | [SSH connections](ssh-connections.md) | Remote repositories, worktrees, and durable SSH terminals. | Implemented |
 | [Pi Harness architecture](incoming/pi-harness-architecture.md) | Future Pi and remote execution proposal. | Incoming, not implemented |
 
@@ -21,6 +21,7 @@ flowchart LR
     T[Task] --> R[Repository attachments]
     R --> W[Git worktrees]
     W --> F[File browser]
+    F --> E[Editable file tabs]
     W --> P[Terminal panes]
     P --> G[Ghostty terminal]
 ```

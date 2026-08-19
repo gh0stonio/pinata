@@ -57,6 +57,7 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
     private var trackingAreaToken: NSTrackingArea?
     private var surfaceCreationScheduled = false
     private var receivedTerminalOutput = false
+    private var remoteStartTask: Task<Void, Never>?
     private var lastPixelWidth: UInt32 = 0
     private var lastPixelHeight: UInt32 = 0
 
@@ -65,6 +66,7 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
     let target: TerminalTarget
     var didFocus: (() -> Void)?
     var didConnect: (() -> Void)?
+    var didFailToConnect: ((String) -> Void)?
     var didChangeTitle: ((String) -> Void)?
     var defaultTitle: String { URL(fileURLWithPath: UserShell.loginPath).lastPathComponent }
 
@@ -106,6 +108,7 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
     }
 
     deinit {
+        remoteStartTask?.cancel()
         terminalSession.disconnect()
         if let surface {
             ghostty_surface_free(surface)
@@ -116,6 +119,11 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
         super.viewDidMoveToWindow()
         scheduleSurfaceCreation()
         updateSurfaceGeometry()
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.window != nil else { return }
+            self.window?.contentView?.layoutSubtreeIfNeeded()
+            self.updateSurfaceGeometry()
+        }
     }
 
     override func layout() {
@@ -216,11 +224,36 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
             terminalSession.start()
             return
         }
-        Task { [weak self] in
-            guard let self else { return }
-            if await RemoteZmxInstallCoordinator.shared.ensureInstalled(on: connection) {
-                terminalSession.start()
+        remoteStartTask?.cancel()
+        remoteStartTask = Task { [weak self] in
+            do {
+                try await Task.detached {
+                    try SSHCommand.test(connection: connection)
+                }.value
+                guard !Task.isCancelled,
+                      let self,
+                      await RemoteZmxInstallCoordinator.shared.ensureInstalled(on: connection)
+                else { return }
+                self.terminalSession.start()
+            } catch is CancellationError {
+                return
+            } catch {
+                self?.presentConnectionFailure(error.localizedDescription)
             }
+        }
+    }
+
+    private func presentConnectionFailure(_ message: String) {
+        didFailToConnect?(message)
+        processTerminalOutput(Data("\r\n[Piñata] \(message)\r\n".utf8))
+
+        let alert = NSAlert()
+        alert.messageText = "SSH connection failed"
+        alert.informativeText = message
+        alert.addButton(withTitle: "Reconnect")
+        alert.addButton(withTitle: "Cancel")
+        if alert.runModal() == .alertFirstButtonReturn {
+            startTerminalSession()
         }
     }
 

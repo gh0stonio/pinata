@@ -25,11 +25,23 @@ final class WorkspaceViewController: NSViewController {
     }
 
     @MainActor
+    private struct FileTab {
+        let id: UUID
+        let path: String
+        let controller: FileEditorViewController
+        var isPreview: Bool
+        var title: String {
+            "\(controller.hasUnsavedChanges ? "* " : "")\(URL(fileURLWithPath: path).lastPathComponent)"
+        }
+    }
+
+    @MainActor
     private final class TerminalWorkspace {
         let title: String
         let workingDirectory: String
         let target: TerminalTarget
         var tabs: [TerminalTab]
+        var fileTabs: [FileTab] = []
         var activeTabID: UUID?
         var nextTabNumber = 2
 
@@ -112,7 +124,10 @@ final class WorkspaceViewController: NSViewController {
     private let mainColumn = NSView()
     private let terminalHost = NSView()
     private let workspaceHeader = WorkspaceHeaderView()
-    private let leftPanelController = PanelViewController()
+    private let sshConnectionStatusMonitor = SSHConnectionStatusMonitor()
+    private lazy var leftPanelController = PanelViewController(
+        connectionStatusMonitor: sshConnectionStatusMonitor
+    )
     private let rightPanelController = WorkspacePanelViewController()
     private let leftResizeHandle = PanelResizeHandle(
         indicatorOffset: AppTheme.workspaceInset
@@ -140,10 +155,11 @@ final class WorkspaceViewController: NSViewController {
     private var deleteTaskModal: DeleteTaskModalView?
     private var taskActionMenu: SidebarActionMenuView?
     private var taskActionMenuMouseMonitor: Any?
+    private var taskActionMenuTaskID: UUID?
     private var repositoryActionMenu: SidebarActionMenuView?
     private var repositoryActionMenuMouseMonitor: Any?
+    private var repositoryActionMenuScope: TaskRepositoryScope?
     private var leftResizeWindowWidth: CGFloat?
-    private var rightResizeWorkspaceWidth: CGFloat?
 
     private var leftWidthConstraint: NSLayoutConstraint!
     private var rightWidthConstraint: NSLayoutConstraint!
@@ -277,6 +293,8 @@ final class WorkspaceViewController: NSViewController {
     override func viewDidLayout() {
         super.viewDidLayout()
         updateTrafficLights()
+        leftResizeHandle.refreshInteraction()
+        rightResizeHandle.refreshInteraction()
     }
 
     @objc func toggleLeftPanel(_ sender: Any?) {
@@ -303,6 +321,10 @@ final class WorkspaceViewController: NSViewController {
 
     @objc func closeTerminalPane(_ sender: Any?) {
         guard settingsController == nil, newTaskModal == nil else { return }
+        if let fileTab = activeFileTab {
+            closeTerminalTab(fileTab.id)
+            return
+        }
         activeTerminalController?.closeActivePane()
     }
 
@@ -415,26 +437,21 @@ final class WorkspaceViewController: NSViewController {
             return
         }
 
-        let controller = SettingsViewController(settings: settings)
+        let controller = SettingsViewController(
+            settings: settings,
+            connectionStatusMonitor: sshConnectionStatusMonitor
+        )
         controller.onChange = onChange
         addChild(controller)
         controller.view.translatesAutoresizingMaskIntoConstraints = false
-        mainColumn.addSubview(controller.view)
+        workspaceCard.addSubview(controller.view)
         NSLayoutConstraint.activate([
-            controller.view.leadingAnchor.constraint(equalTo: mainColumn.leadingAnchor),
-            controller.view.trailingAnchor.constraint(equalTo: mainColumn.trailingAnchor),
-            controller.view.topAnchor.constraint(equalTo: mainColumn.topAnchor),
-            controller.view.bottomAnchor.constraint(equalTo: mainColumn.bottomAnchor),
+            controller.view.leadingAnchor.constraint(equalTo: workspaceCard.leadingAnchor),
+            controller.view.trailingAnchor.constraint(equalTo: workspaceCard.trailingAnchor),
+            controller.view.topAnchor.constraint(equalTo: workspaceCard.topAnchor),
+            controller.view.bottomAnchor.constraint(equalTo: workspaceCard.bottomAnchor),
         ])
         settingsController = controller
-        if let workspace = activeTerminalWorkspace {
-            workspaceHeader.setTabs(
-                workspace.tabs.map { (id: $0.id, title: $0.title) },
-                activeID: nil
-            )
-        } else {
-            workspaceHeader.setEmptyScope("no tabs in this scope", allowsCreateTab: false)
-        }
         applySidebarPresentation()
         DispatchQueue.main.async {
             controller.focusInitialSection()
@@ -452,6 +469,7 @@ final class WorkspaceViewController: NSViewController {
         rightPanelController.applyTheme()
         allTerminalWorkspaces.forEach { workspace in
             workspace.tabs.forEach { $0.controller.applyTheme() }
+            workspace.fileTabs.forEach { $0.controller.applyTheme() }
         }
         leftResizeHandle.applyTheme()
         rightResizeHandle.applyTheme()
@@ -461,6 +479,10 @@ final class WorkspaceViewController: NSViewController {
         taskActionMenu?.applyTheme()
         repositoryActionMenu?.applyTheme()
         applySidebarPresentation()
+    }
+
+    func refreshSSHConnectionStatuses() {
+        sshConnectionStatusMonitor.refresh()
     }
 
     private func configureWorkspaceCard() {
@@ -600,6 +622,9 @@ final class WorkspaceViewController: NSViewController {
         rightPanelController.onTogglePanel = { [weak self] in
             self?.toggleRightPanel(nil)
         }
+        rightPanelController.onOpenFile = { [weak self] entry, permanent in
+            self?.openFile(entry, permanent: permanent)
+        }
         leftPanelController.onTogglePanel = { [weak self] in
             self?.toggleLeftPanel(nil)
         }
@@ -614,6 +639,24 @@ final class WorkspaceViewController: NSViewController {
         }
         leftPanelController.onToggleTaskExpansion = { [weak self] taskID in
             self?.toggleTaskExpansion(taskID)
+        }
+        leftPanelController.onSidebarTaskHover = { [weak self] taskID in
+            guard let self else { return }
+            if taskActionMenu != nil, taskActionMenuTaskID != taskID {
+                dismissTaskActionMenu()
+            }
+            if repositoryActionMenu != nil {
+                dismissRepositoryActionMenu()
+            }
+        }
+        leftPanelController.onSidebarRepositoryHover = { [weak self] scope in
+            guard let self else { return }
+            if taskActionMenu != nil {
+                dismissTaskActionMenu()
+            }
+            if repositoryActionMenu != nil, repositoryActionMenuScope != scope {
+                dismissRepositoryActionMenu()
+            }
         }
         leftPanelController.onMoveTask = { [weak self] sourceID, targetID, after, pinned in
             self?.moveTask(
@@ -652,12 +695,6 @@ final class WorkspaceViewController: NSViewController {
         rightResizeHandle.onDrag = { [weak self] delta in
             self?.resizeRightPanel(by: -delta)
         }
-        rightResizeHandle.onDragBegan = { [weak self] in
-            self?.rightResizeWorkspaceWidth = self?.workspaceCard.bounds.width
-        }
-        rightResizeHandle.onDragEnded = { [weak self] in
-            self?.rightResizeWorkspaceWidth = nil
-        }
         rightResizeHandle.onKeyboardResize = { [weak self] command in
             self?.resizeRightPanel(with: command)
         }
@@ -689,6 +726,11 @@ final class WorkspaceViewController: NSViewController {
         return workspace.tabs.first(where: { $0.id == activeTabID })?.controller
     }
 
+    private var activeFileTab: FileTab? {
+        guard let workspace = activeTerminalWorkspace, let id = workspace.activeTabID else { return nil }
+        return workspace.fileTabs.first(where: { $0.id == id })
+    }
+
     private var activeTaskID: UUID? {
         switch activeScope {
         case .task(let taskID): taskID
@@ -710,7 +752,7 @@ final class WorkspaceViewController: NSViewController {
         guard
             let workspace = activeTerminalWorkspace,
             id != workspace.activeTabID,
-            workspace.tabs.contains(where: { $0.id == id })
+            workspace.tabs.contains(where: { $0.id == id }) || workspace.fileTabs.contains(where: { $0.id == id })
         else { return }
         workspace.activeTabID = id
         scheduleSessionSave()
@@ -754,16 +796,23 @@ final class WorkspaceViewController: NSViewController {
             installScopeMessage()
             return
         }
-        if workspace.tabs.isEmpty {
+        if workspace.tabs.isEmpty && workspace.fileTabs.isEmpty {
             setWorkspaceHeaderVisible(false)
             installScopeMessage()
             return
         }
         setWorkspaceHeaderVisible(true)
+        workspaceHeader.setPreviewTabIDs(Set(workspace.fileTabs.filter(\.isPreview).map(\.id)))
+        workspaceHeader.setFileTabIDs(Set(workspace.fileTabs.map(\.id)))
         workspaceHeader.setTabs(
-            workspace.tabs.map { (id: $0.id, title: $0.title) },
+            workspace.tabs.map { (id: $0.id, title: $0.title) }
+                + workspace.fileTabs.map { (id: $0.id, title: $0.title) },
             activeID: workspace.activeTabID
         )
+        if let fileTab = activeFileTab {
+            install(fileTab.controller)
+            return
+        }
         guard
             let activeTabID = workspace.activeTabID,
             let controller = activeTerminalController
@@ -790,6 +839,46 @@ final class WorkspaceViewController: NSViewController {
         DispatchQueue.main.async {
             controller.focusActiveTerminal()
         }
+    }
+
+    private func install(_ controller: NSViewController) {
+        if controller.parent !== self { addChild(controller) }
+        controller.view.translatesAutoresizingMaskIntoConstraints = false
+        terminalHost.addSubview(controller.view)
+        NSLayoutConstraint.activate([
+            controller.view.leadingAnchor.constraint(equalTo: terminalHost.leadingAnchor),
+            controller.view.trailingAnchor.constraint(equalTo: terminalHost.trailingAnchor),
+            controller.view.topAnchor.constraint(equalTo: terminalHost.topAnchor),
+            controller.view.bottomAnchor.constraint(equalTo: terminalHost.bottomAnchor),
+        ])
+    }
+
+    private func openFile(_ entry: FileTreeEntry, permanent: Bool) {
+        guard !entry.isDirectory, let workspace = activeTerminalWorkspace else { return }
+        if let index = workspace.fileTabs.firstIndex(where: { $0.path == entry.path }) {
+            if permanent { workspace.fileTabs[index].isPreview = false }
+            workspace.activeTabID = workspace.fileTabs[index].id
+            installActiveWorkspace()
+            return
+        }
+        let previewsEnabled = UserSettingsStore().load().filePreviewsEnabled
+        let isPreview = previewsEnabled && !permanent
+        if isPreview, let index = workspace.fileTabs.firstIndex(where: { $0.isPreview }) {
+            let tab = workspace.fileTabs.remove(at: index)
+            tab.controller.view.removeFromSuperview()
+            tab.controller.removeFromParent()
+        }
+        let controller = FileEditorViewController(path: entry.path, target: workspace.target)
+        let id = UUID()
+        controller.onStateChange = { [weak self] in
+            guard let self, let workspace = self.activeTerminalWorkspace,
+                  let index = workspace.fileTabs.firstIndex(where: { $0.id == id }) else { return }
+            workspace.fileTabs[index].isPreview = false
+            self.installActiveWorkspace()
+        }
+        workspace.fileTabs.append(FileTab(id: id, path: entry.path, controller: controller, isPreview: isPreview))
+        workspace.activeTabID = id
+        installActiveWorkspace()
     }
 
     private func installWorktreeProvisioning(
@@ -849,6 +938,7 @@ final class WorkspaceViewController: NSViewController {
                     try RepositoryInspector().removeWorktree(
                         at: report.path,
                         branchHint: report.branch,
+                        taskID: scope.taskID,
                         from: repository,
                         connection: connection
                     )
@@ -897,10 +987,18 @@ final class WorkspaceViewController: NSViewController {
     }
 
     private func closeTerminalTab(_ id: UUID) {
-        guard
-            let workspace = activeTerminalWorkspace,
-            let index = workspace.tabs.firstIndex(where: { $0.id == id })
-        else { return }
+        guard let workspace = activeTerminalWorkspace else { return }
+        if let index = workspace.fileTabs.firstIndex(where: { $0.id == id }) {
+            let tab = workspace.fileTabs.remove(at: index)
+            tab.controller.view.removeFromSuperview()
+            tab.controller.removeFromParent()
+            if workspace.activeTabID == id {
+                workspace.activeTabID = workspace.tabs.last?.id ?? workspace.fileTabs.last?.id
+            }
+            installActiveWorkspace()
+            return
+        }
+        guard let index = workspace.tabs.firstIndex(where: { $0.id == id }) else { return }
         let tab = workspace.tabs.remove(at: index)
         tab.controller.terminateSessions()
         tab.controller.view.removeFromSuperview()
@@ -1158,6 +1256,7 @@ final class WorkspaceViewController: NSViewController {
         }
         dismissRepositoryActionMenu()
         dismissTaskActionMenu()
+        taskActionMenuTaskID = taskID
         leftPanelController.setTaskMenuTask(taskID)
 
         let menu = SidebarActionMenuView(items: [
@@ -1228,6 +1327,7 @@ final class WorkspaceViewController: NSViewController {
         }
         taskActionMenu?.removeFromSuperview()
         taskActionMenu = nil
+        taskActionMenuTaskID = nil
         leftPanelController.setTaskMenuTask(nil)
     }
 
@@ -1245,6 +1345,7 @@ final class WorkspaceViewController: NSViewController {
         }
         dismissTaskActionMenu()
         dismissRepositoryActionMenu()
+        repositoryActionMenuScope = scope
         leftPanelController.setRepositoryMenuScope(scope)
         let isRemote: Bool
         if let repository = try? repositoryStore.load().first(where: { $0.id == attachment.repositoryID }),
@@ -1301,6 +1402,7 @@ final class WorkspaceViewController: NSViewController {
         }
         repositoryActionMenu?.removeFromSuperview()
         repositoryActionMenu = nil
+        repositoryActionMenuScope = nil
         leftPanelController.setRepositoryMenuScope(nil)
     }
 
@@ -1472,6 +1574,7 @@ final class WorkspaceViewController: NSViewController {
                             at: path,
                             branchHint: attachment.branch
                                 ?? attachment.worktreeProvisioning?.branch,
+                            taskID: task.id,
                             from: repository,
                             connection: connection
                         )
@@ -1568,6 +1671,7 @@ final class WorkspaceViewController: NSViewController {
                             at: path,
                             branchHint: attachment.branch
                                 ?? attachment.worktreeProvisioning?.branch,
+                            taskID: scope.taskID,
                             from: repository,
                             connection: connection
                         )
@@ -1634,6 +1738,11 @@ final class WorkspaceViewController: NSViewController {
             tab.controller.removeFromParent()
         }
         workspace.tabs.removeAll()
+        workspace.fileTabs.forEach {
+            $0.controller.view.removeFromSuperview()
+            $0.controller.removeFromParent()
+        }
+        workspace.fileTabs.removeAll()
         workspace.activeTabID = nil
     }
 
@@ -1904,13 +2013,19 @@ final class WorkspaceViewController: NSViewController {
     }
 
     private func updateTaskSidebar() {
-        let repositoryTargets: [UUID: RepositoryTarget]
+        sshConnectionStatusMonitor.sync((try? sshConnectionStore.load()) ?? [])
+        let registeredRepositories: [UUID: RegisteredRepository]
         do {
-            repositoryTargets = try Dictionary(
-                uniqueKeysWithValues: repositoryStore.load().map { ($0.id, $0.target) }
+            registeredRepositories = try Dictionary(
+                uniqueKeysWithValues: repositoryStore.load().map { ($0.id, $0) }
             )
         } catch {
-            repositoryTargets = [:]
+            registeredRepositories = [:]
+        }
+        let repositoryTargets = registeredRepositories.mapValues(\.target)
+        let repositoryPaths = registeredRepositories.mapValues(\.path)
+        let repositoryBranches = registeredRepositories.compactMapValues {
+            $0.currentBranch ?? $0.defaultBranch
         }
         var displayedRepositoryErrors = repositoryErrors
         for task in tasks {
@@ -1956,6 +2071,8 @@ final class WorkspaceViewController: NSViewController {
             taskActivities: taskActivities,
             repositoryActivities: repositoryActivities,
             repositoryTargets: repositoryTargets,
+            repositoryPaths: repositoryPaths,
+            repositoryBranches: repositoryBranches,
             taskErrors: taskErrors,
             repositoryErrors: displayedRepositoryErrors,
             loadError: taskLoadError
@@ -2013,22 +2130,25 @@ final class WorkspaceViewController: NSViewController {
         leftPanel.layer?.cornerCurve = .continuous
         leftPanel.layer?.masksToBounds = sidebarPresentation == .transient
 
-        rightPanel.isHidden = !rightPanelVisible
-        if rightPanelVisible {
+        let panelPresented = rightPanelVisible && settingsController == nil
+        rightPanel.isHidden = !panelPresented
+        if panelPresented {
             rightPanelController.panelDidShow()
         } else {
             rightPanelController.panelDidHide()
         }
-        mainColumnTrailingToCard.isActive = !rightPanelVisible
-        mainColumnTrailingToPanel.isActive = rightPanelVisible
-        workspaceHeader.setPanelVisible(rightPanelVisible)
+        mainColumnTrailingToCard.isActive = !panelPresented
+        mainColumnTrailingToPanel.isActive = panelPresented
+        workspaceHeader.setPanelVisible(panelPresented)
 
         leftResizeHandle.setEnabled(docked)
-        rightResizeHandle.setEnabled(rightPanelVisible)
+        rightResizeHandle.setEnabled(panelPresented)
         leftPanelController.setToggleActive(docked)
         leftPanelController.setFullScreen(fullScreen)
         updateTrafficLights()
         view.layoutSubtreeIfNeeded()
+        leftResizeHandle.refreshInteraction()
+        rightResizeHandle.refreshInteraction()
         updateWindowMinimumSize()
     }
 
@@ -2374,7 +2494,7 @@ final class WorkspaceViewController: NSViewController {
             AppTheme.minimumWindowWidth,
             WorkspacePanelLayout.minimumWindowWidth(
                 leftPanelVisible: sidebarPresentation == .docked,
-                rightPanelVisible: rightPanelVisible,
+                rightPanelVisible: rightPanelVisible && settingsController == nil,
                 leftPanelWidth: leftPanelWidth,
                 rightPanelWidth: rightPanelWidth
             )
@@ -2427,16 +2547,10 @@ final class WorkspaceViewController: NSViewController {
     }
 
     private func resizeRightPanel(by delta: CGFloat) {
-        guard rightPanelVisible else { return }
-        let maximumFromWorkspace = (rightResizeWorkspaceWidth ?? workspaceCard.bounds.width)
-            - AppTheme.minimumCenterWidth
-        let maximum = max(
-            AppTheme.rightPanelRange.lowerBound,
-            min(AppTheme.rightPanelRange.upperBound, maximumFromWorkspace)
-        )
+        guard rightPanelVisible, settingsController == nil else { return }
         rightPanelWidth = min(
             max(rightWidthConstraint.constant + delta, AppTheme.rightPanelRange.lowerBound),
-            maximum
+            AppTheme.rightPanelRange.upperBound
         )
         rightWidthConstraint.constant = rightPanelWidth
         UserDefaults.standard.set(Double(rightPanelWidth), forKey: Self.rightPanelWidthDefaultsKey)
@@ -2457,6 +2571,236 @@ final class WorkspaceViewController: NSViewController {
         }
     }
 
+}
+
+@MainActor
+private final class FileEditorViewController: NSViewController, NSTextViewDelegate {
+    var onStateChange: (() -> Void)?
+
+    private let path: String
+    private let target: TerminalTarget
+    private let scrollView = NSScrollView()
+    private let textView = FileTextView()
+    private let loadingView = NSStackView()
+    private let loadingIndicator = NSProgressIndicator()
+    private let loadingLabel = NSTextField(labelWithString: "")
+    private lazy var syntaxHighlighter = SyntaxHighlighter(path: path)
+    private var isLoading = true
+    private var isDirty = false
+    var hasUnsavedChanges: Bool { isDirty }
+
+    init(path: String, target: TerminalTarget) {
+        self.path = path
+        self.target = target
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable) required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+
+    override func loadView() {
+        let root = NSView()
+        root.wantsLayer = true
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.horizontalScrollElasticity = .none
+        scrollView.borderType = .noBorder
+        textView.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.isRichText = false
+        textView.usesFindPanel = true
+        textView.allowsUndo = true
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.font = .monospacedSystemFont(
+            ofSize: CGFloat(UserSettingsStore().load().editorFontSize.points),
+            weight: .regular
+        )
+        textView.delegate = self
+        textView.onSave = { [weak self] in self?.save() }
+        scrollView.documentView = textView
+        root.addSubview(scrollView)
+        loadingView.translatesAutoresizingMaskIntoConstraints = false
+        loadingView.orientation = .vertical
+        loadingView.alignment = .centerX
+        loadingView.spacing = 8
+        loadingIndicator.style = .spinning
+        loadingIndicator.controlSize = .small
+        loadingIndicator.startAnimation(nil)
+        loadingLabel.stringValue = "Loading \(URL(fileURLWithPath: path).lastPathComponent)…"
+        loadingView.addArrangedSubview(loadingIndicator)
+        loadingView.addArrangedSubview(loadingLabel)
+        root.addSubview(loadingView)
+        NSLayoutConstraint.activate([
+            scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12),
+            scrollView.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
+            scrollView.topAnchor.constraint(equalTo: root.topAnchor, constant: 12),
+            scrollView.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -12),
+            loadingView.centerXAnchor.constraint(equalTo: root.centerXAnchor),
+            loadingView.centerYAnchor.constraint(equalTo: root.centerYAnchor),
+        ])
+        view = root
+        applyTheme()
+        Task { [path, target] in
+            do {
+                let content = try await Task.detached { try FileEditorStore.read(path: path, target: target) }.value
+                textView.string = content
+                syntaxHighlighter.apply(to: textView)
+                textView.isEditable = true
+            } catch {
+                textView.string = "Could not open file:\n\n\(error.localizedDescription)"
+                textView.isEditable = false
+            }
+            isLoading = false
+            loadingIndicator.stopAnimation(nil)
+            loadingView.isHidden = true
+        }
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        let width = scrollView.contentView.bounds.width
+        guard width > 0, textView.frame.width != width else { return }
+        textView.setFrameSize(NSSize(width: width, height: textView.frame.height))
+    }
+
+    func textDidChange(_ notification: Notification) {
+        syntaxHighlighter.schedule(in: textView)
+        guard !isLoading, !isDirty else { return }
+        isDirty = true
+        onStateChange?()
+    }
+
+    func applyTheme() {
+        let settings = UserSettingsStore().load()
+        let palette = EditorSyntaxPalette.pinata(appTheme: settings.theme)
+        textView.font = .monospacedSystemFont(
+            ofSize: CGFloat(settings.editorFontSize.points),
+            weight: .regular
+        )
+        view.layer?.backgroundColor = AppTheme.background.cgColor
+        scrollView.backgroundColor = palette.backgroundColor
+        textView.backgroundColor = palette.backgroundColor
+        textView.textColor = palette.foregroundColor
+        textView.insertionPointColor = palette.foregroundColor
+        loadingLabel.font = AppTheme.font(ofSize: AppTheme.typography.body, weight: 500)
+        loadingLabel.textColor = AppTheme.tertiaryText
+        syntaxHighlighter.apply(to: textView)
+    }
+
+    private func save() {
+        guard !isLoading else { return }
+        let value = textView.string
+        textView.isEditable = false
+        Task { [path, target] in
+            do {
+                try await Task.detached { try FileEditorStore.write(value, path: path, target: target) }.value
+                isDirty = false
+                onStateChange?()
+            } catch {
+                NSSound.beep()
+            }
+            textView.isEditable = true
+        }
+    }
+}
+
+private final class FileTextView: NSTextView {
+    var onSave: (() -> Void)?
+
+    override func keyDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "s" {
+            onSave?()
+            return
+        }
+        super.keyDown(with: event)
+    }
+}
+
+private enum FileEditorStore {
+    private static let maximumBytes = 4 * 1024 * 1024
+
+    static func read(path: String, target: TerminalTarget) throws -> String {
+        let data: Data
+        switch target {
+        case .local:
+            data = try Data(contentsOf: URL(fileURLWithPath: path))
+        case .ssh(let connection):
+            data = try run(connection: connection, script: "cat -- \(SSHCommand.shellQuote(path))")
+        }
+        guard data.count <= maximumBytes else { throw FileTreeInspectionError.failed("File is larger than 4 MB.") }
+        guard !data.contains(0), let value = String(data: data, encoding: .utf8) else {
+            throw FileTreeInspectionError.failed("Only UTF-8 text files are supported.")
+        }
+        return value
+    }
+
+    static func write(_ value: String, path: String, target: TerminalTarget) throws {
+        let data = Data(value.utf8)
+        switch target {
+        case .local:
+            try data.write(to: URL(fileURLWithPath: path), options: .atomic)
+        case .ssh(let connection):
+            let temp = "\(path).pinata-\(UUID().uuidString)"
+            _ = try run(connection: connection, script: "cat > \(SSHCommand.shellQuote(temp)) && mv \(SSHCommand.shellQuote(temp)) \(SSHCommand.shellQuote(path))", input: data)
+        }
+    }
+
+    private static func run(connection: SSHConnection, script: String, input: Data? = nil) throws -> Data {
+        let fileManager = FileManager.default
+        let outputURL = fileManager.temporaryDirectory
+            .appendingPathComponent("pinata-editor-\(UUID().uuidString).out")
+        let errorURL = fileManager.temporaryDirectory
+            .appendingPathComponent("pinata-editor-\(UUID().uuidString).err")
+        defer {
+            try? fileManager.removeItem(at: outputURL)
+            try? fileManager.removeItem(at: errorURL)
+        }
+        guard fileManager.createFile(atPath: outputURL.path, contents: nil),
+              fileManager.createFile(atPath: errorURL.path, contents: nil) else {
+            throw FileTreeInspectionError.failed("Could not prepare file editor.")
+        }
+        let output = try FileHandle(forWritingTo: outputURL)
+        let error = try FileHandle(forWritingTo: errorURL)
+        defer {
+            try? output.close()
+            try? error.close()
+        }
+        let process = SSHCommand.makeProcess(connection: connection, command: ["sh", "-lc", script])
+        process.standardOutput = output
+        process.standardError = error
+        if let input {
+            let pipe = Pipe()
+            process.standardInput = pipe
+            try process.run()
+            pipe.fileHandleForWriting.write(input)
+            try pipe.fileHandleForWriting.close()
+        } else {
+            try process.run()
+        }
+        process.waitUntilExit()
+        try output.synchronize()
+        try error.synchronize()
+        let errorText = String(decoding: try Data(contentsOf: errorURL), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard process.terminationStatus == 0 else {
+            throw FileTreeInspectionError.failed(errorText.isEmpty ? "Could not update remote file." : errorText)
+        }
+        return try Data(contentsOf: outputURL)
+    }
 }
 
 @MainActor
@@ -3127,6 +3471,7 @@ private final class PanelResizeHandle: NSView {
     private var isHovering = false
 
     override var acceptsFirstResponder: Bool { enabled }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { enabled }
 
     init(indicatorOffset: CGFloat = 0) {
         self.indicatorOffset = indicatorOffset
@@ -3193,13 +3538,15 @@ private final class PanelResizeHandle: NSView {
         addCursorRect(bounds, cursor: .resizeLeftRight)
     }
 
-    override func mouseDragged(with event: NSEvent) {
-        onDrag?(event.deltaX)
-    }
-
     override func mouseDown(with event: NSEvent) {
+        guard enabled else { return }
         onDragBegan?()
         super.mouseDown(with: event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard enabled else { return }
+        onDrag?(event.deltaX)
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -3226,6 +3573,10 @@ private final class PanelResizeHandle: NSView {
     func setEnabled(_ enabled: Bool) {
         self.enabled = enabled
         isHidden = !enabled
+        refreshInteraction()
+    }
+
+    func refreshInteraction() {
         updateTrackingAreas()
         updateLineVisibility()
         window?.invalidateCursorRects(for: self)

@@ -20,6 +20,8 @@ final class ZmxTerminalClient: @unchecked Sendable {
     private var writeOffset = 0
     private var closed = false
     private var started = false
+    private var columns: UInt16 = 0
+    private var rows: UInt16 = 0
 
     var onOutput: ((Data) -> Void)?
 
@@ -51,10 +53,10 @@ final class ZmxTerminalClient: @unchecked Sendable {
 
     func resize(columns: UInt16, rows: UInt16) {
         queue.async { [weak self] in
-            guard let self, ptyFD >= 0 else { return }
-            var size = winsize(ws_row: rows, ws_col: columns, ws_xpixel: 0, ws_ypixel: 0)
-            _ = ioctl(ptyFD, TIOCSWINSZ, &size)
-            if childPID > 0 { _ = kill(childPID, SIGWINCH) }
+            guard let self else { return }
+            self.columns = columns
+            self.rows = rows
+            self.applyTerminalSize()
         }
     }
 
@@ -109,12 +111,20 @@ final class ZmxTerminalClient: @unchecked Sendable {
 
         childPID = pid
         ptyFD = masterFD
+        applyTerminalSize()
         setNonBlocking(masterFD)
         let source = DispatchSource.makeReadSource(fileDescriptor: masterFD, queue: queue)
         source.setEventHandler { [weak self] in self?.readAvailable() }
         source.setCancelHandler { Darwin.close(masterFD) }
         readSource = source
         source.resume()
+    }
+
+    private func applyTerminalSize() {
+        guard ptyFD >= 0, columns > 0, rows > 0 else { return }
+        var size = winsize(ws_row: rows, ws_col: columns, ws_xpixel: 0, ws_ypixel: 0)
+        _ = ioctl(ptyFD, TIOCSWINSZ, &size)
+        if childPID > 0 { _ = kill(childPID, SIGWINCH) }
     }
 
     private func readAvailable() {
@@ -228,17 +238,12 @@ private final class ZmxLaunchConfiguration {
         case .ssh(let connection):
             executable = strdup("/usr/bin/ssh")!
             let command = "cd -- \(SSHCommand.shellQuote(workingDirectory)) && if [ -x \"$HOME/.local/bin/zmx\" ]; then exec \"$HOME/.local/bin/zmx\" attach \(SSHCommand.shellQuote(sessionName)); else exec zmx attach \(SSHCommand.shellQuote(sessionName)); fi"
-            let values = [
-                "ssh",
-                "-A",
-                "-S", "none",
-                "-o", "ControlMaster=no",
-                "-o", "ClearAllForwardings=yes",
-                "-tt",
-                "--",
-                connection.host,
-                command,
-            ]
+            let values = SSHCommand.arguments(
+                connection: connection,
+                command: command,
+                allocateTTY: true,
+                includeExecutableName: true
+            )
             arguments = Self.makeArguments(values)
             argumentCount = values.count
         }
@@ -288,15 +293,10 @@ private enum ZmxControl {
             process.arguments = ["kill", sessionName, "--force"]
         case .ssh(let connection):
             process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-            process.arguments = [
-                "-A",
-                "-S", "none",
-                "-o", "ControlMaster=no",
-                "-o", "ClearAllForwardings=yes",
-                "--",
-                connection.host,
-                "if [ -x \"$HOME/.local/bin/zmx\" ]; then exec \"$HOME/.local/bin/zmx\" kill \(SSHCommand.shellQuote(sessionName)) --force; else exec zmx kill \(SSHCommand.shellQuote(sessionName)) --force; fi",
-            ]
+            process.arguments = SSHCommand.arguments(
+                connection: connection,
+                command: "if [ -x \"$HOME/.local/bin/zmx\" ]; then exec \"$HOME/.local/bin/zmx\" kill \(SSHCommand.shellQuote(sessionName)) --force; else exec zmx kill \(SSHCommand.shellQuote(sessionName)) --force; fi"
+            )
         }
         return process
     }

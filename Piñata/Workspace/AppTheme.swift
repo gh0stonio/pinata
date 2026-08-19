@@ -66,12 +66,12 @@ enum WorkspacePanelLayout {
 @MainActor
 enum AppTheme {
     static let leftPanelWidth: CGFloat = 264
-    static let rightPanelWidth: CGFloat = 304
+    static let rightPanelWidth: CGFloat = 350
     static let settingsRailWidth: CGFloat = 260
     static let panelContentInset: CGFloat = 14
     static let fullScreenSidebarWidth: CGFloat = 320
     static let leftPanelRange: ClosedRange<CGFloat> = 200...440
-    static let rightPanelRange: ClosedRange<CGFloat> = 220...560
+    static let rightPanelRange: ClosedRange<CGFloat> = 350...550
     static let workspaceHeaderHeight: CGFloat = 36
     static let mainHeaderHeight: CGFloat = 44
     static let workspaceContentInset: CGFloat = 10
@@ -206,6 +206,15 @@ enum AppTheme {
     static var taskModalInputBackground: NSColor { controlSelection }
     static var taskModalOverlayBackground: NSColor { .black.withAlphaComponent(0.52) }
 
+    static func connectionStatusColor(_ status: SSHConnectionStatus) -> NSColor {
+        switch status {
+        case .disabled: tertiaryText
+        case .checking: panelAccentIcon
+        case .connected: success
+        case .disconnected: error
+        }
+    }
+
     static var separator: NSColor {
         tertiaryText.withAlphaComponent(0.28)
     }
@@ -270,6 +279,23 @@ enum AppTheme {
         ])
         return NSFont(descriptor: descriptor, size: size)
             ?? .systemFont(ofSize: size, weight: systemWeight(for: weight))
+    }
+
+    static func previewFont(ofSize size: CGFloat, weight: CGFloat = 400) -> NSFont {
+        let font = font(ofSize: size, weight: weight)
+        let transform = NSAffineTransform()
+        transform.transformStruct = NSAffineTransformStruct(
+            m11: 1,
+            m12: 0,
+            m21: 0.12,
+            m22: 1,
+            tX: 0,
+            tY: 0
+        )
+        return NSFont(
+            descriptor: font.fontDescriptor.addingAttributes([.matrix: transform]),
+            size: size
+        ) ?? font
     }
 
     private static func systemWeight(for weight: CGFloat) -> NSFont.Weight {
@@ -369,14 +395,14 @@ enum AppTheme {
             )
         case .chrome:
             return AppButtonAppearance(
-                background: hovered ? chromeHoverBackground : .clear,
+                background: hovered ? surface : .clear,
                 foreground: hovered ? interactiveHoverForeground : secondaryText,
                 border: .clear,
                 borderWidth: 0
             )
         case .icon:
             return AppButtonAppearance(
-                background: hovered ? interactiveHoverBackground : .clear,
+                background: hovered ? surface : .clear,
                 foreground: hovered ? interactiveHoverForeground : tertiaryText,
                 border: .clear,
                 borderWidth: 0
