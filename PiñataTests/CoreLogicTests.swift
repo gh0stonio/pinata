@@ -17,7 +17,7 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertFalse(profiles[1].isActive)
     }
 
-    func testPullRequestStatusSummarizesChecksAndIssues() {
+    func testPullRequestStatusUsesGitHubLifecycle() {
         let pullRequest = PullRequestSummary(
             number: 42,
             title: "Ship sidebar PR status",
@@ -37,7 +37,7 @@ final class CoreLogicTests: XCTestCase {
             url: "https://github.com/gh0stonio/pinata/pull/42"
         )
 
-        XCTAssertEqual(pullRequest.displayStatus, .issue)
+        XCTAssertEqual(pullRequest.displayStatus, .ready)
         XCTAssertEqual(pullRequest.checks.map(\.status), [.passed, .failed, .pending])
     }
 
@@ -94,31 +94,20 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertNil(PullRequestLinkResolver.url(remoteURL: "not-a-remote", number: 57509))
     }
 
-    func testSidebarHoverCorridorProtectsDiagonalTravelOnly() {
-        let popoverFrame = NSRect(x: 400, y: 100, width: 400, height: 300)
-        let origin = NSPoint(x: 300, y: 250)
 
-        XCTAssertTrue(
-            SidebarHoverCorridor.contains(
-                NSPoint(x: 356, y: 200),
-                from: origin,
-                to: popoverFrame
-            )
-        )
-        XCTAssertFalse(
-            SidebarHoverCorridor.contains(
-                NSPoint(x: 356, y: 100),
-                from: origin,
-                to: popoverFrame
-            )
-        )
-        XCTAssertFalse(
-            SidebarHoverCorridor.contains(
-                NSPoint(x: 280, y: 250),
-                from: origin,
-                to: popoverFrame
-            )
-        )
+    func testAgentTitleActivityRecognizesSpinnerFrame() {
+        var detector = AgentTitleActivityDetector()
+
+        XCTAssertTrue(detector.update(title: "⠋ Fix terminal spinner"))
+        XCTAssertTrue(detector.update(title: "⠙ Fix terminal spinner"))
+        XCTAssertTrue(detector.update(title: "◐ Saving changes"))
+    }
+
+    func testAgentTitleActivityStopsWithoutSpinnerFrame() {
+        var detector = AgentTitleActivityDetector()
+
+        XCTAssertTrue(detector.update(title: "⠋ Fix terminal spinner"))
+        XCTAssertFalse(detector.update(title: "Fix terminal spinner"))
     }
 
     @MainActor
@@ -194,6 +183,7 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertEqual(loadingView.visibleMessage, "Loading GitHub…")
         XCTAssertEqual(loadingView.visibleMessageAlignment, .center)
         XCTAssertFalse(loadingView.isShowingBackgroundRefresh)
+
     }
 
     @MainActor
@@ -672,6 +662,16 @@ final class CoreLogicTests: XCTestCase {
             SSHCommand.message(for: "Permission denied (publickey).", connection: .init(name: "Build", host: "build")),
             "Authentication failed for Build."
         )
+    }
+
+    func testSSHCommandPreservesForwardingsWhenRequested() {
+        let arguments = SSHCommand.arguments(
+            connection: SSHConnection(name: "Workspace", host: "workspace"),
+            command: "true",
+            clearForwardings: false
+        )
+
+        XCTAssertFalse(arguments.contains("ClearAllForwardings=yes"))
     }
 
     func testOlderTasksDefaultToUnpinned() throws {

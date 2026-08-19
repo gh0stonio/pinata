@@ -757,6 +757,7 @@ final class WorkspaceViewController: NSViewController {
             if repositoryActionMenu != nil, repositoryActionMenuScope != scope {
                 dismissRepositoryActionMenu()
             }
+            refreshPullRequestStatuses()
         }
         leftPanelController.onMoveTask = { [weak self] sourceID, targetID, after, pinned in
             self?.moveTask(
@@ -989,6 +990,9 @@ final class WorkspaceViewController: NSViewController {
         }
         controller.onChange = { [weak self] in
             self?.scheduleSessionSave()
+        }
+        controller.onAgentActivityChanged = { [weak self] _ in
+            self?.updateTaskSidebar()
         }
         if controller.parent !== self {
             addChild(controller)
@@ -2321,6 +2325,9 @@ final class WorkspaceViewController: NSViewController {
                 taskActivities[task.id] = "attaching"
             }
         }
+        let taskAgentActivity = Set(taskWorkspaces.compactMap { taskID, workspace in
+            workspace.tabs.contains { $0.controller.hasActiveAgent } ? taskID : nil
+        })
         leftPanelController.updateTasks(
             tasks,
             selection: activeScope,
@@ -2332,6 +2339,7 @@ final class WorkspaceViewController: NSViewController {
             repositoryBranches: repositoryBranches,
             repositoryRemoteURLs: repositoryRemoteURLs,
             pullRequestStatuses: pullRequestStatusStore.statuses,
+            taskAgentActivity: taskAgentActivity,
             taskErrors: taskErrors,
             repositoryErrors: displayedRepositoryErrors,
             loadError: taskLoadError

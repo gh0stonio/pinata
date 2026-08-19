@@ -221,7 +221,6 @@ enum AppTheme {
         switch status {
         case .draft: tertiaryText
         case .ready: success
-        case .issue: error
         case .merged: pullRequestMerged
         }
     }

@@ -117,7 +117,8 @@ final class ZmxTerminalClient: @unchecked Sendable {
         started = true
 
         var masterFD: Int32 = -1
-        let pid = forkpty(&masterFD, nil, nil, nil)
+        var initialSize = winsize(ws_row: rows, ws_col: columns, ws_xpixel: 0, ws_ypixel: 0)
+        let pid = forkpty(&masterFD, nil, nil, &initialSize)
         guard pid >= 0 else {
             started = false
             report("Could not start zmx.")
@@ -285,7 +286,8 @@ private final class ZmxLaunchConfiguration {
                 connection: connection,
                 command: command,
                 allocateTTY: true,
-                includeExecutableName: true
+                includeExecutableName: true,
+                clearForwardings: false
             )
             arguments = Self.makeArguments(values)
             argumentCount = values.count

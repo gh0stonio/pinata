@@ -22,14 +22,12 @@ enum PullRequestCheckStatus: String, Codable, Sendable {
 enum PullRequestDisplayStatus: String, Sendable {
     case draft
     case ready
-    case issue
     case merged
 
     var label: String {
         switch self {
         case .draft: "Draft"
-        case .ready: "Ready"
-        case .issue: "Issue"
+        case .ready: "Open"
         case .merged: "Merged"
         }
     }
@@ -62,24 +60,10 @@ struct PullRequestSummary: Codable, Equatable, Identifiable, Sendable {
     }
 
     var displayStatus: PullRequestDisplayStatus {
-        let normalizedState = state.uppercased()
-        if normalizedState == "MERGED" {
+        if state.uppercased() == "MERGED" {
             return .merged
         }
-        if isDraft {
-            return .draft
-        }
-        if normalizedState != "OPEN"
-            || mergeable?.uppercased() == "CONFLICTING"
-            || mergeStateStatus?.uppercased() == "DIRTY"
-            || mergeStateStatus?.uppercased() == "BLOCKED"
-            || mergeStateStatus?.uppercased() == "UNSTABLE"
-            || reviewDecision?.uppercased() == "CHANGES_REQUESTED"
-            || checks.contains(where: { $0.status == .failed })
-        {
-            return .issue
-        }
-        return .ready
+        return isDraft ? .draft : .ready
     }
 
     var reviewLabel: String {

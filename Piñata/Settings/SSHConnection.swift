@@ -184,7 +184,9 @@ final class SSHConnectionStatusMonitor {
         guard connection.isEnabled, connections[connection.id] == connection else { return }
         checkTasks[connection.id]?.cancel()
         checkTasks[connection.id] = nil
-        setStatus(.checking, for: connection.id)
+        if statuses[connection.id] != .connected {
+            setStatus(.checking, for: connection.id)
+        }
     }
 
     func completeExternalCheck(
@@ -206,7 +208,9 @@ final class SSHConnectionStatusMonitor {
 
     private func startCheck(for connection: SSHConnection) {
         guard checkTasks[connection.id] == nil else { return }
-        setStatus(.checking, for: connection.id)
+        if statuses[connection.id] != .connected {
+            setStatus(.checking, for: connection.id)
+        }
         let task = Task { [weak self] in
             let status = await Task.detached(priority: .utility) {
                 do {
@@ -566,15 +570,16 @@ enum SSHCommand {
         command: String,
         allocateTTY: Bool = false,
         includeExecutableName: Bool = false,
-        reuseConnection: Bool = false
+        reuseConnection: Bool = false,
+        clearForwardings: Bool = true
     ) -> [String] {
         (includeExecutableName ? ["ssh"] : []) + [
             "-A",
             "-o", "BatchMode=yes",
             "-o", "ConnectTimeout=\(connectionTimeout)",
             "-o", "ConnectionAttempts=1",
-            "-o", "ClearAllForwardings=yes",
-        ] + (reuseConnection
+        ] + (clearForwardings ? ["-o", "ClearAllForwardings=yes"] : [])
+            + (reuseConnection
             ? [
                 "-o", "ControlMaster=auto",
                 "-o", "ControlPersist=60",
