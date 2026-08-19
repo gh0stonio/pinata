@@ -2147,7 +2147,28 @@ private final class SidebarRepositoryInfoCard: NSView {
 
 @MainActor
 private final class SidebarPullRequestRowsView: NSView {
+    static let spacing: CGFloat = 4
+
     override var isFlipped: Bool { true }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        layoutRows()
+    }
+
+    override func didAddSubview(_ subview: NSView) {
+        super.didAddSubview(subview)
+        layoutRows()
+    }
+
+    private func layoutRows() {
+        var y: CGFloat = 0
+        for view in subviews {
+            let height: CGFloat = view is SidebarPullRequestInfoRow ? 44 : 22
+            view.frame = NSRect(x: 0, y: y, width: bounds.width, height: height)
+            y += height + Self.spacing
+        }
+    }
 }
 
 @MainActor
@@ -2164,7 +2185,6 @@ final class SidebarPullRequestInfoView: NSView {
     private var status: PullRequestRepositoryStatus
     private var branch: String?
     private let remoteURL: String?
-    private let rowSpacing: CGFloat = 4
     private var hasRendered = false
 
     init(status: PullRequestRepositoryStatus, branch: String?, remoteURL: String?) {
@@ -2233,16 +2253,6 @@ final class SidebarPullRequestInfoView: NSView {
 
     var isShowingBackgroundRefresh: Bool {
         !refreshIndicator.isHidden
-    }
-
-    override func layout() {
-        super.layout()
-        var y: CGFloat = 0
-        for view in rowViews {
-            let height: CGFloat = view is SidebarPullRequestInfoRow ? 44 : 22
-            view.frame = NSRect(x: 0, y: y, width: rowsView.bounds.width, height: height)
-            y += height + rowSpacing
-        }
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
@@ -2341,7 +2351,8 @@ final class SidebarPullRequestInfoView: NSView {
         case .loaded, .loading:
             let showsMessage = pullRequests.isEmpty
             let messageHeight: CGFloat = showsMessage ? 22 : 0
-            let rowsSpacing = CGFloat(max(0, pullRequests.count - 1)) * rowSpacing
+            let rowsSpacing = CGFloat(max(0, pullRequests.count - 1))
+                * SidebarPullRequestRowsView.spacing
             return max(
                 22,
                 messageHeight
