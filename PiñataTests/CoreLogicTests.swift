@@ -94,39 +94,6 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertNil(PullRequestLinkResolver.url(remoteURL: "not-a-remote", number: 57509))
     }
 
-    func testSidebarHoverCorridorProtectsDiagonalTravelOnly() {
-        let popoverFrame = NSRect(x: 400, y: 100, width: 400, height: 300)
-        let origin = NSPoint(x: 300, y: 250)
-
-        XCTAssertTrue(
-            SidebarHoverCorridor.contains(
-                NSPoint(x: 356, y: 200),
-                from: origin,
-                to: popoverFrame
-            )
-        )
-        XCTAssertTrue(
-            SidebarHoverCorridor.contains(
-                NSPoint(x: popoverFrame.minX, y: 200),
-                from: origin,
-                to: popoverFrame
-            )
-        )
-        XCTAssertFalse(
-            SidebarHoverCorridor.contains(
-                NSPoint(x: 356, y: 100),
-                from: origin,
-                to: popoverFrame
-            )
-        )
-        XCTAssertFalse(
-            SidebarHoverCorridor.contains(
-                NSPoint(x: 280, y: 250),
-                from: origin,
-                to: popoverFrame
-            )
-        )
-    }
 
     func testAgentTitleActivityRecognizesChangingSymbolFrames() {
         var detector = AgentTitleActivityDetector()

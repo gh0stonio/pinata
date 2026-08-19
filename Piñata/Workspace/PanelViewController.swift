@@ -1123,13 +1123,12 @@ private final class SidebarTaskRow: AppHoverView {
             infoPopover = value
             return value
         }()
-        popover.cancelScheduledClose()
         guard !popover.isVisible, window.isVisible else { return }
         popover.show(relativeTo: bounds, of: self)
     }
 
     private func dismissInfoPopover() {
-        infoPopover?.scheduleClose(allowingCorridor: true)
+        infoPopover?.scheduleClose()
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
@@ -1663,7 +1662,6 @@ private final class SidebarRepositoryRow: AppHoverView {
             infoPopover = value
             return value
         }()
-        popover.cancelScheduledClose()
         if !popover.isVisible {
             card.hideChecks()
         }
@@ -1672,7 +1670,7 @@ private final class SidebarRepositoryRow: AppHoverView {
     }
 
     private func dismissInfoPopover() {
-        infoPopover?.scheduleClose(allowingCorridor: true)
+        infoPopover?.scheduleClose()
     }
 
     private func handleChecksHover(
@@ -1714,64 +1712,15 @@ private final class SidebarRepositoryRow: AppHoverView {
     }
 }
 
-enum SidebarHoverCorridor {
-    static func contains(
-        _ point: NSPoint,
-        from origin: NSPoint?,
-        to popoverFrame: NSRect
-    ) -> Bool {
-        guard let origin else { return false }
-        let padding: CGFloat = 12
-        let targetX = popoverFrame.minX + padding
-        guard origin.x < targetX,
-              point.x >= origin.x,
-              point.x <= targetX
-        else { return false }
-        return pointInTriangle(
-            point,
-            origin,
-            NSPoint(x: targetX, y: popoverFrame.maxY + padding),
-            NSPoint(x: targetX, y: popoverFrame.minY - padding)
-        )
-    }
-
-    private static func pointInTriangle(
-        _ point: NSPoint,
-        _ first: NSPoint,
-        _ second: NSPoint,
-        _ third: NSPoint
-    ) -> Bool {
-        let firstArea = cross(first, second, point)
-        let secondArea = cross(second, third, point)
-        let thirdArea = cross(third, first, point)
-        let hasNegative = firstArea < 0 || secondArea < 0 || thirdArea < 0
-        let hasPositive = firstArea > 0 || secondArea > 0 || thirdArea > 0
-        return !(hasNegative && hasPositive)
-    }
-
-    private static func cross(
-        _ first: NSPoint,
-        _ second: NSPoint,
-        _ point: NSPoint
-    ) -> CGFloat {
-        (second.x - first.x) * (point.y - first.y)
-            - (second.y - first.y) * (point.x - first.x)
-    }
-}
 
 @MainActor
 private final class SidebarHoverPopover: NSPanel {
     private static weak var activePopover: SidebarHoverPopover?
-    private static let handoffDelay: TimeInterval = 0.2
-    private static let closeDelay: TimeInterval = 0.25
-    private static let corridorDuration: TimeInterval = 0.45
+    private static let showDelay: TimeInterval = 0.75
     private static let pointerPollInterval: TimeInterval = 0.04
     private let chromeView: SidebarHoverPopoverView
     private var pointerTimer: Timer?
     private var pendingShow: DispatchWorkItem?
-    private var closeDeadline: Date?
-    private var corridorDeadline: Date?
-    private var corridorOrigin: NSPoint?
     private weak var sourceView: NSView?
     private var isHovering = false
     var onHoverChanged: ((Bool) -> Void)?
@@ -1807,25 +1756,19 @@ private final class SidebarHoverPopover: NSPanel {
     func show(relativeTo rect: NSRect, of view: NSView) {
         guard view.window != nil else { return }
         sourceView = view
-        cancelScheduledClose()
         pendingShow?.cancel()
-        pendingShow = nil
-        if let activePopover = Self.activePopover, activePopover !== self {
-            let workItem = DispatchWorkItem { [weak self, weak view] in
-                guard let self,
-                      let view,
-                      self.pointerInsideSourceView(view)
-                else { return }
-                self.present(relativeTo: rect, of: view)
-            }
-            pendingShow = workItem
-            DispatchQueue.main.asyncAfter(
-                deadline: .now() + Self.handoffDelay,
-                execute: workItem
-            )
-            return
+        let workItem = DispatchWorkItem { [weak self, weak view] in
+            guard let self,
+                  let view,
+                  self.pointerInsideSourceView(view)
+            else { return }
+            self.present(relativeTo: rect, of: view)
         }
-        present(relativeTo: rect, of: view)
+        pendingShow = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.showDelay,
+            execute: workItem
+        )
     }
 
     private func present(relativeTo rect: NSRect, of view: NSView) {
@@ -1855,7 +1798,6 @@ private final class SidebarHoverPopover: NSPanel {
     }
 
     func refreshContentSize() {
-        cancelScheduledClose()
         let topLeft = NSPoint(x: frame.minX, y: frame.maxY)
         setContentSize(chromeView.intrinsicContentSize)
         setFrameTopLeftPoint(topLeft)
@@ -1863,24 +1805,10 @@ private final class SidebarHoverPopover: NSPanel {
         updatePointerState()
     }
 
-    func scheduleClose(allowingCorridor: Bool = false) {
+    func scheduleClose() {
         pendingShow?.cancel()
         pendingShow = nil
-        guard isVisible else { return }
-        closeDeadline = Date().addingTimeInterval(Self.closeDelay)
-        if allowingCorridor {
-            corridorOrigin = NSEvent.mouseLocation
-            corridorDeadline = Date().addingTimeInterval(Self.corridorDuration)
-        } else {
-            corridorOrigin = nil
-            corridorDeadline = nil
-        }
-    }
-
-    func cancelScheduledClose() {
-        closeDeadline = nil
-        corridorOrigin = nil
-        corridorDeadline = nil
+        close()
     }
 
     private func startPointerTracking() {
@@ -1904,29 +1832,9 @@ private final class SidebarHoverPopover: NSPanel {
         let pointerInsideSource = sourceView.map(pointerInsideSourceView) ?? false
         if pointerInsidePopover || pointerInsideSource {
             setHovering(true)
-            closeDeadline = nil
-            corridorOrigin = nil
-            corridorDeadline = nil
             return
         }
-        if let corridorDeadline,
-           corridorDeadline > Date(),
-           SidebarHoverCorridor.contains(mouseLocation, from: corridorOrigin, to: frame)
-        {
-            NSCursor.arrow.set()
-            setHovering(true)
-            closeDeadline = nil
-            return
-        }
-        corridorOrigin = nil
-        corridorDeadline = nil
-        if let closeDeadline {
-            if closeDeadline <= Date() {
-                close()
-            }
-        } else {
-            closeDeadline = Date().addingTimeInterval(Self.closeDelay)
-        }
+        close()
     }
 
     private func setHovering(_ hovering: Bool) {
@@ -1947,7 +1855,6 @@ private final class SidebarHoverPopover: NSPanel {
     }
 
     override func close() {
-        cancelScheduledClose()
         stopPointerTracking()
         pendingShow?.cancel()
         pendingShow = nil
