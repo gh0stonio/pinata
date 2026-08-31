@@ -136,14 +136,32 @@ struct AgentTitleActivityDetector {
     }
 
     private static func frame(in title: String) -> Character? {
-        guard let indicator = title.first,
-              indicator.unicodeScalars.allSatisfy(isSymbol),
-              let separator = title.firstIndex(where: \.isWhitespace),
-              title.index(after: separator) < title.endIndex
+        let parts = title.split(maxSplits: 2, whereSeparator: \.isWhitespace)
+        guard parts.count >= 2 else { return nil }
+        let indicator = parts.count == 3 && parts[1].count == 1 ? parts[1] : parts[0]
+        guard indicator.count == 1,
+              let frame = indicator.first,
+              isSpinnerFrame(frame)
         else { return nil }
-        return indicator
+        return frame
     }
 
+    private static func isSpinnerFrame(_ frame: Character) -> Bool {
+        var hasSymbol = false
+        for scalar in frame.unicodeScalars {
+            if isSymbol(scalar) {
+                hasSymbol = true
+                continue
+            }
+            switch scalar.properties.generalCategory {
+            case .nonspacingMark, .enclosingMark, .format:
+                continue
+            default:
+                return false
+            }
+        }
+        return hasSymbol
+    }
 
     private static func isSymbol(_ scalar: Unicode.Scalar) -> Bool {
         switch scalar.properties.generalCategory {
