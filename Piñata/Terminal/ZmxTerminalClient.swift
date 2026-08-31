@@ -19,6 +19,7 @@ enum ZmxReconnectPolicy {
 final class ZmxTerminalClient: @unchecked Sendable {
     private let id: UUID
     private let launchConfiguration: ZmxLaunchConfiguration
+    private let sshControlMaster: SSHWorkspaceControlMaster?
     private let queue: DispatchQueue
     private var ptyFD: Int32 = -1
     private var childPID: pid_t = -1
@@ -36,12 +37,22 @@ final class ZmxTerminalClient: @unchecked Sendable {
 
     var onOutput: ((Data) -> Void)?
 
-    init(id: UUID, workingDirectory: String, target: TerminalTarget) {
+    init(
+        id: UUID,
+        workingDirectory: String,
+        target: TerminalTarget,
+        sshControlMaster: SSHWorkspaceControlMaster?
+    ) {
+        if case .ssh(let connection) = target {
+            precondition(sshControlMaster?.connection.id == connection.id)
+        }
         self.id = id
+        self.sshControlMaster = sshControlMaster
         launchConfiguration = ZmxLaunchConfiguration(
             sessionName: ZmxSession.name(for: id),
             workingDirectory: workingDirectory,
-            target: target
+            target: target,
+            controlPath: sshControlMaster?.controlPath
         )
         queue = DispatchQueue(label: "dev.pinata.zmx-client.\(id.uuidString)")
     }
@@ -91,9 +102,18 @@ final class ZmxTerminalClient: @unchecked Sendable {
     }
 
     private func killSession() {
+        if let sshControlMaster {
+            do {
+                try sshControlMaster.ensureConnected()
+            } catch {
+                report(error.localizedDescription)
+                return
+            }
+        }
         guard let process = ZmxControl.makeKill(
             sessionName: ZmxSession.name(for: id),
-            target: launchConfiguration.target
+            target: launchConfiguration.target,
+            controlPath: sshControlMaster?.controlPath
         ) else {
             return
         }
@@ -114,8 +134,16 @@ final class ZmxTerminalClient: @unchecked Sendable {
 
     private func startIfNeeded() {
         guard !started, !closed else { return }
+        if let sshControlMaster {
+            do {
+                try sshControlMaster.ensureConnected()
+            } catch {
+                report(error.localizedDescription)
+                scheduleReconnect()
+                return
+            }
+        }
         started = true
-
         var masterFD: Int32 = -1
         var initialSize = winsize(ws_row: rows, ws_col: columns, ws_xpixel: 0, ws_ypixel: 0)
         let pid = forkpty(&masterFD, nil, nil, &initialSize)
@@ -265,7 +293,12 @@ private final class ZmxLaunchConfiguration {
     private let argumentCount: Int
     private let terminfoPath: UnsafeMutablePointer<CChar>?
 
-    init(sessionName: String, workingDirectory: String, target: TerminalTarget) {
+    init(
+        sessionName: String,
+        workingDirectory: String,
+        target: TerminalTarget,
+        controlPath: String?
+    ) {
         self.target = target
         terminfoPath = Bundle.main.url(forResource: "terminfo", withExtension: nil).map {
             strdup($0.path)
@@ -287,7 +320,7 @@ private final class ZmxLaunchConfiguration {
                 command: command,
                 allocateTTY: true,
                 includeExecutableName: true,
-                clearForwardings: false
+                controlPath: controlPath
             )
             arguments = Self.makeArguments(values)
             argumentCount = values.count
@@ -329,7 +362,11 @@ private final class ZmxLaunchConfiguration {
 }
 
 private enum ZmxControl {
-    static func makeKill(sessionName: String, target: TerminalTarget) -> Process? {
+    static func makeKill(
+        sessionName: String,
+        target: TerminalTarget,
+        controlPath: String?
+    ) -> Process? {
         let process = Process()
         switch target {
         case .local:
@@ -340,7 +377,8 @@ private enum ZmxControl {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
             process.arguments = SSHCommand.arguments(
                 connection: connection,
-                command: "if [ -x \"$HOME/.local/bin/zmx\" ]; then exec \"$HOME/.local/bin/zmx\" kill \(SSHCommand.shellQuote(sessionName)) --force; else exec zmx kill \(SSHCommand.shellQuote(sessionName)) --force; fi"
+                command: "if [ -x \"$HOME/.local/bin/zmx\" ]; then exec \"$HOME/.local/bin/zmx\" kill \(SSHCommand.shellQuote(sessionName)) --force; else exec zmx kill \(SSHCommand.shellQuote(sessionName)) --force; fi",
+                controlPath: controlPath
             )
         }
         return process

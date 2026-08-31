@@ -762,14 +762,43 @@ final class CoreLogicTests: XCTestCase {
         )
     }
 
-    func testSSHCommandPreservesForwardingsWhenRequested() {
-        let arguments = SSHCommand.arguments(
-            connection: SSHConnection(name: "Workspace", host: "workspace"),
-            command: "true",
-            clearForwardings: false
+    func testSSHWorkspaceControlMasterOwnsForwardingsAndClientsClearThem() {
+        let connection = SSHConnection(name: "Workspace", host: "workspace")
+        let controlPath = "/tmp/pinata-workspace.socket"
+        let ownerArguments = SSHCommand.controlMasterArguments(
+            connection: connection,
+            controlPath: controlPath
         )
 
-        XCTAssertFalse(arguments.contains("ClearAllForwardings=yes"))
+        XCTAssertTrue(ownerArguments.contains("ClearAllForwardings=no"))
+        XCTAssertTrue(ownerArguments.contains("ExitOnForwardFailure=yes"))
+        XCTAssertTrue(ownerArguments.contains("ControlMaster=yes"))
+        XCTAssertTrue(ownerArguments.contains("ControlPersist=1"))
+        XCTAssertTrue(ownerArguments.contains(controlPath))
+
+        let clientArguments = SSHCommand.arguments(
+            connection: connection,
+            command: "true",
+            controlPath: controlPath
+        )
+        XCTAssertTrue(clientArguments.contains("ClearAllForwardings=yes"))
+        XCTAssertTrue(clientArguments.contains("ControlMaster=no"))
+        XCTAssertTrue(clientArguments.contains(controlPath))
+        XCTAssertFalse(clientArguments.contains("none"))
+    }
+
+    @MainActor
+    func testSSHControlMasterPoolSharesOwnerByRemoteConnection() throws {
+        let connection = SSHConnection(name: "Workspace", host: "workspace")
+        let pool = SSHControlMasterPool()
+        let first = try XCTUnwrap(pool.controlMaster(for: .ssh(connection)))
+        let second = try XCTUnwrap(pool.controlMaster(for: .ssh(connection)))
+        let other = try XCTUnwrap(pool.controlMaster(for: .ssh(
+            SSHConnection(name: "Other workspace", host: "other-workspace")
+        )))
+
+        XCTAssertTrue(first === second)
+        XCTAssertFalse(first === other)
     }
 
     func testOlderTasksDefaultToUnpinned() throws {
