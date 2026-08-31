@@ -248,7 +248,6 @@ final class PanelViewController: NSViewController {
         repositoryBranches: [UUID: String] = [:],
         repositoryRemoteURLs: [UUID: String] = [:],
         pullRequestStatuses: [UUID: PullRequestRepositoryStatus] = [:],
-        taskAgentActivity: Set<UUID> = [],
         taskErrors: [UUID: String],
         repositoryErrors: [TaskRepositoryScope: String],
         loadError: String?
@@ -277,7 +276,6 @@ final class PanelViewController: NSViewController {
                 expanded: expandedTaskIDs.contains(task.id),
                 menuActive: taskMenuTaskID == task.id,
                 activity: taskActivities[task.id],
-                agentActive: taskAgentActivity.contains(task.id),
                 taskError: taskErrors[task.id],
                 repositoryMenuScope: repositoryMenuScope,
                 repositoryActivities: repositoryActivities,
@@ -585,7 +583,6 @@ private final class SidebarTaskGroupView: NSStackView {
         expanded: Bool,
         menuActive: Bool,
         activity: String?,
-        agentActive: Bool,
         taskError: String?,
         repositoryMenuScope: TaskRepositoryScope?,
         repositoryActivities: [TaskRepositoryScope: String],
@@ -641,7 +638,6 @@ private final class SidebarTaskGroupView: NSStackView {
             selected: selection == .task(task.id),
             menuActive: menuActive,
             activity: activity,
-            agentActive: agentActive,
             error: taskError ?? collapsedRepositoryError,
             repositoryContexts: repositoryContexts,
             connectionStatusMonitor: connectionStatusMonitor,
@@ -847,7 +843,6 @@ private final class SidebarTaskRow: AppHoverView {
     private let hasRepositories: Bool
     private var menuActive: Bool
     private let activity: String?
-    private let agentActive: Bool
     private let error: String?
     private let selectButton = SidebarTaskSelectButton(role: .hitTarget)
     private let disclosureButton = SidebarDisclosureButton(role: .icon)
@@ -855,7 +850,6 @@ private final class SidebarTaskRow: AppHoverView {
     private var menuButton: SidebarMenuButton { menuOverlay.button }
     private let titleLabel: NSTextField
     private let errorIcon = NSImageView()
-    private let activityIndicator = NSProgressIndicator()
     private let statusLabel: NSTextField
     private let connectionStatusMonitor: SSHConnectionStatusMonitor
     private let createdAt: Date
@@ -872,7 +866,6 @@ private final class SidebarTaskRow: AppHoverView {
         selected: Bool,
         menuActive: Bool,
         activity: String?,
-        agentActive: Bool,
         error: String?,
         repositoryContexts: [SidebarRepositoryContext],
         connectionStatusMonitor: SSHConnectionStatusMonitor,
@@ -882,7 +875,6 @@ private final class SidebarTaskRow: AppHoverView {
         self.hasRepositories = hasRepositories
         self.menuActive = menuActive
         self.activity = activity
-        self.agentActive = agentActive
         self.error = error
         self.repositoryContexts = repositoryContexts
         self.connectionStatusMonitor = connectionStatusMonitor
@@ -900,7 +892,6 @@ private final class SidebarTaskRow: AppHoverView {
             disclosureButton,
             titleLabel,
             errorIcon,
-            activityIndicator,
             statusLabel,
             menuOverlay,
         ].forEach {
@@ -949,11 +940,6 @@ private final class SidebarTaskRow: AppHoverView {
             systemSymbolName: "exclamationmark.circle.fill",
             accessibilityDescription: "Failed"
         )
-        activityIndicator.style = .spinning
-        activityIndicator.controlSize = .small
-        if agentActive || (activity != nil && error == nil) {
-            activityIndicator.startAnimation(nil)
-        }
 
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: AppTheme.sidebarTaskRowHeight),
@@ -989,14 +975,10 @@ private final class SidebarTaskRow: AppHoverView {
             menuOverlay.widthAnchor.constraint(equalToConstant: 88),
             statusLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             statusLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            activityIndicator.trailingAnchor.constraint(
+            errorIcon.trailingAnchor.constraint(
                 equalTo: statusLabel.leadingAnchor,
                 constant: -6
             ),
-            activityIndicator.centerYAnchor.constraint(equalTo: centerYAnchor),
-            activityIndicator.widthAnchor.constraint(equalToConstant: activity == nil && !agentActive ? 0 : 12),
-            activityIndicator.heightAnchor.constraint(equalToConstant: 12),
-            errorIcon.trailingAnchor.constraint(equalTo: activityIndicator.leadingAnchor),
             errorIcon.centerYAnchor.constraint(equalTo: centerYAnchor),
             errorIcon.widthAnchor.constraint(equalToConstant: error == nil ? 0 : 12),
             errorIcon.heightAnchor.constraint(equalToConstant: 12),
@@ -1094,7 +1076,6 @@ private final class SidebarTaskRow: AppHoverView {
         menuOverlay.isHidden = !showsMenu
         disclosureButton.isHidden = !hasRepositories
         errorIcon.isHidden = error == nil
-        activityIndicator.isHidden = !agentActive && (activity == nil || error != nil)
         statusLabel.isHidden = activity == nil
     }
 
@@ -1102,6 +1083,7 @@ private final class SidebarTaskRow: AppHoverView {
         guard !menuActive, let window else { return }
         let card = infoCard ?? {
             let value = SidebarTaskAggregateInfoCard(
+                title: titleLabel.stringValue,
                 createdAt: createdAt,
                 contexts: repositoryContexts
             )
@@ -1707,6 +1689,42 @@ final class SidebarRepositoryRow: AppHoverView {
 }
 
 
+enum SidebarHoverPopoverPlacement {
+    private static let gap: CGFloat = 6
+    private static let contentInset: CGFloat = 8
+
+    static func frame(
+        contentSize: NSSize,
+        sourceRect: NSRect,
+        containerRect: NSRect
+    ) -> NSRect {
+        let availableRect = containerRect.insetBy(
+            dx: contentInset,
+            dy: contentInset
+        )
+        let maximumX = max(
+            availableRect.minX,
+            availableRect.maxX - contentSize.width
+        )
+        let maximumY = max(
+            availableRect.minY,
+            availableRect.maxY - contentSize.height
+        )
+        return NSRect(
+            x: min(
+                max(sourceRect.maxX + gap, availableRect.minX),
+                maximumX
+            ),
+            y: min(
+                max(sourceRect.maxY - contentSize.height, availableRect.minY),
+                maximumY
+            ),
+            width: contentSize.width,
+            height: contentSize.height
+        )
+    }
+}
+
 @MainActor
 private final class SidebarHoverPopover: NSPanel {
     private static weak var activePopover: SidebarHoverPopover?
@@ -1718,6 +1736,7 @@ private final class SidebarHoverPopover: NSPanel {
     private var pendingShow: DispatchWorkItem?
     private var pendingClose: DispatchWorkItem?
     private weak var sourceView: NSView?
+    private var sourceRect: NSRect?
     private var isHovering = false
     var onHoverChanged: ((Bool) -> Void)?
 
@@ -1752,6 +1771,7 @@ private final class SidebarHoverPopover: NSPanel {
     func show(relativeTo rect: NSRect, of view: NSView) {
         guard view.window != nil else { return }
         sourceView = view
+        sourceRect = rect
         pendingShow?.cancel()
         pendingClose?.cancel()
         pendingClose = nil
@@ -1774,20 +1794,8 @@ private final class SidebarHoverPopover: NSPanel {
         if let activePopover = Self.activePopover, activePopover !== self {
             activePopover.close()
         }
-        guard let window = view.window else { return }
-        setContentSize(chromeView.intrinsicContentSize)
-        let windowRect = view.convert(rect, to: nil)
-        let screenRect = window.convertToScreen(windowRect)
-        let size = frame.size
-        setFrame(
-            NSRect(
-                x: screenRect.maxX + 6,
-                y: screenRect.maxY - size.height,
-                width: size.width,
-                height: size.height
-            ),
-            display: true
-        )
+        guard view.window != nil else { return }
+        position(relativeTo: rect, of: view)
         chromeView.layoutSubtreeIfNeeded()
         Self.activePopover = self
         orderFrontRegardless()
@@ -1796,11 +1804,34 @@ private final class SidebarHoverPopover: NSPanel {
     }
 
     func refreshContentSize() {
-        let topLeft = NSPoint(x: frame.minX, y: frame.maxY)
-        setContentSize(chromeView.intrinsicContentSize)
-        setFrameTopLeftPoint(topLeft)
+        guard let sourceView, let sourceRect else {
+            let topLeft = NSPoint(x: frame.minX, y: frame.maxY)
+            setContentSize(chromeView.intrinsicContentSize)
+            setFrameTopLeftPoint(topLeft)
+            chromeView.layoutSubtreeIfNeeded()
+            updatePointerState()
+            return
+        }
+        position(relativeTo: sourceRect, of: sourceView)
         chromeView.layoutSubtreeIfNeeded()
         updatePointerState()
+    }
+
+    private func position(relativeTo rect: NSRect, of view: NSView) {
+        guard let window = view.window else { return }
+        let contentSize = chromeView.intrinsicContentSize
+        setContentSize(contentSize)
+        let windowRect = view.convert(rect, to: nil)
+        let sourceScreenRect = window.convertToScreen(windowRect)
+        let containerScreenRect = window.convertToScreen(window.contentLayoutRect)
+        setFrame(
+            SidebarHoverPopoverPlacement.frame(
+                contentSize: frame.size,
+                sourceRect: sourceScreenRect,
+                containerRect: containerScreenRect
+            ),
+            display: true
+        )
     }
 
     func scheduleClose() {
@@ -1884,6 +1915,7 @@ private final class SidebarHoverPopover: NSPanel {
         pendingClose?.cancel()
         pendingClose = nil
         sourceView = nil
+        sourceRect = nil
         setHovering(false)
         if Self.activePopover === self {
             Self.activePopover = nil
@@ -2001,7 +2033,7 @@ private final class SidebarRepositoryInfoCard: NSView {
         addSubview(checksCard)
         widthConstraint = widthAnchor.constraint(equalToConstant: 400)
         checksDividerWidthConstraint = checksDivider.widthAnchor.constraint(equalToConstant: 0)
-        checksCardWidthConstraint = checksCard.widthAnchor.constraint(equalToConstant: 400)
+        checksCardWidthConstraint = checksCard.widthAnchor.constraint(equalToConstant: 320)
         NSLayoutConstraint.activate([
             widthConstraint,
             repositoryRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
@@ -2015,11 +2047,11 @@ private final class SidebarRepositoryInfoCard: NSView {
             pullRequestView.topAnchor.constraint(equalTo: divider.bottomAnchor, constant: 10),
             pullRequestView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
             pullRequestView.widthAnchor.constraint(equalTo: repositoryRow.widthAnchor),
-            checksDivider.leadingAnchor.constraint(equalTo: repositoryRow.trailingAnchor, constant: 12),
+            checksDivider.leadingAnchor.constraint(equalTo: repositoryRow.trailingAnchor, constant: 8),
             checksDivider.topAnchor.constraint(equalTo: repositoryRow.topAnchor),
             checksDivider.bottomAnchor.constraint(equalTo: pullRequestView.bottomAnchor),
             checksDividerWidthConstraint,
-            checksCard.leadingAnchor.constraint(equalTo: checksDivider.trailingAnchor, constant: 12),
+            checksCard.leadingAnchor.constraint(equalTo: checksDivider.trailingAnchor),
             checksCard.topAnchor.constraint(equalTo: repositoryRow.topAnchor),
             checksCardWidthConstraint,
         ])
@@ -2031,7 +2063,7 @@ private final class SidebarRepositoryInfoCard: NSView {
 
     override var intrinsicContentSize: NSSize {
         NSSize(
-            width: showsChecks ? 825 : 400,
+            width: showsChecks ? 713 : 400,
             height: 28 + 95 + 1 + pullRequestView.intrinsicContentSize.height + 20
         )
     }
@@ -2056,8 +2088,8 @@ private final class SidebarRepositoryInfoCard: NSView {
         checksDivider.isHidden = false
         showsChecks = true
         checksDividerWidthConstraint.constant = 1
-        checksCardWidthConstraint.constant = 400
-        widthConstraint.constant = 825
+        checksCardWidthConstraint.constant = 320
+        widthConstraint.constant = 713
         invalidateIntrinsicContentSize()
         needsLayout = true
         applyTheme()
@@ -2551,19 +2583,19 @@ private final class SidebarChecksInfoCard: AppHoverView {
         cardHeightConstraint = heightAnchor.constraint(equalToConstant: height)
         cardHeightConstraint?.isActive = true
         NSLayoutConstraint.activate([
-            titleIcon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            titleIcon.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+            titleIcon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            titleIcon.topAnchor.constraint(equalTo: topAnchor, constant: 10),
             titleIcon.widthAnchor.constraint(equalToConstant: 18),
             titleIcon.heightAnchor.constraint(equalToConstant: 18),
             titleLabel.leadingAnchor.constraint(equalTo: titleIcon.trailingAnchor, constant: 7),
             titleLabel.centerYAnchor.constraint(equalTo: titleIcon.centerYAnchor),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: countLabel.leadingAnchor, constant: -8),
-            countLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            countLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             countLabel.centerYAnchor.constraint(equalTo: titleIcon.centerYAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-            scrollView.topAnchor.constraint(equalTo: titleIcon.bottomAnchor, constant: 12),
-            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            scrollView.topAnchor.constraint(equalTo: titleIcon.bottomAnchor, constant: 8),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
         ])
         update(checks: checks, height: height)
     }
@@ -2572,7 +2604,7 @@ private final class SidebarChecksInfoCard: AppHoverView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: 400, height: cardHeight)
+        NSSize(width: 320, height: cardHeight)
     }
 
     override var hoverTrackingOptions: NSTrackingArea.Options {
@@ -2773,7 +2805,7 @@ final class SidebarPullRequestInfoRow: AppHoverView {
 }
 
 @MainActor
-private final class SidebarTaskAggregateInfoCard: NSView {
+final class SidebarTaskAggregateInfoCard: NSView {
     private let titleLabel: NSTextField
     private let ageLabel: NSTextField
     private let repositoryValue = NSTextField(labelWithString: "0")
@@ -2785,14 +2817,48 @@ private final class SidebarTaskAggregateInfoCard: NSView {
     private let contentWidth: CGFloat = 300
     private let horizontalInset: CGFloat = 16
     private let verticalInset: CGFloat = 14
+    private let cardHeight: CGFloat
 
-    init(createdAt: Date, contexts: [SidebarRepositoryContext]) {
+    init(
+        title: String,
+        createdAt: Date,
+        contexts: [SidebarRepositoryContext]
+    ) {
         self.createdAt = createdAt
-        titleLabel = NSTextField(labelWithString: "Task overview")
-        ageLabel = NSTextField(labelWithString: Self.ageLabel(for: createdAt))
+        let taskTitleLabel = NSTextField(wrappingLabelWithString: title)
+        let taskAgeLabel = NSTextField(labelWithString: Self.ageLabel(for: createdAt))
+        let titleFont = AppTheme.font(
+            ofSize: AppTheme.typography.settingsBody,
+            weight: 600
+        )
+        taskTitleLabel.font = titleFont
+        taskAgeLabel.font = .monospacedSystemFont(
+            ofSize: AppTheme.typography.label,
+            weight: .regular
+        )
+        let availableTitleWidth = max(
+            80,
+            300 - taskAgeLabel.intrinsicContentSize.width - 10
+        )
+        let titleBounds = (title as NSString).boundingRect(
+            with: NSSize(
+                width: availableTitleWidth,
+                height: .greatestFiniteMagnitude
+            ),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: titleFont]
+        )
+        let titleHeight = max(26, ceil(titleBounds.height))
+        titleLabel = taskTitleLabel
+        ageLabel = taskAgeLabel
+        cardHeight = 194 + titleHeight - 26
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         titleLabel.isSelectable = true
+        titleLabel.maximumNumberOfLines = 0
+        titleLabel.lineBreakMode = .byWordWrapping
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        ageLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         ageLabel.isSelectable = true
         wantsLayer = true
         layer?.cornerRadius = 0
@@ -2833,13 +2899,13 @@ private final class SidebarTaskAggregateInfoCard: NSView {
         addSubview(content)
         NSLayoutConstraint.activate([
             widthAnchor.constraint(equalToConstant: contentWidth + horizontalInset * 2),
-            heightAnchor.constraint(equalToConstant: 194),
+            heightAnchor.constraint(equalToConstant: cardHeight),
             content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: horizontalInset),
             content.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -horizontalInset),
             content.topAnchor.constraint(equalTo: topAnchor, constant: verticalInset),
             content.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -verticalInset),
             header.widthAnchor.constraint(equalTo: content.widthAnchor),
-            header.heightAnchor.constraint(equalToConstant: 26),
+            header.heightAnchor.constraint(equalToConstant: titleHeight),
             metrics.widthAnchor.constraint(equalTo: content.widthAnchor),
         ])
         update(contexts: contexts)
@@ -2849,7 +2915,7 @@ private final class SidebarTaskAggregateInfoCard: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: contentWidth + horizontalInset * 2, height: 194)
+        NSSize(width: contentWidth + horizontalInset * 2, height: cardHeight)
     }
 
     func update(contexts: [SidebarRepositoryContext]) {

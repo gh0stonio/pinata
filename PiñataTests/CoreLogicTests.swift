@@ -116,6 +116,55 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertFalse(detector.update(title: "π > lifttof-plug-crud", at: 2.3))
     }
 
+    func testSidebarHoverPopoverStaysInsideAppContent() {
+        let containerRect = NSRect(x: 100, y: 100, width: 1_100, height: 600)
+        let frame = SidebarHoverPopoverPlacement.frame(
+            contentSize: NSSize(width: 825, height: 500),
+            sourceRect: NSRect(x: 350, y: 500, width: 264, height: 34),
+            containerRect: containerRect
+        )
+
+        XCTAssertEqual(frame.maxX, containerRect.maxX - 8)
+        XCTAssertEqual(frame.minY, containerRect.minY + 8)
+        XCTAssertTrue(containerRect.insetBy(dx: 8, dy: 8).contains(frame))
+    }
+
+    @MainActor
+    func testApplicationEditMenuRoutesPasteThroughResponderChain() throws {
+        let previousMenu = NSApp.mainMenu
+        defer { NSApp.mainMenu = previousMenu }
+
+        PinataApp().installMenu()
+        let editMenu = try XCTUnwrap(
+            NSApp.mainMenu?.items.first { $0.submenu?.title == "Edit" }?.submenu
+        )
+        let pasteItem = try XCTUnwrap(editMenu.items.first { $0.title == "Paste" })
+
+        XCTAssertEqual(pasteItem.action, #selector(NSText.paste(_:)))
+        XCTAssertNil(pasteItem.target)
+        XCTAssertEqual(pasteItem.keyEquivalent, "v")
+        XCTAssertTrue(pasteItem.keyEquivalentModifierMask.contains(.command))
+    }
+
+    @MainActor
+    func testTaskHoverCardShowsFullLongTitle() {
+        let title = String(
+            repeating: "Investigate long task title behavior ",
+            count: 5
+        )
+        let card = SidebarTaskAggregateInfoCard(
+            title: title,
+            createdAt: Date(),
+            contexts: []
+        )
+        card.frame.size = card.intrinsicContentSize
+        card.layoutSubtreeIfNeeded()
+
+        let labels = descendants(of: card).compactMap { $0 as? NSTextField }
+        XCTAssertTrue(labels.contains { $0.stringValue == title })
+        XCTAssertGreaterThan(card.intrinsicContentSize.height, 194)
+    }
+
     @MainActor
     func testPullRequestViewRoutesEachStackedRowToItsOwnURL() {
         let summaries = [
