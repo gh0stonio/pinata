@@ -548,7 +548,7 @@ private final class SidebarNewTaskButton: AppButton {
 }
 
 @MainActor
-private struct SidebarRepositoryContext {
+struct SidebarRepositoryContext {
     let repositoryID: UUID
     let name: String
     let remoteURL: String?
@@ -1362,7 +1362,7 @@ private enum PullRequestIconAsset {
 }
 
 @MainActor
-private final class SidebarRepositoryRow: AppHoverView {
+final class SidebarRepositoryRow: AppHoverView {
     var onSelect: (() -> Void)?
     var onHover: (() -> Void)?
     var onShowMenu: ((NSRect) -> Void)?
@@ -1394,6 +1394,10 @@ private final class SidebarRepositoryRow: AppHoverView {
     private let connectionStatusDot = SSHConnectionStatusIndicator(status: .disabled)
     private var infoPopover: SidebarHoverPopover?
     private var infoCard: SidebarRepositoryInfoCard?
+
+#if DEBUG
+    var hasCachedInfoPopoverForTesting: Bool { infoPopover != nil }
+#endif
 
     init(
         repository: TaskRepositoryAttachment,
@@ -1602,10 +1606,17 @@ private final class SidebarRepositoryRow: AppHoverView {
         else { return }
         repositoryContext.pullRequestStatus = status
         self.repositoryContext = repositoryContext
-        infoCard?.hideChecks()
-        infoCard?.update(context: repositoryContext)
         if infoPopover?.isVisible == true {
+            infoCard?.hideChecks()
+            infoCard?.update(context: repositoryContext)
             infoPopover?.refreshContentSize()
+        } else {
+            infoPopover?.close()
+            infoPopover = nil
+            infoCard = nil
+            if isHovering {
+                showInfoPopover()
+            }
         }
         applyTheme()
     }
@@ -2112,21 +2123,35 @@ private final class SidebarRepositoryInfoCard: NSView {
 }
 
 @MainActor
-private final class SidebarPullRequestRowsView: NSStackView {
+private final class SidebarPullRequestRowsView: NSView {
     static let spacing: CGFloat = 4
-
+    private static let contentWidth: CGFloat = 368
     override var isFlipped: Bool { true }
 
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        orientation = .vertical
-        alignment = .leading
-        distribution = .fill
-        spacing = Self.spacing
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        layoutRows()
     }
 
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+    override func didAddSubview(_ subview: NSView) {
+        super.didAddSubview(subview)
+        layoutRows()
+    }
+
+    private func layoutRows() {
+        var y: CGFloat = 0
+        for view in subviews {
+            let height: CGFloat = view is SidebarPullRequestInfoRow ? 44 : 22
+            view.frame = NSRect(
+                x: 0,
+                y: y,
+                width: max(bounds.width, Self.contentWidth),
+                height: height
+            )
+            view.layoutSubtreeIfNeeded()
+            y += height + Self.spacing
+        }
+    }
 }
 
 @MainActor
@@ -2269,10 +2294,7 @@ final class SidebarPullRequestInfoView: NSView {
         } else {
             refreshIndicator.stopAnimation(nil)
         }
-        rowViews.forEach {
-            rowsView.removeArrangedSubview($0)
-            $0.removeFromSuperview()
-        }
+        rowViews.forEach { $0.removeFromSuperview() }
         rowViews.removeAll(keepingCapacity: true)
         switch status.availability {
         case .idle:
@@ -2335,14 +2357,13 @@ final class SidebarPullRequestInfoView: NSView {
 
     private func addMessage(_ message: String, centered: Bool = false) {
         let label = NSTextField(labelWithString: message)
-        label.translatesAutoresizingMaskIntoConstraints = false
+        label.translatesAutoresizingMaskIntoConstraints = true
         label.usesSingleLineMode = true
         label.lineBreakMode = .byTruncatingTail
         label.alignment = centered ? .center : .natural
         label.toolTip = message
         rowViews.append(label)
-        rowsView.addArrangedSubview(label)
-        label.widthAnchor.constraint(equalTo: rowsView.widthAnchor).isActive = true
+        rowsView.addSubview(label)
     }
 
     private func addRows(_ pullRequests: [PullRequestSummary]) {
@@ -2354,9 +2375,9 @@ final class SidebarPullRequestInfoView: NSView {
             row.onChecksHover = { [weak self] source, checks, hovering in
                 self?.onChecksHover?(source, checks, hovering)
             }
+            row.translatesAutoresizingMaskIntoConstraints = true
             rowViews.append(row)
-            rowsView.addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: rowsView.widthAnchor).isActive = true
+            rowsView.addSubview(row)
         }
     }
 }
@@ -2693,7 +2714,7 @@ final class SidebarPullRequestInfoRow: AppHoverView {
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: 44),
             statusIcon.leadingAnchor.constraint(equalTo: leadingAnchor),
-            statusIcon.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            statusIcon.topAnchor.constraint(equalTo: titleLabel.topAnchor),
             statusIcon.widthAnchor.constraint(equalToConstant: 16),
             statusIcon.heightAnchor.constraint(equalToConstant: 16),
             detailsStack.leadingAnchor.constraint(equalTo: statusIcon.trailingAnchor, constant: 8),
@@ -2701,7 +2722,7 @@ final class SidebarPullRequestInfoRow: AppHoverView {
             detailsStack.topAnchor.constraint(equalTo: topAnchor, constant: 3),
             detailsStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
             checksDonut.trailingAnchor.constraint(equalTo: trailingAnchor),
-            checksDonut.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            checksDonut.topAnchor.constraint(equalTo: titleLabel.topAnchor),
             checksDonut.widthAnchor.constraint(equalToConstant: 16),
             checksDonut.heightAnchor.constraint(equalToConstant: 16),
         ])
