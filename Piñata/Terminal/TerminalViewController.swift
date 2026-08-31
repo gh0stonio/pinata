@@ -177,6 +177,7 @@ struct AgentTitleActivityDetector {
 final class TerminalViewController: NSViewController {
     private let runtime: GhosttyRuntime
     private let connectionStatusMonitor: SSHConnectionStatusMonitor
+    let sshControlMaster: SSHWorkspaceControlMaster?
     private var root: PaneNode
     private var activePaneID: PaneID
     private var paneControllers: [PaneID: TerminalPaneViewController] = [:]
@@ -192,11 +193,13 @@ final class TerminalViewController: NSViewController {
         runtime: GhosttyRuntime,
         connectionStatusMonitor: SSHConnectionStatusMonitor,
         workingDirectory: String = FileManager.default.homeDirectoryForCurrentUser.path,
-        target: TerminalTarget = .local
+        target: TerminalTarget = .local,
+        sshControlMaster: SSHWorkspaceControlMaster?
     ) {
         let paneID = UUID()
         self.runtime = runtime
         self.connectionStatusMonitor = connectionStatusMonitor
+        self.sshControlMaster = sshControlMaster
         root = .pane(paneID)
         activePaneID = paneID
         super.init(nibName: nil, bundle: nil)
@@ -210,10 +213,12 @@ final class TerminalViewController: NSViewController {
     init(
         runtime: GhosttyRuntime,
         snapshot: TerminalSessionSnapshot,
-        connectionStatusMonitor: SSHConnectionStatusMonitor
+        connectionStatusMonitor: SSHConnectionStatusMonitor,
+        sshControlMaster: SSHWorkspaceControlMaster?
     ) {
         self.runtime = runtime
         self.connectionStatusMonitor = connectionStatusMonitor
+        self.sshControlMaster = sshControlMaster
         root = snapshot.root
         activePaneID = snapshot.activePaneID
         super.init(nibName: nil, bundle: nil)
@@ -360,7 +365,8 @@ final class TerminalViewController: NSViewController {
             runtime: runtime,
             connectionStatusMonitor: connectionStatusMonitor,
             workingDirectory: workingDirectory,
-            target: target
+            target: target,
+            sshControlMaster: sshControlMaster
         )
         controller.didFocus = { [weak self] paneID in
             self?.activate(paneID)
@@ -475,7 +481,8 @@ private final class TerminalPaneViewController: NSViewController {
         runtime: GhosttyRuntime,
         connectionStatusMonitor: SSHConnectionStatusMonitor,
         workingDirectory: String,
-        target: TerminalTarget
+        target: TerminalTarget,
+        sshControlMaster: SSHWorkspaceControlMaster?
     ) {
         self.paneID = paneID
         terminalView = GhosttySurfaceView(
@@ -483,7 +490,8 @@ private final class TerminalPaneViewController: NSViewController {
             workingDirectory: workingDirectory,
             target: target,
             sessionID: paneID,
-            connectionStatusMonitor: connectionStatusMonitor
+            connectionStatusMonitor: connectionStatusMonitor,
+            sshControlMaster: sshControlMaster
         )
         let defaultTitle = PaneHeaderView.displayTitle(terminalView.defaultTitle)
         let headerTitle = if case .ssh = target { "Connecting…" } else { defaultTitle }

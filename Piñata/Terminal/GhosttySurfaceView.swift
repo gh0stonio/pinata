@@ -9,7 +9,8 @@ private final class RemoteZmxInstallCoordinator {
     private var installedConnectionIDs: Set<UUID> = []
     private var requests: [UUID: Task<Bool, Never>] = [:]
 
-    func ensureInstalled(on connection: SSHConnection) async -> Bool {
+    func ensureInstalled(using controlMaster: SSHWorkspaceControlMaster) async -> Bool {
+        let connection = controlMaster.connection
         // ponytail: cache per app run; recheck after relaunch.
         if installedConnectionIDs.contains(connection.id) { return true }
         if let request = requests[connection.id] { return await request.value }
@@ -18,7 +19,10 @@ private final class RemoteZmxInstallCoordinator {
             guard self != nil else { return false }
             let installer = RemoteZmxInstaller()
             let installed = await Task.detached {
-                installer.isInstalled(on: connection)
+                installer.isInstalled(
+                    on: connection,
+                    controlPath: controlMaster.controlPath
+                )
             }.value
             guard !installed else { return true }
 
@@ -31,7 +35,11 @@ private final class RemoteZmxInstallCoordinator {
 
             do {
                 try await Task.detached {
-                    try installer.install(on: connection)
+                    try controlMaster.ensureConnected()
+                    try installer.install(
+                        on: connection,
+                        controlPath: controlMaster.controlPath
+                    )
                 }.value
                 return true
             } catch {
@@ -53,6 +61,7 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
     private let terminalSession: ZmxTerminalClient
     private let ioBridge: GhosttyIOBridge
     private let connectionStatusMonitor: SSHConnectionStatusMonitor?
+    private let sshControlMaster: SSHWorkspaceControlMaster?
     private var markedTextStorage = NSMutableAttributedString()
     private var suppressFocusMouseUp = false
     private var trackingAreaToken: NSTrackingArea?
@@ -80,16 +89,19 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
         workingDirectory: String = FileManager.default.homeDirectoryForCurrentUser.path,
         target: TerminalTarget = .local,
         sessionID: UUID,
-        connectionStatusMonitor: SSHConnectionStatusMonitor? = nil
+        connectionStatusMonitor: SSHConnectionStatusMonitor? = nil,
+        sshControlMaster: SSHWorkspaceControlMaster?
     ) {
         self.runtime = runtime
         self.workingDirectory = workingDirectory
         self.target = target
         self.connectionStatusMonitor = connectionStatusMonitor
+        self.sshControlMaster = sshControlMaster
         terminalSession = ZmxTerminalClient(
             id: sessionID,
             workingDirectory: workingDirectory,
-            target: target
+            target: target,
+            sshControlMaster: sshControlMaster
         )
         ioBridge = GhosttyIOBridge()
         super.init(frame: .zero)
@@ -230,26 +242,32 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
             terminalSession.start()
             return
         }
+        guard let sshControlMaster else {
+            preconditionFailure("Remote terminal requires an SSH control master")
+        }
         remoteStartTask?.cancel()
         let connectionStatusMonitor = self.connectionStatusMonitor
         let terminalSession = self.terminalSession
-        remoteStartTask = Task { [weak self, connectionStatusMonitor, terminalSession] in
+        remoteStartTask = Task { [weak self, connectionStatusMonitor, terminalSession, sshControlMaster] in
             var attempt = 0
             var reportedFailure = false
             while !Task.isCancelled {
                 connectionStatusMonitor?.beginExternalCheck(for: connection)
                 do {
                     try await Task.detached {
-                        try SSHCommand.test(connection: connection)
+                        try sshControlMaster.ensureConnected()
                     }.value
+                    guard !Task.isCancelled else { return }
+                    guard await RemoteZmxInstallCoordinator.shared.ensureInstalled(
+                        using: sshControlMaster
+                    ) else {
+                        return
+                    }
                     guard !Task.isCancelled else { return }
                     connectionStatusMonitor?.completeExternalCheck(
                         for: connection,
                         status: .connected
                     )
-                    guard await RemoteZmxInstallCoordinator.shared.ensureInstalled(on: connection) else {
-                        return
-                    }
                     terminalSession.start()
                     return
                 } catch is CancellationError {

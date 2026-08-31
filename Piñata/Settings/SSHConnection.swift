@@ -548,10 +548,12 @@ enum TerminalTarget: Codable, Equatable, Sendable {
 
 enum SSHCommand {
     static let connectionTimeout = 10
+    static let controlPersistSeconds = 1
 
     static func makeProcess(
         connection: SSHConnection,
         command: [String],
+        controlPath: String? = nil,
         reuseConnection: Bool = false
     ) -> Process {
         let process = Process()
@@ -559,6 +561,7 @@ enum SSHCommand {
         process.arguments = arguments(
             connection: connection,
             command: command.map(shellQuote).joined(separator: " "),
+            controlPath: controlPath,
             reuseConnection: reuseConnection
         )
         process.standardInput = FileHandle.nullDevice
@@ -570,23 +573,64 @@ enum SSHCommand {
         command: String,
         allocateTTY: Bool = false,
         includeExecutableName: Bool = false,
-        reuseConnection: Bool = false,
-        clearForwardings: Bool = true
+        controlPath: String? = nil,
+        reuseConnection: Bool = false
     ) -> [String] {
-        (includeExecutableName ? ["ssh"] : []) + [
+        let multiplexingArguments: [String]
+        if let controlPath {
+            multiplexingArguments = [
+                "-S", controlPath,
+                "-o", "ControlMaster=no",
+            ]
+        } else if reuseConnection {
+            multiplexingArguments = [
+                "-o", "ControlMaster=auto",
+                "-o", "ControlPersist=60",
+            ]
+        } else {
+            multiplexingArguments = ["-S", "none", "-o", "ControlMaster=no"]
+        }
+
+        return (includeExecutableName ? ["ssh"] : []) + [
             "-A",
             "-o", "BatchMode=yes",
             "-o", "ConnectTimeout=\(connectionTimeout)",
             "-o", "ConnectionAttempts=1",
-        ] + (clearForwardings ? ["-o", "ClearAllForwardings=yes"] : [])
-            + (reuseConnection
-            ? [
-                "-o", "ControlMaster=auto",
-                "-o", "ControlPersist=60",
-            ]
-            : ["-S", "none", "-o", "ControlMaster=no"])
+            "-o", "ClearAllForwardings=yes",
+        ]
+            + multiplexingArguments
             + (allocateTTY ? ["-tt"] : [])
             + ["--", connection.host, command]
+    }
+
+    static func controlMasterArguments(
+        connection: SSHConnection,
+        controlPath: String
+    ) -> [String] {
+        [
+            "-A",
+            "-o", "BatchMode=yes",
+            "-o", "ConnectTimeout=\(connectionTimeout)",
+            "-o", "ConnectionAttempts=1",
+            "-o", "ClearAllForwardings=no",
+            "-o", "ExitOnForwardFailure=yes",
+            "-S", controlPath,
+            "-o", "ControlMaster=yes",
+            "-o", "ControlPersist=\(controlPersistSeconds)",
+            "--", connection.host, "exit",
+        ]
+    }
+
+    static func controlCommandArguments(
+        connection: SSHConnection,
+        controlPath: String,
+        command: String
+    ) -> [String] {
+        [
+            "-S", controlPath,
+            "-O", command,
+            "--", connection.host,
+        ]
     }
 
     static func test(connection: SSHConnection, reuseConnection: Bool = false) throws {
@@ -633,7 +677,115 @@ enum SSHCommand {
         }
         return "'\(value.replacingOccurrences(of: "'", with: "'\"'\"'"))'"
     }
+}
 
+final class SSHWorkspaceControlMaster: @unchecked Sendable {
+    let connection: SSHConnection
+    let controlPath: String
+
+    private let lock = NSLock()
+
+    init(connection: SSHConnection, id: UUID = UUID()) {
+        self.connection = connection
+        controlPath = "/tmp/pinata-\(id.uuidString.lowercased()).socket"
+    }
+
+    deinit {
+        stop()
+    }
+
+    func ensureConnected() throws {
+        lock.lock()
+        defer { lock.unlock() }
+
+        if isRunning() { return }
+        try? FileManager.default.removeItem(atPath: controlPath)
+
+        let process = Process()
+        let error = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+        process.arguments = SSHCommand.controlMasterArguments(
+            connection: connection,
+            controlPath: controlPath
+        )
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = error
+        do {
+            try process.run()
+        } catch {
+            throw SSHConnectionError.failed(
+                "Could not connect to \(connection.name): \(error.localizedDescription)"
+            )
+        }
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            let output = String(
+                decoding: error.fileHandleForReading.readDataToEndOfFile(),
+                as: UTF8.self
+            )
+            throw SSHConnectionError.failed(
+                SSHCommand.message(for: output, connection: connection)
+            )
+        }
+        guard isRunning() else {
+            throw SSHConnectionError.failed("Could not connect to \(connection.name).")
+        }
+    }
+
+    private func isRunning() -> Bool {
+        let process = controlProcess(command: "check")
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            return false
+        }
+    }
+
+    private func stop() {
+        lock.lock()
+        defer { lock.unlock() }
+
+        let process = controlProcess(command: "exit")
+        if (try? process.run()) != nil {
+            process.waitUntilExit()
+        }
+        try? FileManager.default.removeItem(atPath: controlPath)
+    }
+
+    private func controlProcess(command: String) -> Process {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+        process.arguments = SSHCommand.controlCommandArguments(
+            connection: connection,
+            controlPath: controlPath,
+            command: command
+        )
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        return process
+    }
+}
+
+@MainActor
+final class SSHControlMasterPool {
+    private var controlMasters: [UUID: SSHWorkspaceControlMaster] = [:]
+
+    func controlMaster(for target: TerminalTarget) -> SSHWorkspaceControlMaster? {
+        guard case .ssh(let connection) = target else { return nil }
+        if let controlMaster = controlMasters[connection.id] {
+            return controlMaster
+        }
+        let controlMaster = SSHWorkspaceControlMaster(
+            connection: connection,
+            id: connection.id
+        )
+        controlMasters[connection.id] = controlMaster
+        return controlMaster
+    }
 }
 
 enum SSHConnectionError: LocalizedError {
@@ -657,15 +809,20 @@ enum RemoteZmxInstallerError: LocalizedError {
 }
 
 struct RemoteZmxInstaller: Sendable {
-    func isInstalled(on connection: SSHConnection) -> Bool {
+    func isInstalled(on connection: SSHConnection, controlPath: String? = nil) -> Bool {
         (try? run(
             connection: connection,
+            controlPath: controlPath,
             script: "command -v zmx >/dev/null 2>&1 || [ -x \"$HOME/.local/bin/zmx\" ]"
         )) ?? false
     }
 
-    func install(on connection: SSHConnection) throws {
-        _ = try run(connection: connection, script: Self.installScript())
+    func install(on connection: SSHConnection, controlPath: String? = nil) throws {
+        _ = try run(
+            connection: connection,
+            controlPath: controlPath,
+            script: Self.installScript()
+        )
     }
 
     static func installScript() -> String {
@@ -692,8 +849,16 @@ struct RemoteZmxInstaller: Sendable {
         """
     }
 
-    private func run(connection: SSHConnection, script: String) throws -> Bool {
-        let process = SSHCommand.makeProcess(connection: connection, command: ["sh", "-lc", script])
+    private func run(
+        connection: SSHConnection,
+        controlPath: String?,
+        script: String
+    ) throws -> Bool {
+        let process = SSHCommand.makeProcess(
+            connection: connection,
+            command: ["sh", "-lc", script],
+            controlPath: controlPath
+        )
         let error = Pipe()
         process.standardOutput = FileHandle.nullDevice
         process.standardError = error

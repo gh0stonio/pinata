@@ -27,7 +27,7 @@ Removing an attached remote repository removes its verified Piñata worktree and
 
 ## Durable terminals
 
-An SSH terminal attaches directly to `zmx` on the remote host: `ssh -tt <alias> zmx attach <pane-id>`. Closing Piñata disconnects the SSH client, while zmx retains the remote shell and terminal state. Reopening Piñata attaches to the same session. A dropped SSH connection is retried automatically against that same session.
+Each registered SSH connection owns one OpenSSH ControlMaster and one control socket. The owner establishes the network connection and configured port forwards. Every terminal using that remote machine attaches directly to remote `zmx` through a separate multiplexed channel with `ClearAllForwardings=yes`. Closing one terminal closes only its channel, and the owner exits one second after the final channel closes. Closing Piñata disconnects its SSH clients, while zmx retains the remote shells and terminal state. Reopening Piñata attaches to the same sessions. A dropped SSH connection recreates the owner and retries each attachment automatically.
 
 If the Mac restarts, remote zmx sessions remain available. If the remote host restarts, no terminal process can be recovered exactly. Piñata restores the pane and starts a fresh remote session.
 

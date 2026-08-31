@@ -40,6 +40,7 @@ final class WorkspaceViewController: NSViewController {
         let title: String
         let workingDirectory: String
         let target: TerminalTarget
+        let sshControlMaster: SSHWorkspaceControlMaster?
         var tabs: [TerminalTab]
         var fileTabs: [FileTab] = []
         var activeTabID: UUID?
@@ -51,11 +52,16 @@ final class WorkspaceViewController: NSViewController {
             title: String,
             workingDirectory: String,
             target: TerminalTarget = .local,
+            sshControlMaster: SSHWorkspaceControlMaster? = nil,
             startsWithTab: Bool = true
         ) {
+            if case .ssh(let connection) = target {
+                precondition(sshControlMaster?.connection.id == connection.id)
+            }
             self.title = title
             self.workingDirectory = workingDirectory
             self.target = target
+            self.sshControlMaster = sshControlMaster
             if startsWithTab {
                 let tabID = UUID()
                 tabs = [
@@ -66,7 +72,8 @@ final class WorkspaceViewController: NSViewController {
                             runtime: runtime,
                             connectionStatusMonitor: connectionStatusMonitor,
                             workingDirectory: workingDirectory,
-                            target: target
+                            target: target,
+                            sshControlMaster: sshControlMaster
                         )
                     )
                 ]
@@ -80,11 +87,17 @@ final class WorkspaceViewController: NSViewController {
         init(
             runtime: GhosttyRuntime,
             snapshot: StoredTerminalWorkspace,
-            connectionStatusMonitor: SSHConnectionStatusMonitor
+            connectionStatusMonitor: SSHConnectionStatusMonitor,
+            sshControlMaster: SSHWorkspaceControlMaster?
         ) {
+            let target = snapshot.tabs.first?.terminal.panes.first?.target ?? .local
+            if case .ssh(let connection) = target {
+                precondition(sshControlMaster?.connection.id == connection.id)
+            }
             title = snapshot.title
             workingDirectory = snapshot.workingDirectory
-            target = snapshot.tabs.first?.terminal.panes.first?.target ?? .local
+            self.target = target
+            self.sshControlMaster = sshControlMaster
             tabs = snapshot.tabs.compactMap { tab in
                 guard tab.terminal.isValid else { return nil }
                 return TerminalTab(
@@ -93,7 +106,8 @@ final class WorkspaceViewController: NSViewController {
                     controller: TerminalViewController(
                         runtime: runtime,
                         snapshot: tab.terminal,
-                        connectionStatusMonitor: connectionStatusMonitor
+                        connectionStatusMonitor: connectionStatusMonitor,
+                        sshControlMaster: sshControlMaster
                     )
                 )
             }
@@ -119,6 +133,7 @@ final class WorkspaceViewController: NSViewController {
                 nextTabNumber: nextTabNumber
             )
         }
+
     }
 
     private static let sidebarDefaultsKey = "pinata.sidebar.presentation.v1"
@@ -137,6 +152,7 @@ final class WorkspaceViewController: NSViewController {
     private let terminalHost = NSView()
     private let workspaceHeader = WorkspaceHeaderView()
     private let sshConnectionStatusMonitor = SSHConnectionStatusMonitor()
+    private let sshControlMasterPool = SSHControlMasterPool()
     private let pullRequestStatusStore = PullRequestStatusStore()
     private lazy var leftPanelController = PanelViewController(
         connectionStatusMonitor: sshConnectionStatusMonitor
@@ -246,10 +262,12 @@ final class WorkspaceViewController: NSViewController {
                 guard !snapshot.tabs.isEmpty,
                       let scope = Self.workspaceScope(from: snapshot.scope, in: loadedTasks)
                 else { continue }
+                let target = snapshot.tabs.first?.terminal.panes.first?.target ?? .local
                 let workspace = TerminalWorkspace(
                     runtime: runtime,
                     snapshot: snapshot,
-                    connectionStatusMonitor: sshConnectionStatusMonitor
+                    connectionStatusMonitor: sshConnectionStatusMonitor,
+                    sshControlMaster: sshControlMasterPool.controlMaster(for: target)
                 )
                 guard !workspace.tabs.isEmpty else { continue }
                 switch scope {
@@ -285,6 +303,8 @@ final class WorkspaceViewController: NSViewController {
         if let storedTab = restoredSession?.recentlyClosedTerminalTab,
            storedTab.tab.terminal.isValid,
            Self.workspaceScope(from: storedTab.scope, in: loadedTasks) != nil {
+            let target = storedTab.tab.terminal.panes.first?.target ?? .local
+            let sshControlMaster = sshControlMasterPool.controlMaster(for: target)
             recentlyClosedTerminalTab = (
                 scope: storedTab.scope,
                 index: storedTab.index,
@@ -294,7 +314,8 @@ final class WorkspaceViewController: NSViewController {
                     controller: TerminalViewController(
                         runtime: runtime,
                         snapshot: storedTab.tab.terminal,
-                        connectionStatusMonitor: sshConnectionStatusMonitor
+                        connectionStatusMonitor: sshConnectionStatusMonitor,
+                        sshControlMaster: sshControlMaster
                     )
                 )
             )
@@ -419,7 +440,8 @@ final class WorkspaceViewController: NSViewController {
                 runtime: runtime,
                 connectionStatusMonitor: sshConnectionStatusMonitor,
                 workingDirectory: workspace.workingDirectory,
-                target: workspace.target
+                target: workspace.target,
+                sshControlMaster: workspace.sshControlMaster
             )
         )
         if !isFirstTab {
@@ -850,6 +872,7 @@ final class WorkspaceViewController: NSViewController {
                 title: "Terminal",
                 workingDirectory: pane.workingDirectory,
                 target: pane.target,
+                sshControlMaster: recentlyClosedTerminalTab.tab.controller.sshControlMaster,
                 startsWithTab: false
             )
             taskWorkspaces[taskID] = workspace
@@ -866,6 +889,7 @@ final class WorkspaceViewController: NSViewController {
                 title: "~/\(attachment.name)",
                 workingDirectory: pane.workingDirectory,
                 target: pane.target,
+                sshControlMaster: recentlyClosedTerminalTab.tab.controller.sshControlMaster,
                 startsWithTab: false
             )
             repositoryWorkspaces[TaskRepositoryScope(taskID: taskID, repositoryID: repositoryID)] = workspace
@@ -2183,6 +2207,7 @@ final class WorkspaceViewController: NSViewController {
             title: "~/\(name)",
             workingDirectory: workingDirectory,
             target: target,
+            sshControlMaster: sshControlMasterPool.controlMaster(for: target),
             startsWithTab: startsWithTab
         )
     }

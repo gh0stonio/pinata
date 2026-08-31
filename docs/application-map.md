@@ -81,7 +81,7 @@ stateDiagram-v2
     Terminal --> Attachment: close terminal tab
 ```
 
-Closing the app detaches from zmx and preserves the terminal layout. Closing a terminal tab or pane kills its zmx session. A local terminal attaches to bundled zmx. A remote terminal starts `ssh -tt <alias> zmx attach <pane-id>` and offers to install pinned zmx in `~/.local/bin` when absent.
+Closing the app detaches from zmx and preserves the terminal layout. Closing a terminal tab or pane kills its zmx session. A local terminal attaches to bundled zmx. A remote terminal attaches to remote zmx through the registered SSH connection's shared OpenSSH control socket and offers to install pinned zmx in `~/.local/bin` when absent.
 
 The Files tab remains rooted at the selected workspace's initial working directory. Terminal `cd` commands do not move it. Repository attachments display the repository name even when the worktree folder uses a task slug.
 
