@@ -1065,6 +1065,14 @@ struct WorktreeProvisioner {
                 finishProgressSteps()
                 update(2, status: .completed, detail: "")
             } catch {
+                _ = try? runGit(
+                    ["-C", repository.path, "worktree", "remove", "--force", report.path],
+                    onOutput: { _ in }
+                )
+                _ = try? runGit(
+                    ["-C", repository.path, "branch", "-D", report.branch],
+                    onOutput: { _ in }
+                )
                 update(2, status: .failed, detail: error.localizedDescription)
             }
         }
