@@ -612,7 +612,7 @@ enum SSHCommand {
             "-o", "BatchMode=yes",
             "-o", "ConnectTimeout=\(connectionTimeout)",
             "-o", "ConnectionAttempts=1",
-            "-o", "ClearAllForwardings=no",
+            "-o", "ClearAllForwardings=yes",
             "-o", "ExitOnForwardFailure=yes",
             "-S", controlPath,
             "-o", "ControlMaster=yes",
