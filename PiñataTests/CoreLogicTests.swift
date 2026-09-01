@@ -285,6 +285,7 @@ final class CoreLogicTests: XCTestCase {
             context: SidebarRepositoryContext(
                 repositoryID: repositoryID,
                 name: "repository",
+                mode: .worktree,
                 remoteURL: nil,
                 branch: branch,
                 path: nil,
