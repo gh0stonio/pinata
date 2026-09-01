@@ -951,6 +951,7 @@ private final class SidebarTaskRow: AppHoverView {
     private var menuButton: SidebarMenuButton { menuOverlay.button }
     private let titleLabel: NSTextField
     private let errorIcon = NSImageView()
+    private let worktreeIcon = NSImageView()
     private let statusLabel: NSTextField
     private let connectionStatusMonitor: SSHConnectionStatusMonitor
     private let createdAt: Date
@@ -996,6 +997,7 @@ private final class SidebarTaskRow: AppHoverView {
             disclosureButton,
             titleLabel,
             errorIcon,
+            worktreeIcon,
             statusLabel,
             menuOverlay,
         ].forEach {
@@ -1044,6 +1046,9 @@ private final class SidebarTaskRow: AppHoverView {
             systemSymbolName: "exclamationmark.circle.fill",
             accessibilityDescription: "Failed"
         )
+        let showsWorktreeIcon = repositoryHoverContext?.mode == .worktree
+        worktreeIcon.image = WorktreeIconAsset.image()
+        worktreeIcon.isHidden = !showsWorktreeIcon
 
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: AppTheme.sidebarTaskRowHeight),
@@ -1077,7 +1082,11 @@ private final class SidebarTaskRow: AppHoverView {
             menuOverlay.topAnchor.constraint(equalTo: topAnchor),
             menuOverlay.bottomAnchor.constraint(equalTo: bottomAnchor),
             menuOverlay.widthAnchor.constraint(equalToConstant: 88),
-            statusLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            worktreeIcon.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            worktreeIcon.centerYAnchor.constraint(equalTo: centerYAnchor),
+            worktreeIcon.widthAnchor.constraint(equalToConstant: showsWorktreeIcon ? 12 : 0),
+            worktreeIcon.heightAnchor.constraint(equalToConstant: 12),
+            statusLabel.trailingAnchor.constraint(equalTo: worktreeIcon.leadingAnchor, constant: -6),
             statusLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             errorIcon.trailingAnchor.constraint(
                 equalTo: statusLabel.leadingAnchor,
@@ -1115,6 +1124,7 @@ private final class SidebarTaskRow: AppHoverView {
         errorIcon.contentTintColor = error == nil
             ? AppTheme.panelAccentIcon
             : AppTheme.error
+        worktreeIcon.contentTintColor = selected ? AppTheme.panelAccentIcon : AppTheme.tertiaryText
         statusLabel.font = .monospacedSystemFont(
             ofSize: AppTheme.typography.label,
             weight: .regular
@@ -1338,15 +1348,18 @@ final class SidebarActionMenuView: NSView {
         let title: String
         let symbol: String
         var destructive = false
+        var separatorBefore = false
     }
 
     var onSelect: ((Int) -> Void)?
 
     private let rows: [SidebarActionMenuRow]
-    private let separator = NSView()
+    private let separators: [NSView]
 
     init(items: [Item]) {
         precondition(items.count >= 2)
+        var items = items
+        items[items.index(before: items.endIndex)].separatorBefore = true
         rows = items.map {
             SidebarActionMenuRow(
                 title: $0.title,
@@ -1354,6 +1367,7 @@ final class SidebarActionMenuView: NSView {
                 destructive: $0.destructive
             )
         }
+        separators = items.dropFirst().filter(\.separatorBefore).map { _ in NSView() }
         super.init(frame: .zero)
         wantsLayer = true
         layer?.cornerRadius = 12
@@ -1363,41 +1377,44 @@ final class SidebarActionMenuView: NSView {
         layer?.shadowRadius = 8
         layer?.shadowOffset = NSSize(width: 0, height: -2)
 
-        (rows.map { $0 as NSView } + [separator]).forEach {
+        (rows.map { $0 as NSView } + separators).forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             addSubview($0)
         }
         rows.enumerated().forEach { index, row in
             row.onSelect = { [weak self] in self?.onSelect?(index) }
         }
-        separator.wantsLayer = true
+        separators.forEach { $0.wantsLayer = true }
 
-        let regularRows = rows.dropLast()
-        let first = regularRows[regularRows.startIndex]
-        let last = rows[rows.index(before: rows.endIndex)]
+        let first = rows[0]
         var constraints = [
             first.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
             first.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
             first.topAnchor.constraint(equalTo: topAnchor, constant: 6),
             first.heightAnchor.constraint(equalToConstant: AppTheme.sidebarTaskRowHeight),
-            separator.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            separator.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            separator.topAnchor.constraint(equalTo: regularRows.last!.bottomAnchor, constant: 5),
-            separator.heightAnchor.constraint(equalToConstant: 1),
-            last.leadingAnchor.constraint(equalTo: first.leadingAnchor),
-            last.trailingAnchor.constraint(equalTo: first.trailingAnchor),
-            last.topAnchor.constraint(equalTo: separator.bottomAnchor, constant: 5),
-            last.heightAnchor.constraint(equalTo: first.heightAnchor),
-            last.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
         ]
-        for (previous, row) in zip(regularRows, regularRows.dropFirst()) {
-            constraints += [
-                row.leadingAnchor.constraint(equalTo: first.leadingAnchor),
-                row.trailingAnchor.constraint(equalTo: first.trailingAnchor),
-                row.topAnchor.constraint(equalTo: previous.bottomAnchor),
-                row.heightAnchor.constraint(equalTo: first.heightAnchor),
-            ]
+        var previous = first
+        var separatorIndex = 0
+        for (index, row) in rows.enumerated().dropFirst() {
+            row.leadingAnchor.constraint(equalTo: first.leadingAnchor).isActive = true
+            row.trailingAnchor.constraint(equalTo: first.trailingAnchor).isActive = true
+            row.heightAnchor.constraint(equalTo: first.heightAnchor).isActive = true
+            if items[index].separatorBefore {
+                let separator = separators[separatorIndex]
+                separatorIndex += 1
+                constraints += [
+                    separator.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+                    separator.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+                    separator.topAnchor.constraint(equalTo: previous.bottomAnchor, constant: 5),
+                    separator.heightAnchor.constraint(equalToConstant: 1),
+                    row.topAnchor.constraint(equalTo: separator.bottomAnchor, constant: 5),
+                ]
+            } else {
+                constraints.append(row.topAnchor.constraint(equalTo: previous.bottomAnchor))
+            }
+            previous = row
         }
+        constraints.append(previous.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6))
         NSLayoutConstraint.activate(constraints)
         applyTheme()
     }
@@ -1407,12 +1424,21 @@ final class SidebarActionMenuView: NSView {
         fatalError("init(coder:) is unavailable")
     }
 
+    static func height(for items: [Item]) -> CGFloat {
+        let last = items.index(before: items.endIndex)
+        let separatorCount = items.dropFirst().filter(\.separatorBefore).count
+            + (items[last].separatorBefore ? 0 : 1)
+        return 12
+            + CGFloat(items.count) * AppTheme.sidebarTaskRowHeight
+            + CGFloat(separatorCount) * 11
+    }
+
     func applyTheme() {
         layer?.backgroundColor = AppTheme.surface.cgColor
         layer?.borderColor = AppTheme.border.cgColor
         layer?.shadowColor = NSColor.black.cgColor
         rows.forEach { $0.applyTheme() }
-        separator.layer?.backgroundColor = AppTheme.border.cgColor
+        separators.forEach { $0.layer?.backgroundColor = AppTheme.border.cgColor }
     }
 }
 
@@ -1506,6 +1532,28 @@ private enum PullRequestIconAsset {
     }
 }
 
+private enum WorktreeIconAsset {
+    static func image() -> NSImage? {
+        guard let source = NSImage(
+            systemSymbolName: "arrow.triangle.branch",
+            accessibilityDescription: "Worktree"
+        )?.withSymbolConfiguration(.init(pointSize: 10, weight: .medium))
+        else {
+            return nil
+        }
+        let image = NSImage(size: source.size, flipped: false) { rect in
+            guard let context = NSGraphicsContext.current?.cgContext else { return false }
+            context.translateBy(x: rect.midX, y: rect.midY)
+            context.rotate(by: -.pi / 2)
+            context.translateBy(x: -rect.midX, y: -rect.midY)
+            source.draw(in: rect)
+            return true
+        }
+        image.isTemplate = true
+        return image
+    }
+}
+
 @MainActor
 final class SidebarRepositoryRow: AppHoverView {
     var onSelect: (() -> Void)?
@@ -1569,20 +1617,8 @@ final class SidebarRepositoryRow: AppHoverView {
         wantsLayer = true
         layer?.cornerRadius = AppTheme.workspaceControlCornerRadius
         toolTip = error ?? (self.connectionID == nil ? repository.name : nil)
-        let attachmentSymbol: String
-        switch repository.mode {
-        case .local:
-            attachmentSymbol = "folder"
-        case .branch:
-            attachmentSymbol = "arrow.triangle.pull"
-        case .worktree:
-            attachmentSymbol = "arrow.triangle.branch"
-        }
-        sourceIcon.image = NSImage(
-            systemSymbolName: attachmentSymbol,
-            accessibilityDescription: repository.mode.rawValue.capitalized + " repository"
-        )
-        sourceIcon.symbolConfiguration = .init(pointSize: 10, weight: .medium)
+        sourceIcon.image = WorktreeIconAsset.image()
+        sourceIcon.isHidden = repository.mode != .worktree
         trailingInfoStack.orientation = .horizontal
         trailingInfoStack.alignment = .centerY
         trailingInfoStack.spacing = 6
@@ -1592,10 +1628,10 @@ final class SidebarRepositoryRow: AppHoverView {
         [pullRequestCountLabel, pullRequestIcon].forEach {
             pullRequestBadge.addArrangedSubview($0)
         }
-        [pullRequestBadge, errorIcon, statusLabel, connectionStatusDot].forEach {
+        [pullRequestBadge, errorIcon, statusLabel, connectionStatusDot, sourceIcon].forEach {
             trailingInfoStack.addArrangedSubview($0)
         }
-        [button, sourceIcon, titleLabel, trailingInfoStack, menuOverlay].forEach {
+        [button, titleLabel, trailingInfoStack, menuOverlay].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             addSubview($0)
         }
@@ -1631,16 +1667,9 @@ final class SidebarRepositoryRow: AppHoverView {
             button.trailingAnchor.constraint(equalTo: trailingAnchor),
             button.topAnchor.constraint(equalTo: topAnchor),
             button.bottomAnchor.constraint(equalTo: bottomAnchor),
-            sourceIcon.leadingAnchor.constraint(
+            titleLabel.leadingAnchor.constraint(
                 equalTo: leadingAnchor,
                 constant: AppTheme.sidebarTaskTitleDisclosureInset
-            ),
-            sourceIcon.centerYAnchor.constraint(equalTo: centerYAnchor),
-            sourceIcon.widthAnchor.constraint(equalToConstant: 12),
-            sourceIcon.heightAnchor.constraint(equalToConstant: 12),
-            titleLabel.leadingAnchor.constraint(
-                equalTo: sourceIcon.trailingAnchor,
-                constant: 6
             ),
             titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingInfoStack.leadingAnchor, constant: -6),
@@ -1654,6 +1683,10 @@ final class SidebarRepositoryRow: AppHoverView {
             connectionStatusDot.heightAnchor.constraint(equalToConstant: 8),
             pullRequestIcon.widthAnchor.constraint(equalToConstant: 14),
             pullRequestIcon.heightAnchor.constraint(equalToConstant: 14),
+            sourceIcon.widthAnchor.constraint(
+                equalToConstant: repository.mode == .worktree ? 12 : 0
+            ),
+            sourceIcon.heightAnchor.constraint(equalToConstant: 12),
             trailingInfoStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             trailingInfoStack.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])

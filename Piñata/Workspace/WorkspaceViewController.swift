@@ -1545,27 +1545,86 @@ final class WorkspaceViewController: NSViewController {
         taskActionMenuTaskID = taskID
         leftPanelController.setTaskMenuTask(taskID)
 
-        let menu = SidebarActionMenuView(items: [
-            .init(
-                title: task.isPinned ? "Unpin task" : "Pin task",
-                symbol: task.isPinned ? "pin.slash" : "pin"
-            ),
-            .init(title: "Rename", symbol: "square.and.pencil"),
-            .init(title: "Attach repositories", symbol: "book.closed"),
-            .init(title: "Delete task…", symbol: "trash", destructive: true),
-        ])
-        menu.onSelect = { [weak self] index in
-            self?.dismissTaskActionMenu()
-            switch index {
-            case 0: self?.toggleTaskPin(task.id)
-            case 1: self?.presentTaskModal(editingTask: task, focusTitle: true)
-            case 2: self?.presentTaskModal(editingTask: task, focusTitle: false)
-            case 3: self?.confirmTaskDeletion(task.id)
-            default: break
+        var items: [SidebarActionMenuView.Item] = []
+        var actions: [() -> Void] = []
+        func add(_ item: SidebarActionMenuView.Item, action: @escaping () -> Void) {
+            items.append(item)
+            actions.append(action)
+        }
+
+        add(.init(
+            title: task.isPinned ? "Unpin task" : "Pin task",
+            symbol: task.isPinned ? "pin.slash" : "pin"
+        )) {
+            self.toggleTaskPin(task.id)
+        }
+        add(.init(title: "Rename", symbol: "square.and.pencil")) {
+            self.presentTaskModal(editingTask: task, focusTitle: true)
+        }
+        add(.init(title: "Attach repositories", symbol: "book.closed")) {
+            self.presentTaskModal(editingTask: task, focusTitle: false)
+        }
+
+        if groupsSingleRepositoryTasks, task.repositories.count == 1,
+           let attachment = task.repositories.first {
+            let scope = TaskRepositoryScope(taskID: task.id, repositoryID: attachment.repositoryID)
+            let isRemote: Bool
+            if let repository = try? repositoryStore.load().first(where: {
+                $0.id == attachment.repositoryID
+            }), case .ssh = repository.target {
+                isRemote = true
+            } else {
+                isRemote = false
+            }
+            switch attachment.mode {
+            case .local:
+                add(.init(
+                    title: "Create branch",
+                    symbol: "arrow.triangle.pull",
+                    separatorBefore: true
+                )) {
+                    self.createBranch(for: scope)
+                }
+                add(.init(title: "Create worktree", symbol: "arrow.triangle.branch")) {
+                    self.createWorktree(for: scope)
+                }
+            case .branch:
+                add(.init(
+                    title: "Copy branch name",
+                    symbol: "doc.on.doc",
+                    separatorBefore: true
+                )) {
+                    self.copyBranchName(attachment)
+                }
+                add(.init(title: "Create worktree", symbol: "arrow.triangle.branch")) {
+                    self.createWorktree(for: scope)
+                }
+            case .worktree:
+                add(.init(
+                    title: "Copy branch name",
+                    symbol: "doc.on.doc",
+                    separatorBefore: true
+                )) {
+                    self.copyBranchName(attachment)
+                }
+                if !isRemote {
+                    add(.init(title: "Reveal worktree", symbol: "folder")) {
+                        self.revealWorktree(attachment)
+                    }
+                }
             }
         }
+        add(.init(title: "Delete task…", symbol: "trash", destructive: true)) {
+            self.confirmTaskDeletion(task.id)
+        }
+
+        let menu = SidebarActionMenuView(items: items)
+        menu.onSelect = { [weak self] index in
+            self?.dismissTaskActionMenu()
+            actions[index]()
+        }
         let anchor = view.convert(anchorRect, from: nil)
-        let size = NSSize(width: 174, height: 139)
+        let size = NSSize(width: 220, height: SidebarActionMenuView.height(for: items))
         menu.frame = NSRect(
             x: min(anchor.maxX + 6, view.bounds.maxX - size.width - 8),
             y: min(max(8, anchor.maxY - size.height), view.bounds.maxY - size.height - 8),
@@ -1781,7 +1840,7 @@ final class WorkspaceViewController: NSViewController {
             actions[index]()
         }
         let anchor = view.convert(anchorRect, from: nil)
-        let size = NSSize(width: 220, height: CGFloat(items.count * 34 + 8))
+        let size = NSSize(width: 220, height: SidebarActionMenuView.height(for: items))
         menu.frame = NSRect(
             x: min(anchor.maxX + 6, view.bounds.maxX - size.width - 8),
             y: min(max(8, anchor.maxY - size.height), view.bounds.maxY - size.height - 8),
