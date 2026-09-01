@@ -820,7 +820,7 @@ final class CoreLogicTests: XCTestCase {
             controlPath: controlPath
         )
 
-        XCTAssertTrue(ownerArguments.contains("ClearAllForwardings=no"))
+        XCTAssertTrue(ownerArguments.contains("ClearAllForwardings=yes"))
         XCTAssertTrue(ownerArguments.contains("ExitOnForwardFailure=yes"))
         XCTAssertTrue(ownerArguments.contains("ControlMaster=yes"))
         XCTAssertTrue(ownerArguments.contains("ControlPersist=1"))
@@ -1874,6 +1874,10 @@ final class CoreLogicTests: XCTestCase {
 
         XCTAssertEqual(try runGit(["-C", repositoryURL.path, "branch", "--show-current"]), "main")
         XCTAssertEqual(try runGit(["-C", repositoryURL.path, "branch", "--list", branch]), branch)
+        XCTAssertTrue(try runGit([
+            "-C", repositoryURL.path,
+            "for-each-ref", "--format=%(upstream:short)", "refs/heads/\(branch)",
+        ]).isEmpty)
         try RepositoryInspector().removeWorktree(
             at: repository.path,
             branchHint: branch,
@@ -1918,6 +1922,85 @@ final class CoreLogicTests: XCTestCase {
 
         XCTAssertTrue(report.succeeded)
         XCTAssertEqual(try runGit(["-C", report.path, "branch", "--show-current"]), branch)
+    }
+
+    func testProvisioningCleansFailedOwnershipSetup() throws {
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+        let repositoryURL = try makeGitRepository(in: directoryURL)
+        let repository = RegisteredRepository(
+            name: "source",
+            path: repositoryURL.path,
+            branches: ["main"],
+            defaultBranch: "main",
+            currentBranch: "main",
+            remoteURL: nil,
+            organization: nil
+        )
+        let taskID = UUID()
+        let configLock = repositoryURL.appendingPathComponent(".git/config.lock")
+        XCTAssertTrue(FileManager.default.createFile(atPath: configLock.path, contents: Data()))
+
+        let report = WorktreeProvisioner(
+            globalBasePath: directoryURL.appendingPathComponent("worktrees").path
+        ).provision(repository: repository, taskID: taskID, taskTitle: "Ownership Failure")
+
+        XCTAssertFalse(report.succeeded)
+        XCTAssertTrue(report.branchWasCreated, "\(report.steps)")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: report.path))
+        try FileManager.default.removeItem(at: configLock)
+        try RepositoryInspector().removeWorktree(
+            at: report.path,
+            branchHint: report.branch,
+            taskID: taskID,
+            branchWasCreated: report.branchWasCreated,
+            from: repository
+        )
+        XCTAssertEqual(
+            try runGit(["-C", repository.path, "branch", "--list", report.branch]),
+            ""
+        )
+    }
+
+    func testBranchPromotionCleansFailedOwnershipSetup() throws {
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+        let repositoryURL = try makeGitRepository(in: directoryURL)
+        let repository = RegisteredRepository(
+            name: "source",
+            path: repositoryURL.path,
+            branches: ["main"],
+            defaultBranch: "main",
+            currentBranch: "main",
+            remoteURL: nil,
+            organization: nil
+        )
+        let taskID = UUID()
+        let provisioner = WorktreeProvisioner(
+            globalBasePath: directoryURL.appendingPathComponent("worktrees").path
+        )
+        let branch = try provisioner.createBranch(
+            repository: repository,
+            taskID: taskID,
+            taskTitle: "Ownership Failure",
+            baseBranch: "main"
+        )
+        let configLock = repositoryURL.appendingPathComponent(".git/config.lock")
+        XCTAssertTrue(FileManager.default.createFile(atPath: configLock.path, contents: Data()))
+        defer { try? FileManager.default.removeItem(at: configLock) }
+
+        let report = provisioner.createWorktree(
+            repository: repository,
+            taskID: taskID,
+            taskTitle: "Ownership Failure",
+            branch: branch
+        )
+
+        XCTAssertFalse(report.succeeded)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: report.path))
+        XCTAssertEqual(try runGit(["-C", repository.path, "branch", "--list", branch]), branch)
     }
 
     func testWorktreeProvisionerCreatesNamedCheckout() throws {
@@ -2429,6 +2512,7 @@ final class CoreLogicTests: XCTestCase {
             [task, secondTask],
             selection: .repository(TaskRepositoryScope(taskID: task.id, repositoryID: repositoryID)),
             expandedTaskIDs: [task.id],
+            groupsSingleRepositoryTasks: false,
             taskErrors: [:],
             repositoryErrors: [:],
             loadError: nil

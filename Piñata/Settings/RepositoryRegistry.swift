@@ -1016,7 +1016,7 @@ struct WorktreeProvisioner {
             }
             let attempt = runStep(
                 report.steps[1].title,
-                arguments: ["-C", repository.path, "branch", report.branch, report.baseBranch],
+                arguments: ["-C", repository.path, "branch", "--no-track", report.branch, report.baseBranch],
                 onOutput: { _ in }
             )
             createBranch = attempt
@@ -1065,13 +1065,11 @@ struct WorktreeProvisioner {
                 finishProgressSteps()
                 update(2, status: .completed, detail: "")
             } catch {
-                _ = try? runGit(
-                    ["-C", repository.path, "worktree", "remove", "--force", report.path],
-                    onOutput: { _ in }
-                )
-                _ = try? runGit(
-                    ["-C", repository.path, "branch", "-D", report.branch],
-                    onOutput: { _ in }
+                removeCreatedWorktree(
+                    at: report.path,
+                    branch: report.branch,
+                    from: repository,
+                    deleteBranch: true
                 )
                 update(2, status: .failed, detail: error.localizedDescription)
             }
@@ -1093,7 +1091,7 @@ struct WorktreeProvisioner {
         )
         let branch = try nextAvailableBranch(in: repository, startingAt: requestedBranch)
         _ = try GitCommandRunner(connection: connection).run([
-            "-C", repository.path, "branch", branch, baseBranch,
+            "-C", repository.path, "branch", "--no-track", branch, baseBranch,
         ])
         return branch
     }
@@ -1126,9 +1124,11 @@ struct WorktreeProvisioner {
             taskTitle: taskTitle,
             branch: branch
         )
+        var worktreeWasCreated = false
         do {
             try prepareDestinationParent(for: report.path)
             _ = try runGit(["-C", repository.path, "worktree", "add", report.path, branch], onOutput: { _ in })
+            worktreeWasCreated = true
             _ = try runGit(["-C", repository.path, "config", "extensions.worktreeConfig", "true"], onOutput: { _ in })
             _ = try runGit(["-C", report.path, "config", "--worktree", "pinata.task-id", taskID.uuidString], onOutput: { _ in })
             _ = try runGit(["-C", report.path, "config", "--worktree", "pinata.repository-id", repository.id.uuidString], onOutput: { _ in })
@@ -1139,11 +1139,37 @@ struct WorktreeProvisioner {
                 steps: [WorktreeProvisioningStep(title: "Create worktree", status: .completed, detail: "")]
             )
         } catch {
+            if worktreeWasCreated {
+                removeCreatedWorktree(
+                    at: report.path,
+                    branch: branch,
+                    from: repository,
+                    deleteBranch: false
+                )
+            }
             return WorktreeProvisioningReport(
                 path: report.path,
                 branch: branch,
                 baseBranch: branch,
                 steps: [WorktreeProvisioningStep(title: "Create worktree", status: .failed, detail: error.localizedDescription)]
+            )
+        }
+    }
+
+    private func removeCreatedWorktree(
+        at path: String,
+        branch: String,
+        from repository: RegisteredRepository,
+        deleteBranch: Bool
+    ) {
+        _ = try? runGit(
+            ["-C", repository.path, "worktree", "remove", "--force", path],
+            onOutput: { _ in }
+        )
+        if deleteBranch {
+            _ = try? runGit(
+                ["-C", repository.path, "update-ref", "-d", "refs/heads/\(branch)"],
+                onOutput: { _ in }
             )
         }
     }
