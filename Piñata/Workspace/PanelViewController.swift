@@ -617,6 +617,7 @@ private final class SidebarNewTaskButton: AppButton {
 struct SidebarRepositoryContext {
     let repositoryID: UUID
     let name: String
+    let mode: TaskRepositoryAttachmentMode
     let remoteURL: String?
     let branch: String?
     let path: String?
@@ -687,6 +688,7 @@ private final class SidebarTaskGroupView: NSStackView {
             return SidebarRepositoryContext(
                 repositoryID: repository.repositoryID,
                 name: repository.name,
+                mode: repository.mode,
                 remoteURL: repositoryRemoteURLs[repository.repositoryID],
                 branch: repository.branch
                     ?? repository.worktreeProvisioning?.branch
@@ -1567,9 +1569,18 @@ final class SidebarRepositoryRow: AppHoverView {
         wantsLayer = true
         layer?.cornerRadius = AppTheme.workspaceControlCornerRadius
         toolTip = error ?? (self.connectionID == nil ? repository.name : nil)
+        let attachmentSymbol: String
+        switch repository.mode {
+        case .local:
+            attachmentSymbol = "folder"
+        case .branch:
+            attachmentSymbol = "arrow.triangle.pull"
+        case .worktree:
+            attachmentSymbol = "arrow.triangle.branch"
+        }
         sourceIcon.image = NSImage(
-            systemSymbolName: self.connectionID == nil ? "laptopcomputer" : "globe",
-            accessibilityDescription: self.connectionID == nil ? "Local repository" : "Remote repository"
+            systemSymbolName: attachmentSymbol,
+            accessibilityDescription: repository.mode.rawValue.capitalized + " repository"
         )
         sourceIcon.symbolConfiguration = .init(pointSize: 10, weight: .medium)
         trailingInfoStack.orientation = .horizontal
@@ -3045,11 +3056,11 @@ final class SidebarTaskAggregateInfoCard: NSView {
         ])
 
         let metrics = NSStackView(views: [
-            makeMetricRow(symbol: "folder", label: "Repositories", value: repositoryValue),
+            makeMetricRow(symbol: "book.closed", label: "Repositories", value: repositoryValue),
             makeMetricRow(symbol: "globe", label: "SSH connections", value: sshValue),
             makeMetricRow(symbol: "circle.fill", label: "Connected", value: connectedValue),
-            makeMetricRow(symbol: "arrow.triangle.branch", label: "Branches", value: branchValue),
-            makeMetricRow(symbol: "folder", label: "Worktrees", value: worktreeValue),
+            makeMetricRow(symbol: "arrow.triangle.pull", label: "Branches", value: branchValue),
+            makeMetricRow(symbol: "arrow.triangle.branch", label: "Worktrees", value: worktreeValue),
         ])
         metrics.orientation = .vertical
         metrics.alignment = .leading
@@ -3202,7 +3213,7 @@ private final class SidebarTaskInfoRepositoryRow: NSView {
         addSubview(contentStack)
         let header = makeHeader()
         let connection = makeConnectionRow()
-        let branch = makeMetadataRow(symbol: "arrow.triangle.branch", label: branchLabel)
+        let branch = makeMetadataRow(symbol: "arrow.triangle.pull", label: branchLabel)
         let path = makeMetadataRow(symbol: "folder", label: pathLabel)
         [header, connection, branch, path].forEach {
             contentStack.addArrangedSubview($0)
@@ -3274,8 +3285,8 @@ private final class SidebarTaskInfoRepositoryRow: NSView {
         NSLayoutConstraint.activate([
             icon.leadingAnchor.constraint(equalTo: row.leadingAnchor),
             icon.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 18),
-            icon.heightAnchor.constraint(equalToConstant: 18),
+            icon.widthAnchor.constraint(equalToConstant: 16),
+            icon.heightAnchor.constraint(equalToConstant: 16),
             nameLabel.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 10),
             nameLabel.centerYAnchor.constraint(equalTo: row.centerYAnchor),
             nameLabel.trailingAnchor.constraint(equalTo: row.trailingAnchor),
@@ -3301,8 +3312,8 @@ private final class SidebarTaskInfoRepositoryRow: NSView {
         NSLayoutConstraint.activate([
             icon.leadingAnchor.constraint(equalTo: row.leadingAnchor),
             icon.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 18),
-            icon.heightAnchor.constraint(equalToConstant: 18),
+            icon.widthAnchor.constraint(equalToConstant: 16),
+            icon.heightAnchor.constraint(equalToConstant: 16),
             connectionLabel.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 10),
             connectionLabel.centerYAnchor.constraint(equalTo: row.centerYAnchor),
             connectionLabel.trailingAnchor.constraint(lessThanOrEqualTo: statusDot.leadingAnchor, constant: -8),
@@ -3328,8 +3339,8 @@ private final class SidebarTaskInfoRepositoryRow: NSView {
         NSLayoutConstraint.activate([
             icon.leadingAnchor.constraint(equalTo: row.leadingAnchor),
             icon.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 18),
-            icon.heightAnchor.constraint(equalToConstant: 18),
+            icon.widthAnchor.constraint(equalToConstant: 16),
+            icon.heightAnchor.constraint(equalToConstant: 16),
             label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 10),
             label.centerYAnchor.constraint(equalTo: row.centerYAnchor),
             label.trailingAnchor.constraint(equalTo: row.trailingAnchor),

@@ -1835,6 +1835,90 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertNotNil(report.failureMessage)
     }
 
+    func testTaskAttachmentDefaultsExistingDataToWorktree() throws {
+        let id = UUID()
+        let data = try JSONEncoder().encode([
+            "repositoryID": id.uuidString,
+            "name": "source",
+        ])
+
+        let attachment = try JSONDecoder().decode(TaskRepositoryAttachment.self, from: data)
+
+        XCTAssertEqual(attachment.mode, .worktree)
+        XCTAssertNil(attachment.baseBranch)
+    }
+
+    func testBranchAttachmentCreatesBranchWithoutCheckout() throws {
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+        let repositoryURL = try makeGitRepository(in: directoryURL)
+        let repository = RegisteredRepository(
+            name: "source",
+            path: repositoryURL.path,
+            branches: ["main"],
+            defaultBranch: "main",
+            currentBranch: "main",
+            remoteURL: nil,
+            organization: nil
+        )
+
+        let taskID = UUID()
+        let branch = try WorktreeProvisioner(globalBasePath: directoryURL.path).createBranch(
+            repository: repository,
+            taskID: taskID,
+            taskTitle: "Fix API",
+            baseBranch: "main"
+        )
+
+        XCTAssertEqual(try runGit(["-C", repositoryURL.path, "branch", "--show-current"]), "main")
+        XCTAssertEqual(try runGit(["-C", repositoryURL.path, "branch", "--list", branch]), branch)
+        try RepositoryInspector().removeWorktree(
+            at: repository.path,
+            branchHint: branch,
+            taskID: taskID,
+            branchWasCreated: true,
+            from: repository
+        )
+        XCTAssertEqual(try runGit(["-C", repositoryURL.path, "branch", "--list", branch]), "")
+    }
+
+    func testBranchAttachmentCanMigrateToWorktree() throws {
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+        let repositoryURL = try makeGitRepository(in: directoryURL)
+        let repository = RegisteredRepository(
+            name: "source",
+            path: repositoryURL.path,
+            branches: ["main"],
+            defaultBranch: "main",
+            currentBranch: "main",
+            remoteURL: nil,
+            organization: nil
+        )
+        let taskID = UUID()
+        let provisioner = WorktreeProvisioner(
+            globalBasePath: directoryURL.appendingPathComponent("worktrees").path
+        )
+        let branch = try provisioner.createBranch(
+            repository: repository,
+            taskID: taskID,
+            taskTitle: "Fix API",
+            baseBranch: "main"
+        )
+
+        let report = provisioner.createWorktree(
+            repository: repository,
+            taskID: taskID,
+            taskTitle: "Fix API",
+            branch: branch
+        )
+
+        XCTAssertTrue(report.succeeded)
+        XCTAssertEqual(try runGit(["-C", report.path, "branch", "--show-current"]), branch)
+    }
+
     func testWorktreeProvisionerCreatesNamedCheckout() throws {
         let directoryURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -2187,10 +2271,14 @@ final class CoreLogicTests: XCTestCase {
         repositoryButton.performClick(nil)
         XCTAssertTrue(updateButton.isEnabled)
 
-        var attached: [RegisteredRepository] = []
-        editModal.onCreate = { _, repositories in attached = repositories }
+        var attached: [TaskRepositoryAttachmentDraft] = []
+        editModal.onCreate = { _, attachments in attached = attachments }
         updateButton.performClick(nil)
-        XCTAssertEqual(attached, [repository])
+        XCTAssertEqual(attached, [TaskRepositoryAttachmentDraft(
+            repository: repository,
+            mode: .worktree,
+            baseBranch: "main"
+        )])
 
         let createModal = NewTaskModalView(repositories: [])
         let titleField = try XCTUnwrap(

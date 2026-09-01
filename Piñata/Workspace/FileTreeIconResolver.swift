@@ -114,7 +114,7 @@ enum FileTreeIconResolver {
         case .markdown: Appearance(symbol: "text.document", tint: .blue)
         case .text: Appearance(symbol: "doc.text", tint: .neutral)
         case .config: Appearance(symbol: "gearshape", tint: .neutral)
-        case .git: Appearance(symbol: "arrow.triangle.branch", tint: .orange)
+        case .git: Appearance(symbol: "g.circle", tint: .orange)
         case .docker: Appearance(symbol: "shippingbox.fill", tint: .cyan)
         case .make: Appearance(symbol: "hammer", tint: .orange)
         case .archive: Appearance(symbol: "doc.zipper", tint: .yellow)

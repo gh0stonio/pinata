@@ -313,6 +313,16 @@ struct RepositoryInspector: Sendable {
         try gitOutput(["-C", path, "branch", "--show-current"], connection: connection)
     }
 
+    func isWorkingTreeClean(
+        for repository: RegisteredRepository,
+        connection: SSHConnection? = nil
+    ) throws -> Bool {
+        try gitOutput(
+            ["-C", repository.path, "status", "--porcelain"],
+            connection: connection
+        ).isEmpty
+    }
+
     func renamedBranch(
         at path: String,
         from branch: String,
@@ -824,7 +834,8 @@ struct WorktreeProvisioner {
     func preparing(
         repository: RegisteredRepository,
         taskID: UUID,
-        taskTitle: String
+        taskTitle: String,
+        baseBranch: String? = nil
     ) -> WorktreeProvisioningReport {
         let name = WorktreePathResolver.serializedTaskName(taskTitle)
         let destination: String
@@ -842,7 +853,7 @@ struct WorktreeProvisioner {
                 globalBasePath: globalBasePath
             ) + "/\(name)"
         }
-        let remoteBranch = "origin/\(repository.defaultBranch)"
+        let remoteBranch = baseBranch ?? "origin/\(repository.defaultBranch)"
         let branch = TaskBranchName.branch(
             prefix: branchPrefix,
             taskTitle: taskTitle,
@@ -864,12 +875,14 @@ struct WorktreeProvisioner {
         repository: RegisteredRepository,
         taskID: UUID,
         taskTitle: String,
+        baseBranch: String? = nil,
         onUpdate: @escaping @Sendable (WorktreeProvisioningReport) -> Void = { _ in }
     ) -> WorktreeProvisioningReport {
         var report = preparing(
             repository: repository,
             taskID: taskID,
-            taskTitle: taskTitle
+            taskTitle: taskTitle,
+            baseBranch: baseBranch
         )
         onUpdate(report)
         func update(
@@ -1056,6 +1069,75 @@ struct WorktreeProvisioner {
             }
         }
         return report
+    }
+
+    func createBranch(
+        repository: RegisteredRepository,
+        taskID: UUID,
+        taskTitle: String,
+        baseBranch: String,
+        connection: SSHConnection? = nil
+    ) throws -> String {
+        let requestedBranch = TaskBranchName.branch(
+            prefix: branchPrefix,
+            taskTitle: taskTitle,
+            taskID: taskID
+        )
+        let branch = try nextAvailableBranch(in: repository, startingAt: requestedBranch)
+        _ = try GitCommandRunner(connection: connection).run([
+            "-C", repository.path, "branch", branch, baseBranch,
+        ])
+        return branch
+    }
+
+    func preparingExistingWorktree(
+        repository: RegisteredRepository,
+        taskID: UUID,
+        taskTitle: String,
+        branch: String
+    ) -> WorktreeProvisioningReport {
+        let prepared = preparing(repository: repository, taskID: taskID, taskTitle: taskTitle)
+        return WorktreeProvisioningReport(
+            path: prepared.path,
+            branch: branch,
+            baseBranch: branch,
+            steps: [pendingStep("Create worktree")]
+        )
+    }
+
+    func createWorktree(
+        repository: RegisteredRepository,
+        taskID: UUID,
+        taskTitle: String,
+        branch: String,
+        preparedReport: WorktreeProvisioningReport? = nil
+    ) -> WorktreeProvisioningReport {
+        let report = preparedReport ?? preparingExistingWorktree(
+            repository: repository,
+            taskID: taskID,
+            taskTitle: taskTitle,
+            branch: branch
+        )
+        do {
+            try prepareDestinationParent(for: report.path)
+            _ = try runGit(["-C", repository.path, "worktree", "add", report.path, branch], onOutput: { _ in })
+            _ = try runGit(["-C", repository.path, "config", "extensions.worktreeConfig", "true"], onOutput: { _ in })
+            _ = try runGit(["-C", report.path, "config", "--worktree", "pinata.task-id", taskID.uuidString], onOutput: { _ in })
+            _ = try runGit(["-C", report.path, "config", "--worktree", "pinata.repository-id", repository.id.uuidString], onOutput: { _ in })
+            return WorktreeProvisioningReport(
+                path: report.path,
+                branch: branch,
+                baseBranch: branch,
+                steps: [WorktreeProvisioningStep(title: "Create worktree", status: .completed, detail: "")]
+            )
+        } catch {
+            return WorktreeProvisioningReport(
+                path: report.path,
+                branch: branch,
+                baseBranch: branch,
+                steps: [WorktreeProvisioningStep(title: "Create worktree", status: .failed, detail: error.localizedDescription)]
+            )
+        }
     }
 
     private func nextAvailableDestination(in root: URL, named name: String) -> URL {

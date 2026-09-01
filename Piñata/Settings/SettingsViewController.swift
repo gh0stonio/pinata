@@ -495,7 +495,7 @@ private enum GitPullRequestIcon {
     static let image: NSImage = {
         let image = Bundle.main.url(forResource: "git-pull-request", withExtension: "png")
             .flatMap(NSImage.init(contentsOf:))
-            ?? NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: nil)
+            ?? NSImage(systemSymbolName: "arrow.triangle.merge", accessibilityDescription: nil)
             ?? NSImage()
         image.isTemplate = true
         return image

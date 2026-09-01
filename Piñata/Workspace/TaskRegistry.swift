@@ -1,11 +1,25 @@
 import Foundation
 
+enum TaskRepositoryAttachmentMode: String, Codable, Equatable, Sendable {
+    case local
+    case branch
+    case worktree
+}
+
+struct TaskRepositoryAttachmentDraft: Equatable, Sendable {
+    let repository: RegisteredRepository
+    let mode: TaskRepositoryAttachmentMode
+    let baseBranch: String?
+}
+
 struct TaskRepositoryAttachment: Codable, Equatable, Identifiable, Sendable {
     let repositoryID: UUID
     let name: String
     let worktreePath: String?
     let worktreeProvisioning: WorktreeProvisioningReport?
     var branch: String?
+    let mode: TaskRepositoryAttachmentMode
+    let baseBranch: String?
     var pullRequests: [PullRequestSummary]
     var pullRequestNumbers: [Int]
     var pullRequestsFetchedAt: Date?
@@ -16,6 +30,8 @@ struct TaskRepositoryAttachment: Codable, Equatable, Identifiable, Sendable {
         worktreePath: String? = nil,
         worktreeProvisioning: WorktreeProvisioningReport? = nil,
         branch: String? = nil,
+        mode: TaskRepositoryAttachmentMode = .worktree,
+        baseBranch: String? = nil,
         pullRequests: [PullRequestSummary] = [],
         pullRequestNumbers: [Int]? = nil,
         pullRequestsFetchedAt: Date? = nil
@@ -25,6 +41,8 @@ struct TaskRepositoryAttachment: Codable, Equatable, Identifiable, Sendable {
         self.worktreePath = worktreePath
         self.worktreeProvisioning = worktreeProvisioning
         self.branch = branch
+        self.mode = mode
+        self.baseBranch = baseBranch
         self.pullRequests = pullRequests
         self.pullRequestNumbers = pullRequestNumbers ?? pullRequests.map(\.number)
         self.pullRequestsFetchedAt = pullRequestsFetchedAt
@@ -33,7 +51,7 @@ struct TaskRepositoryAttachment: Codable, Equatable, Identifiable, Sendable {
     var id: UUID { repositoryID }
 
     private enum CodingKeys: String, CodingKey {
-        case repositoryID, name, worktreePath, worktreeProvisioning, branch
+        case repositoryID, name, worktreePath, worktreeProvisioning, branch, mode, baseBranch
         case pullRequests, pullRequestNumbers, pullRequestsFetchedAt
     }
 
@@ -47,6 +65,8 @@ struct TaskRepositoryAttachment: Codable, Equatable, Identifiable, Sendable {
             forKey: .worktreeProvisioning
         )
         branch = try values.decodeIfPresent(String.self, forKey: .branch)
+        mode = try values.decodeIfPresent(TaskRepositoryAttachmentMode.self, forKey: .mode) ?? .worktree
+        baseBranch = try values.decodeIfPresent(String.self, forKey: .baseBranch)
         pullRequests = try values.decodeIfPresent([PullRequestSummary].self, forKey: .pullRequests) ?? []
         pullRequestNumbers = try values.decodeIfPresent([Int].self, forKey: .pullRequestNumbers)
             ?? pullRequests.map(\.number)
@@ -118,6 +138,8 @@ func recoverInterruptedWorktreeProvisioning(in tasks: [WorkspaceTask]) -> [Works
                 worktreePath: attachment.worktreePath,
                 worktreeProvisioning: recovered,
                 branch: attachment.branch,
+                mode: attachment.mode,
+                baseBranch: attachment.baseBranch,
                 pullRequests: attachment.pullRequests,
                 pullRequestNumbers: attachment.pullRequestNumbers,
                 pullRequestsFetchedAt: attachment.pullRequestsFetchedAt

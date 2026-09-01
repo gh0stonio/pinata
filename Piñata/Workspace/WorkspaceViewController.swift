@@ -520,18 +520,15 @@ final class WorkspaceViewController: NSViewController {
             repositories: repositories,
             connections: connections,
             repositoryError: repositoryError,
-            editingTask: editingTask
+            editingTask: editingTask,
+            branchableRepositoryIDs: []
         )
         modal.onCancel = { [weak self] in self?.dismissNewTaskModal() }
-        modal.onCreate = { [weak self] title, repositories in
+        modal.onCreate = { [weak self] title, attachments in
             if let editingTask {
-                self?.updateTask(
-                    title: title,
-                    repositories: repositories,
-                    taskID: editingTask.id
-                )
+                self?.updateTask(title: title, attachments: attachments, taskID: editingTask.id)
             } else {
-                self?.createTask(title: title, repositories: repositories)
+                self?.createTask(title: title, attachments: attachments)
             }
         }
         view.addSubview(modal)
@@ -542,6 +539,24 @@ final class WorkspaceViewController: NSViewController {
             modal.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
         newTaskModal = modal
+        Task { @MainActor [weak self, weak modal] in
+            let branchableRepositoryIDs = await Task.detached {
+                Set(repositories.compactMap { repository in
+                    let connection: SSHConnection?
+                    if case .ssh(let id) = repository.target {
+                        connection = connections[id]
+                    } else {
+                        connection = nil
+                    }
+                    return (try? RepositoryInspector().isWorkingTreeClean(
+                        for: repository,
+                        connection: connection
+                    )) == true ? repository.id : nil
+                })
+            }.value
+            guard self?.newTaskModal === modal else { return }
+            modal?.updateBranchableRepositoryIDs(branchableRepositoryIDs)
+        }
         DispatchQueue.main.async {
             if focusTitle {
                 modal.focusTitle()
@@ -1167,7 +1182,7 @@ final class WorkspaceViewController: NSViewController {
                 updateTaskSidebar()
                 return
             }
-            saveAndProvision([repository], for: currentTask)
+            saveAndProvision([TaskRepositoryAttachmentDraft(repository: repository, mode: .worktree, baseBranch: report.baseBranch)], for: currentTask)
         }
     }
 
@@ -1304,11 +1319,16 @@ final class WorkspaceViewController: NSViewController {
         workspaceHeaderHeightConstraint.constant = visible ? AppTheme.mainHeaderHeight : 0
     }
 
-    private func createTask(title: String, repositories: [RegisteredRepository]) {
+    private func createTask(title: String, attachments: [TaskRepositoryAttachmentDraft]) {
         let task = WorkspaceTask(
             title: title,
-            repositories: repositories.map {
-                TaskRepositoryAttachment(repositoryID: $0.id, name: $0.name)
+            repositories: attachments.map {
+                TaskRepositoryAttachment(
+                    repositoryID: $0.repository.id,
+                    name: $0.repository.name,
+                    mode: $0.mode,
+                    baseBranch: $0.baseBranch
+                )
             }
         )
         dismissNewTaskModal()
@@ -1321,26 +1341,31 @@ final class WorkspaceViewController: NSViewController {
         scheduleSessionSave()
         installActiveWorkspace()
         DispatchQueue.main.async { [weak self] in
-            self?.saveAndProvision(repositories, for: task)
+            self?.saveAndProvision(attachments, for: task)
         }
     }
 
     private func updateTask(
         title: String,
-        repositories: [RegisteredRepository],
+        attachments: [TaskRepositoryAttachmentDraft],
         taskID: UUID
     ) {
         guard let taskIndex = tasks.firstIndex(where: { $0.id == taskID }) else { return }
         let task = tasks[taskIndex]
         let existingIDs = Set(task.repositories.map(\.repositoryID))
-        let additions = repositories.filter { !existingIDs.contains($0.id) }
+        let additions = attachments.filter { !existingIDs.contains($0.repository.id) }
         guard task.title != title || !additions.isEmpty else { return }
 
         let updatedTask = WorkspaceTask(
             id: task.id,
             title: title,
             repositories: task.repositories + additions.map {
-                TaskRepositoryAttachment(repositoryID: $0.id, name: $0.name)
+                TaskRepositoryAttachment(
+                    repositoryID: $0.repository.id,
+                    name: $0.repository.name,
+                    mode: $0.mode,
+                    baseBranch: $0.baseBranch
+                )
             },
             createdAt: task.createdAt,
             isPinned: task.isPinned
@@ -1356,7 +1381,7 @@ final class WorkspaceViewController: NSViewController {
     }
 
     private func saveAndProvision(
-        _ repositories: [RegisteredRepository],
+        _ attachments: [TaskRepositoryAttachmentDraft],
         for task: WorkspaceTask
     ) {
         guard taskRegistryLoaded else {
@@ -1372,17 +1397,50 @@ final class WorkspaceViewController: NSViewController {
             updateTaskSidebar()
             return
         }
-        guard !repositories.isEmpty else {
+        guard !attachments.isEmpty else {
             updateTaskSidebar()
             installActiveWorkspace()
             return
         }
 
         let repositoryDefaults = RepositoryDefaultsStore()
-        let worktreeBasePath = repositoryDefaults.loadWorktreeBasePath()
         let branchPrefix = repositoryDefaults.loadTaskBranchPrefix()
-        var provisionableRepositories: [(repository: RegisteredRepository, connection: SSHConnection?)] = []
-        for repository in repositories {
+        for attachment in attachments where attachment.mode == .branch {
+            let scope = TaskRepositoryScope(taskID: task.id, repositoryID: attachment.repository.id)
+            guard let baseBranch = attachment.baseBranch else { continue }
+            let connection = try? sshConnection(for: attachment.repository)
+            let worktreeBasePath = repositoryDefaults.loadWorktreeBasePath()
+            Task { @MainActor [weak self] in
+                let result = await Task.detached { () -> Result<String, Error> in
+                    do {
+                        return .success(try WorktreeProvisioner(
+                            globalBasePath: worktreeBasePath,
+                            branchPrefix: branchPrefix,
+                            connection: connection
+                        ).createBranch(
+                            repository: attachment.repository,
+                            taskID: task.id,
+                            taskTitle: task.title,
+                            baseBranch: baseBranch,
+                            connection: connection
+                        ))
+                    } catch {
+                        return .failure(error)
+                    }
+                }.value
+                switch result {
+                case .success(let branch): self?.storeCreatedBranch(branch, for: scope)
+                case .failure(let error):
+                    self?.repositoryErrors[scope] = error.localizedDescription
+                    self?.updateTaskSidebar()
+                }
+            }
+        }
+
+        let worktreeBasePath = repositoryDefaults.loadWorktreeBasePath()
+        var provisionableRepositories: [(repository: RegisteredRepository, connection: SSHConnection?, baseBranch: String?)] = []
+        for attachment in attachments where attachment.mode == .worktree {
+            let repository = attachment.repository
             let scope = TaskRepositoryScope(taskID: task.id, repositoryID: repository.id)
             let report = WorktreeProvisioner(
                 globalBasePath: worktreeBasePath,
@@ -1390,7 +1448,8 @@ final class WorkspaceViewController: NSViewController {
             ).preparing(
                 repository: repository,
                 taskID: task.id,
-                taskTitle: task.title
+                taskTitle: task.title,
+                baseBranch: attachment.baseBranch
             )
             let connection: SSHConnection?
             do {
@@ -1417,7 +1476,7 @@ final class WorkspaceViewController: NSViewController {
             }
             do {
                 try storeWorktreeProvisioning(report, for: scope)
-                provisionableRepositories.append((repository, connection))
+                provisionableRepositories.append((repository, connection, attachment.baseBranch))
             } catch {
                 repositoryErrors[scope] = error.localizedDescription
             }
@@ -1452,7 +1511,8 @@ final class WorkspaceViewController: NSViewController {
                             _ = provisioner.provision(
                                 repository: repository,
                                 taskID: task.id,
-                                taskTitle: task.title
+                                taskTitle: task.title,
+                                baseBranch: item.baseBranch
                             ) { report in
                                 continuation.yield((scope, report))
                             }
@@ -1557,6 +1617,106 @@ final class WorkspaceViewController: NSViewController {
         leftPanelController.setTaskMenuTask(nil)
     }
 
+    private func createBranch(for scope: TaskRepositoryScope) {
+        guard let task = tasks.first(where: { $0.id == scope.taskID }),
+              let attachment = task.repositories.first(where: { $0.repositoryID == scope.repositoryID }),
+              attachment.mode == .local,
+              let repository = try? repositoryStore.load().first(where: { $0.id == scope.repositoryID })
+        else { return }
+        setAttachmentMode(.branch, for: scope)
+        saveAndProvision([
+            TaskRepositoryAttachmentDraft(
+                repository: repository,
+                mode: .branch,
+                baseBranch: attachment.baseBranch ?? repository.defaultBranch
+            )
+        ], for: task)
+    }
+
+    private func createWorktree(for scope: TaskRepositoryScope) {
+        guard let task = tasks.first(where: { $0.id == scope.taskID }),
+              let attachment = task.repositories.first(where: { $0.repositoryID == scope.repositoryID }),
+              let repository = try? repositoryStore.load().first(where: { $0.id == scope.repositoryID })
+        else { return }
+        if attachment.mode == .local {
+            setAttachmentMode(.worktree, for: scope)
+            saveAndProvision([
+                TaskRepositoryAttachmentDraft(
+                    repository: repository,
+                    mode: .worktree,
+                    baseBranch: attachment.baseBranch ?? repository.defaultBranch
+                )
+            ], for: task)
+            return
+        }
+        guard let branch = attachment.branch else { return }
+        let connection = try? sshConnection(for: repository)
+        let defaults = RepositoryDefaultsStore()
+        let provisioner = WorktreeProvisioner(
+            globalBasePath: defaults.loadWorktreeBasePath(),
+            branchPrefix: defaults.loadTaskBranchPrefix(),
+            connection: connection
+        )
+        let preparing = provisioner.preparingExistingWorktree(
+            repository: repository,
+            taskID: task.id,
+            taskTitle: task.title,
+            branch: branch
+        )
+        setAttachmentMode(.worktree, for: scope)
+        do {
+            try storeWorktreeProvisioning(preparing, for: scope)
+        } catch {
+            repositoryErrors[scope] = error.localizedDescription
+            updateTaskSidebar()
+            return
+        }
+        updateTaskSidebar()
+        Task.detached { [weak self] in
+            let report = provisioner.createWorktree(
+                repository: repository,
+                taskID: task.id,
+                taskTitle: task.title,
+                branch: branch,
+                preparedReport: preparing
+            )
+            await MainActor.run {
+                try? self?.storeWorktreeProvisioning(report, for: scope)
+                self?.updateTaskSidebar()
+            }
+        }
+    }
+
+    private func setAttachmentMode(
+        _ mode: TaskRepositoryAttachmentMode,
+        for scope: TaskRepositoryScope
+    ) {
+        guard let taskIndex = tasks.firstIndex(where: { $0.id == scope.taskID }) else { return }
+        var attachments = tasks[taskIndex].repositories
+        guard let index = attachments.firstIndex(where: { $0.repositoryID == scope.repositoryID }) else { return }
+        let attachment = attachments[index]
+        attachments[index] = TaskRepositoryAttachment(
+            repositoryID: attachment.repositoryID,
+            name: attachment.name,
+            worktreePath: attachment.worktreePath,
+            worktreeProvisioning: attachment.worktreeProvisioning,
+            branch: attachment.branch,
+            mode: mode,
+            baseBranch: attachment.baseBranch,
+            pullRequests: attachment.pullRequests,
+            pullRequestNumbers: attachment.pullRequestNumbers,
+            pullRequestsFetchedAt: attachment.pullRequestsFetchedAt
+        )
+        let task = tasks[taskIndex]
+        tasks[taskIndex] = WorkspaceTask(
+            id: task.id,
+            title: task.title,
+            repositories: attachments,
+            createdAt: task.createdAt,
+            isPinned: task.isPinned
+        )
+    }
+
     private func presentRepositoryActionMenu(
         scope: TaskRepositoryScope,
         anchorRect: NSRect
@@ -1581,26 +1741,47 @@ final class WorkspaceViewController: NSViewController {
             isRemote = false
         }
 
-        var items: [SidebarActionMenuView.Item] = [
-            .init(title: "Copy branch name", symbol: "doc.on.doc"),
-        ]
-        if !isRemote {
-            items.append(.init(title: "Reveal worktree", symbol: "folder"))
+        var items: [SidebarActionMenuView.Item] = []
+        var actions: [() -> Void] = []
+        func add(_ item: SidebarActionMenuView.Item, action: @escaping () -> Void) {
+            items.append(item)
+            actions.append(action)
         }
-        items.append(.init(title: "Detach from task…", symbol: "xmark.circle", destructive: true))
+        switch attachment.mode {
+        case .local:
+            add(.init(title: "Create branch", symbol: "arrow.triangle.pull")) {
+                self.createBranch(for: scope)
+            }
+            add(.init(title: "Create worktree", symbol: "arrow.triangle.branch")) {
+                self.createWorktree(for: scope)
+            }
+        case .branch:
+            add(.init(title: "Copy branch name", symbol: "doc.on.doc")) {
+                self.copyBranchName(attachment)
+            }
+            add(.init(title: "Create worktree", symbol: "arrow.triangle.branch")) {
+                self.createWorktree(for: scope)
+            }
+        case .worktree:
+            add(.init(title: "Copy branch name", symbol: "doc.on.doc")) {
+                self.copyBranchName(attachment)
+            }
+            if !isRemote {
+                add(.init(title: "Reveal worktree", symbol: "folder")) {
+                    self.revealWorktree(attachment)
+                }
+            }
+        }
+        add(.init(title: "Detach from task…", symbol: "xmark.circle", destructive: true)) {
+            self.confirmRepositoryRemoval(scope)
+        }
         let menu = SidebarActionMenuView(items: items)
         menu.onSelect = { [weak self] index in
             self?.dismissRepositoryActionMenu()
-            switch index {
-            case 0: self?.copyBranchName(attachment)
-            case 1 where isRemote: self?.confirmRepositoryRemoval(scope)
-            case 1: self?.revealWorktree(attachment)
-            case 2: self?.confirmRepositoryRemoval(scope)
-            default: break
-            }
+            actions[index]()
         }
         let anchor = view.convert(anchorRect, from: nil)
-        let size = NSSize(width: 220, height: isRemote ? 76 : 110)
+        let size = NSSize(width: 220, height: CGFloat(items.count * 34 + 8))
         menu.frame = NSRect(
             x: min(anchor.maxX + 6, view.bounds.maxX - size.width - 8),
             y: min(max(8, anchor.maxY - size.height), view.bounds.maxY - size.height - 8),
@@ -1761,7 +1942,7 @@ final class WorkspaceViewController: NSViewController {
             installActiveWorkspace()
 
             let attachments = task.repositories.filter {
-                $0.worktreePath != nil || $0.worktreeProvisioning?.path != nil
+                $0.worktreePath != nil || $0.worktreeProvisioning?.path != nil || $0.mode == .branch
             }
             let registeredRepositories: [RegisteredRepository]
             if attachments.isEmpty {
@@ -1782,8 +1963,7 @@ final class WorkspaceViewController: NSViewController {
                 )
                 do {
                     for attachment in attachments {
-                        guard let path = attachment.worktreePath
-                                ?? attachment.worktreeProvisioning?.path else { continue }
+                        let path = attachment.worktreePath ?? attachment.worktreeProvisioning?.path
                         guard let repository = repositoriesByID[attachment.repositoryID] else {
                             throw WorkspaceTaskError.repositoryUnavailable(attachment.name)
                         }
@@ -1797,7 +1977,7 @@ final class WorkspaceViewController: NSViewController {
                             connection = nil
                         }
                         try RepositoryInspector().removeWorktree(
-                            at: path,
+                            at: path ?? repository.path,
                             branchHint: attachment.branch
                                 ?? attachment.worktreeProvisioning?.branch,
                             taskID: task.id,
@@ -1883,7 +2063,7 @@ final class WorkspaceViewController: NSViewController {
             updateTaskSidebar()
             installActiveWorkspace()
 
-            if let path = attachment.worktreePath ?? attachment.worktreeProvisioning?.path {
+            if attachment.mode == .branch || attachment.worktreePath != nil || attachment.worktreeProvisioning?.path != nil {
                 let repository: RegisteredRepository
                 let connection: SSHConnection?
                 do {
@@ -1898,6 +2078,7 @@ final class WorkspaceViewController: NSViewController {
                     failRepositoryRemoval(scope, message: error.localizedDescription)
                     return
                 }
+                let path = attachment.worktreePath ?? attachment.worktreeProvisioning?.path ?? repository.path
                 let errorMessage = await Task.detached { [attachment, path, repository] in
                     do {
                         try RepositoryInspector().removeWorktree(
@@ -2098,6 +2279,36 @@ final class WorkspaceViewController: NSViewController {
         return true
     }
 
+    private func storeCreatedBranch(_ branch: String, for scope: TaskRepositoryScope) {
+        guard let taskIndex = tasks.firstIndex(where: { $0.id == scope.taskID }) else { return }
+        var attachments = tasks[taskIndex].repositories
+        guard let attachmentIndex = attachments.firstIndex(where: { $0.repositoryID == scope.repositoryID }) else { return }
+        let attachment = attachments[attachmentIndex]
+        attachments[attachmentIndex] = TaskRepositoryAttachment(
+            repositoryID: attachment.repositoryID,
+            name: attachment.name,
+            worktreePath: attachment.worktreePath,
+            worktreeProvisioning: attachment.worktreeProvisioning,
+            branch: branch,
+            mode: attachment.mode,
+            baseBranch: attachment.baseBranch,
+            pullRequests: [],
+            pullRequestNumbers: [],
+            pullRequestsFetchedAt: nil
+        )
+        let task = tasks[taskIndex]
+        tasks[taskIndex] = WorkspaceTask(
+            id: task.id,
+            title: task.title,
+            repositories: attachments,
+            createdAt: task.createdAt,
+            isPinned: task.isPinned
+        )
+        try? taskStore.save(tasks)
+        repositoryErrors.removeValue(forKey: scope)
+        updateTaskSidebar()
+    }
+
     private func storeWorktreeProvisioning(
         _ report: WorktreeProvisioningReport,
         for scope: TaskRepositoryScope
@@ -2116,6 +2327,8 @@ final class WorkspaceViewController: NSViewController {
             worktreePath: report.succeeded ? report.path : nil,
             worktreeProvisioning: report.succeeded ? nil : report,
             branch: branch,
+            mode: attachment.mode,
+            baseBranch: attachment.baseBranch,
             pullRequests: branch == attachment.branch ? attachment.pullRequests : [],
             pullRequestNumbers: branch == attachment.branch ? attachment.pullRequestNumbers : [],
             pullRequestsFetchedAt: branch == attachment.branch ? attachment.pullRequestsFetchedAt : nil

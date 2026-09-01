@@ -3,13 +3,16 @@ import AppKit
 @MainActor
 final class NewTaskModalView: NSView, NSTextFieldDelegate {
     var onCancel: (() -> Void)?
-    var onCreate: ((String, [RegisteredRepository]) -> Void)?
+    var onCreate: ((String, [TaskRepositoryAttachmentDraft]) -> Void)?
 
     private let repositories: [RegisteredRepository]
     private let connections: [UUID: SSHConnection]
     private let editingTask: WorkspaceTask?
     private let existingRepositoryIDs: Set<UUID>
     private var selectedRepositoryIDs = Set<UUID>()
+    private var attachmentDrafts = [UUID: TaskRepositoryAttachmentDraft]()
+    private var repositoryRows = [UUID: NewTaskRepositoryRow]()
+    private let branchableRepositoryIDs: Set<UUID>
     private let card = NSView()
     private let titleLabel = NSTextField(labelWithString: "New task")
     private let titleField = SettingsTextField()
@@ -17,6 +20,8 @@ final class NewTaskModalView: NSView, NSTextFieldDelegate {
         wrappingLabelWithString: "Named after the work, not the branch. Piñata names branches from the pattern in Settings."
     )
     private let repositoryLabel = NSTextField(labelWithString: "REPOSITORIES  optional")
+    private let branchCheckLabel = NSTextField(labelWithString: "Checking repository status…")
+    private let branchCheckIndicator = NSProgressIndicator()
     private let repositoryStack = NewTaskRepositoryStackView()
     private let repositoryScrollView = NSScrollView()
     private let noteLabel = NSTextField(
@@ -37,11 +42,13 @@ final class NewTaskModalView: NSView, NSTextFieldDelegate {
         repositories: [RegisteredRepository],
         connections: [UUID: SSHConnection] = [:],
         repositoryError: String? = nil,
-        editingTask: WorkspaceTask? = nil
+        editingTask: WorkspaceTask? = nil,
+        branchableRepositoryIDs: Set<UUID> = []
     ) {
         self.repositories = repositories
         self.connections = connections
         self.editingTask = editingTask
+        self.branchableRepositoryIDs = branchableRepositoryIDs
         existingRepositoryIDs = Set(editingTask?.repositories.map(\.repositoryID) ?? [])
         selectedRepositoryIDs = existingRepositoryIDs
         super.init(frame: .zero)
@@ -67,6 +74,15 @@ final class NewTaskModalView: NSView, NSTextFieldDelegate {
 
     func focusTitle() {
         window?.makeFirstResponder(titleField)
+    }
+
+    func updateBranchableRepositoryIDs(_ repositoryIDs: Set<UUID>) {
+        repositoryRows.forEach { id, row in
+            row.setBranchable(repositoryIDs.contains(id))
+        }
+        branchCheckIndicator.stopAnimation(nil)
+        branchCheckIndicator.isHidden = true
+        branchCheckLabel.isHidden = true
     }
 
     override func viewDidMoveToWindow() {
@@ -103,6 +119,8 @@ final class NewTaskModalView: NSView, NSTextFieldDelegate {
         helperLabel.textColor = AppTheme.tertiaryText
         repositoryLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsLabel, weight: 600)
         repositoryLabel.textColor = AppTheme.tertiaryText
+        branchCheckLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsLabel)
+        branchCheckLabel.textColor = AppTheme.tertiaryText
         noteLabel.font = NSFontManager.shared.convert(
             AppTheme.font(ofSize: AppTheme.typography.settingsBody),
             toHaveTrait: .italicFontMask
@@ -123,10 +141,19 @@ final class NewTaskModalView: NSView, NSTextFieldDelegate {
     }
 
     private func configureContent(repositoryError: String?) {
-        [titleLabel, titleField, helperLabel, repositoryLabel, repositoryScrollView,
-         noteLabel, divider, cancelButton, createButton].forEach {
+        [titleLabel, titleField, helperLabel, repositoryLabel, branchCheckLabel, branchCheckIndicator,
+         repositoryScrollView, noteLabel, divider, cancelButton, createButton].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             card.addSubview($0)
+        }
+
+        branchCheckIndicator.style = .spinning
+        branchCheckIndicator.controlSize = .small
+        branchCheckIndicator.isDisplayedWhenStopped = false
+        if repositories.isEmpty {
+            branchCheckLabel.isHidden = true
+        } else {
+            branchCheckIndicator.startAnimation(nil)
         }
 
         if let editingTask {
@@ -192,16 +219,20 @@ final class NewTaskModalView: NSView, NSTextFieldDelegate {
                     connection: connection,
                     showsSeparator: index < repositories.count - 1,
                     selected: existingRepositoryIDs.contains(repository.id),
-                    enabled: !existingRepositoryIDs.contains(repository.id) && isAvailable
+                    enabled: !existingRepositoryIDs.contains(repository.id) && isAvailable,
+                    branchable: branchableRepositoryIDs.contains(repository.id)
                 )
-                row.onToggle = { [weak self] repositoryID, selected in
-                    if selected {
+                row.onChange = { [weak self] repositoryID, draft in
+                    if let draft {
                         self?.selectedRepositoryIDs.insert(repositoryID)
+                        self?.attachmentDrafts[repositoryID] = draft
                     } else {
                         self?.selectedRepositoryIDs.remove(repositoryID)
+                        self?.attachmentDrafts.removeValue(forKey: repositoryID)
                     }
                     self?.updateValidation()
                 }
+                repositoryRows[repository.id] = row
                 repositoryStack.addArrangedSubview(row)
                 row.widthAnchor.constraint(equalTo: repositoryStack.widthAnchor).isActive = true
             }
@@ -247,11 +278,17 @@ final class NewTaskModalView: NSView, NSTextFieldDelegate {
             ),
 
             repositoryLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
-            repositoryLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
+            repositoryLabel.trailingAnchor.constraint(lessThanOrEqualTo: branchCheckIndicator.leadingAnchor, constant: -8),
             repositoryLabel.topAnchor.constraint(
                 equalTo: helperLabel.bottomAnchor,
                 constant: AppTheme.taskModalRepositoryBlockGap
             ),
+            branchCheckLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
+            branchCheckLabel.centerYAnchor.constraint(equalTo: repositoryLabel.centerYAnchor),
+            branchCheckIndicator.trailingAnchor.constraint(equalTo: branchCheckLabel.leadingAnchor, constant: -6),
+            branchCheckIndicator.centerYAnchor.constraint(equalTo: repositoryLabel.centerYAnchor),
+            branchCheckIndicator.widthAnchor.constraint(equalToConstant: 14),
+            branchCheckIndicator.heightAnchor.constraint(equalToConstant: 14),
 
             repositoryScrollView.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             repositoryScrollView.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
@@ -330,7 +367,9 @@ final class NewTaskModalView: NSView, NSTextFieldDelegate {
             NSSound.beep()
             return
         }
-        let selected = repositories.filter { selectedRepositoryIDs.contains($0.id) }
+        let selected = repositories.compactMap { repository in
+            attachmentDrafts[repository.id]
+        }
         onCreate?(title, selected)
     }
 }
@@ -404,27 +443,31 @@ private final class NewTaskRepositoryStackView: NSStackView {
 
 @MainActor
 private final class NewTaskRepositoryRow: AppHoverView {
-    var onToggle: ((UUID, Bool) -> Void)?
+    var onChange: ((UUID, TaskRepositoryAttachmentDraft?) -> Void)?
 
     private let repository: RegisteredRepository
     private let isRemote: Bool
     private let showsSeparator: Bool
+    private let enabled: Bool
+    private var branchable: Bool
     private var selected = false
+    private var mode: TaskRepositoryAttachmentMode = .worktree
+    private var baseBranch: String?
     private let checkbox = NSImageView()
     private let nameLabel: NSTextField
     private let sourceLabel: NSTextField
     private let repositoryIcon = NSImageView()
+    private let configurationButton = AppButton(role: .naked)
     private let separator = NSView()
     private let button = AppButton(role: .hitTarget)
-
-    private let enabled: Bool
 
     init(
         repository: RegisteredRepository,
         connection: SSHConnection?,
         showsSeparator: Bool,
         selected: Bool = false,
-        enabled: Bool = true
+        enabled: Bool = true,
+        branchable: Bool
     ) {
         self.repository = repository
         let isRemote: Bool
@@ -433,8 +476,11 @@ private final class NewTaskRepositoryRow: AppHoverView {
         self.showsSeparator = showsSeparator
         self.selected = selected
         self.enabled = enabled
+        self.branchable = branchable
+        self.baseBranch = repository.defaultBranch
         nameLabel = NSTextField(labelWithString: repository.name)
-        sourceLabel = NSTextField(labelWithString: connection?.name ?? (isRemote ? "SSH connection" : "Local"))
+        let connectionName = connection?.name ?? (isRemote ? "SSH connection" : "Local")
+        sourceLabel = NSTextField(labelWithString: "\(connectionName) · \(repository.defaultBranch)")
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
@@ -442,59 +488,43 @@ private final class NewTaskRepositoryRow: AppHoverView {
             systemSymbolName: isRemote ? "globe" : "laptopcomputer",
             accessibilityDescription: isRemote ? "Remote repository" : "Local repository"
         )
-        separator.wantsLayer = true
+        configurationButton.target = self
+        configurationButton.action = #selector(showConfigurationMenu)
+        configurationButton.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)
+        configurationButton.imagePosition = .imageRight
         button.target = self
         button.action = #selector(toggle)
         button.setAccessibilityLabel(repository.name)
         button.setAccessibilityRole(.checkBox)
         button.isEnabled = enabled
-        [checkbox, nameLabel, sourceLabel, repositoryIcon, separator, button].forEach {
+        separator.wantsLayer = true
+        [checkbox, nameLabel, sourceLabel, repositoryIcon, configurationButton, separator, button].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             addSubview($0)
         }
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: AppTheme.taskModalRowHeight),
-            checkbox.leadingAnchor.constraint(
-                equalTo: leadingAnchor,
-                constant: AppTheme.taskModalRowHorizontalInset
-            ),
+            checkbox.leadingAnchor.constraint(equalTo: leadingAnchor, constant: AppTheme.taskModalRowHorizontalInset),
             checkbox.centerYAnchor.constraint(equalTo: centerYAnchor),
             checkbox.widthAnchor.constraint(equalToConstant: AppTheme.taskModalCheckboxSize),
             checkbox.heightAnchor.constraint(equalToConstant: AppTheme.taskModalCheckboxSize),
-            nameLabel.leadingAnchor.constraint(
-                equalTo: checkbox.trailingAnchor,
-                constant: AppTheme.taskModalRowContentGap
-            ),
+            nameLabel.leadingAnchor.constraint(equalTo: checkbox.trailingAnchor, constant: AppTheme.taskModalRowContentGap),
             nameLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            nameLabel.trailingAnchor.constraint(
-                lessThanOrEqualTo: sourceLabel.leadingAnchor,
-                constant: -AppTheme.taskModalRowContentGap
-            ),
-            sourceLabel.trailingAnchor.constraint(
-                equalTo: repositoryIcon.leadingAnchor,
-                constant: -AppTheme.taskModalRowContentGap
-            ),
+            sourceLabel.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 8),
             sourceLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            repositoryIcon.trailingAnchor.constraint(
-                equalTo: trailingAnchor,
-                constant: -AppTheme.taskModalRowHorizontalInset
-            ),
+            sourceLabel.trailingAnchor.constraint(equalTo: repositoryIcon.leadingAnchor, constant: -8),
+            configurationButton.trailingAnchor.constraint(equalTo: repositoryIcon.leadingAnchor, constant: -8),
+            configurationButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            repositoryIcon.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -AppTheme.taskModalRowHorizontalInset),
             repositoryIcon.centerYAnchor.constraint(equalTo: centerYAnchor),
-            repositoryIcon.widthAnchor.constraint(
-                equalToConstant: AppTheme.taskModalRepositoryIconSize
-            ),
-            repositoryIcon.heightAnchor.constraint(
-                equalToConstant: AppTheme.taskModalRepositoryIconSize
-            ),
-            separator.leadingAnchor.constraint(
-                equalTo: leadingAnchor,
-                constant: AppTheme.taskModalRowHorizontalInset
-            ),
+            repositoryIcon.widthAnchor.constraint(equalToConstant: AppTheme.taskModalRepositoryIconSize),
+            repositoryIcon.heightAnchor.constraint(equalToConstant: AppTheme.taskModalRepositoryIconSize),
+            separator.leadingAnchor.constraint(equalTo: leadingAnchor, constant: AppTheme.taskModalRowHorizontalInset),
             separator.trailingAnchor.constraint(equalTo: trailingAnchor),
             separator.bottomAnchor.constraint(equalTo: bottomAnchor),
             separator.heightAnchor.constraint(equalToConstant: AppTheme.workspaceDividerThickness),
             button.leadingAnchor.constraint(equalTo: leadingAnchor),
-            button.trailingAnchor.constraint(equalTo: trailingAnchor),
+            button.trailingAnchor.constraint(equalTo: configurationButton.leadingAnchor, constant: -4),
             button.topAnchor.constraint(equalTo: topAnchor),
             button.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
@@ -502,45 +532,100 @@ private final class NewTaskRepositoryRow: AppHoverView {
     }
 
     @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) is unavailable")
+    required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+
+    func setBranchable(_ branchable: Bool) {
+        self.branchable = branchable
     }
 
     func applyTheme() {
-        let appearance = AppTheme.buttonAppearance(
-            role: .naked,
-            hovered: enabled && isHovering
-        )
-        checkbox.image = NSImage(
-            systemSymbolName: selected ? "checkmark.square.fill" : "square",
-            accessibilityDescription: nil
-        )
+        let appearance = AppTheme.buttonAppearance(role: .naked, hovered: enabled && isHovering)
+        checkbox.image = NSImage(systemSymbolName: selected ? "checkmark.square.fill" : "square", accessibilityDescription: nil)
         checkbox.contentTintColor = selected ? AppTheme.accent : AppTheme.tertiaryText
-        nameLabel.font = .monospacedSystemFont(
-            ofSize: AppTheme.typography.settingsValue,
-            weight: .regular
-        )
-        nameLabel.textColor = enabled
-            ? selected ? AppTheme.primaryText : AppTheme.secondaryText
-            : AppTheme.tertiaryText
+        nameLabel.font = .monospacedSystemFont(ofSize: AppTheme.typography.settingsValue, weight: .regular)
+        nameLabel.textColor = enabled ? (selected ? AppTheme.primaryText : AppTheme.secondaryText) : AppTheme.tertiaryText
         sourceLabel.font = AppTheme.font(ofSize: AppTheme.typography.settingsLabel)
         sourceLabel.textColor = AppTheme.tertiaryText
+        sourceLabel.isHidden = selected
         repositoryIcon.contentTintColor = AppTheme.tertiaryText
+        configurationButton.isHidden = selected == false
+        configurationButton.title = configurationTitle
+        configurationButton.font = AppTheme.font(ofSize: AppTheme.typography.settingsLabel, weight: 600)
         separator.layer?.backgroundColor = AppTheme.border.cgColor
-        separator.isHidden = !showsSeparator
+        separator.isHidden = showsSeparator == false
         layer?.backgroundColor = appearance.background.cgColor
         button.setAccessibilityValue(selected ? 1 : 0)
     }
 
-    override func hoverStateDidChange() {
-        applyTheme()
+    override func hoverStateDidChange() { applyTheme() }
+
+    private var configurationTitle: String {
+        switch mode {
+        case .local: "Local · \(repository.defaultBranch)"
+        case .branch: "New branch · \(baseBranch ?? repository.defaultBranch)"
+        case .worktree: "Worktree · \(baseBranch ?? repository.defaultBranch)"
+        }
     }
 
     @objc private func toggle() {
         guard enabled else { return }
         selected.toggle()
         applyTheme()
-        onToggle?(repository.id, selected)
+        notifyChange()
+    }
+
+    @objc private func showConfigurationMenu() {
+        let menu = NSMenu()
+        menu.addItem(menuItem(title: "Local", mode: .local, baseBranch: nil))
+        menu.addItem(.separator())
+        let branchItem = NSMenuItem(title: "New branch from", action: nil, keyEquivalent: "")
+        branchItem.submenu = branchable ? branchMenu(for: .branch) : nil
+        branchItem.isEnabled = branchable
+        menu.addItem(branchItem)
+        let worktreeItem = NSMenuItem(title: "Worktree from", action: nil, keyEquivalent: "")
+        worktreeItem.submenu = branchMenu(for: .worktree)
+        menu.addItem(worktreeItem)
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: configurationButton.bounds.maxY + 2), in: configurationButton)
+    }
+
+    private func branchMenu(for mode: TaskRepositoryAttachmentMode) -> NSMenu {
+        let menu = NSMenu()
+        Array(Set(repository.branches + [repository.defaultBranch])).sorted().forEach { branch in
+            menu.addItem(menuItem(title: branch, mode: mode, baseBranch: branch))
+        }
+        return menu
+    }
+
+    private func menuItem(
+        title: String,
+        mode: TaskRepositoryAttachmentMode,
+        baseBranch: String?
+    ) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: #selector(selectConfiguration(_:)), keyEquivalent: "")
+        item.target = self
+        item.representedObject = ["mode": mode.rawValue, "baseBranch": baseBranch ?? ""]
+        return item
+    }
+
+    @objc private func selectConfiguration(_ sender: NSMenuItem) {
+        guard let values = sender.representedObject as? [String: String],
+              let mode = TaskRepositoryAttachmentMode(rawValue: values["mode"] ?? "") else { return }
+        self.mode = mode
+        baseBranch = values["baseBranch"].flatMap { $0.isEmpty ? nil : $0 }
+        applyTheme()
+        notifyChange()
+    }
+
+    private func notifyChange() {
+        guard selected else {
+            onChange?(repository.id, nil)
+            return
+        }
+        onChange?(repository.id, TaskRepositoryAttachmentDraft(
+            repository: repository,
+            mode: mode,
+            baseBranch: baseBranch
+        ))
     }
 }
 
