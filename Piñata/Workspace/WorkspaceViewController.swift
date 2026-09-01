@@ -1319,6 +1319,10 @@ final class WorkspaceViewController: NSViewController {
         workspaceHeaderHeightConstraint.constant = visible ? AppTheme.mainHeaderHeight : 0
     }
 
+    static func startsTerminalImmediately(repositoryCount: Int) -> Bool {
+        repositoryCount <= 1
+    }
+
     private func createTask(title: String, attachments: [TaskRepositoryAttachmentDraft]) {
         let task = WorkspaceTask(
             title: title,
@@ -1334,6 +1338,15 @@ final class WorkspaceViewController: NSViewController {
         dismissNewTaskModal()
         tasks.insert(task, at: 0)
         activeScope = .task(task.id)
+        if Self.startsTerminalImmediately(repositoryCount: task.repositories.count) {
+            taskWorkspaces[task.id] = TerminalWorkspace(
+                runtime: runtime,
+                connectionStatusMonitor: sshConnectionStatusMonitor,
+                title: "Terminal",
+                workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path
+            )
+        }
+
         if !task.repositories.isEmpty {
             expandedTaskIDs.insert(task.id)
         }
@@ -1481,7 +1494,8 @@ final class WorkspaceViewController: NSViewController {
                 repositoryErrors[scope] = error.localizedDescription
             }
         }
-        if let firstRepository = provisionableRepositories.first?.repository {
+        if taskWorkspaces[task.id] == nil,
+           let firstRepository = provisionableRepositories.first?.repository {
             let scope = TaskRepositoryScope(
                 taskID: task.id,
                 repositoryID: firstRepository.id

@@ -1206,7 +1206,10 @@ private final class SidebarTaskRow: AppHoverView {
         guard !menuActive, let window else { return }
         if let repositoryHoverContext {
             let card = repositoryInfoCard ?? {
-                let value = SidebarRepositoryInfoCard(context: repositoryHoverContext)
+                let value = SidebarRepositoryInfoCard(
+                    context: repositoryHoverContext,
+                    taskTitle: titleLabel.stringValue
+                )
                 value.onChecksHover = { [weak self] source, checks, hovering in
                     self?.handleChecksHover(from: source, checks: checks, hovering: hovering)
                 }
@@ -2197,9 +2200,11 @@ private final class SidebarHoverPopoverView: NSView {
 }
 
 @MainActor
-private final class SidebarRepositoryInfoCard: NSView {
+final class SidebarRepositoryInfoCard: NSView {
     var onChecksHover: ((NSView, [PullRequestCheck], Bool) -> Void)?
 
+    private let taskTitleLabel: NSTextField?
+    private let taskTitleHeight: CGFloat
     private let repositoryRow: SidebarTaskInfoRepositoryRow
     private let pullRequestView: SidebarPullRequestInfoView
     private let divider = NSView()
@@ -2212,7 +2217,22 @@ private final class SidebarRepositoryInfoCard: NSView {
     private weak var activeChecksSource: NSView?
     private var hideChecksWorkItem: DispatchWorkItem?
 
-    init(context: SidebarRepositoryContext) {
+    init(context: SidebarRepositoryContext, taskTitle: String? = nil) {
+        if let taskTitle {
+            let label = NSTextField(wrappingLabelWithString: taskTitle)
+            let font = AppTheme.font(ofSize: AppTheme.typography.settingsBody, weight: 600)
+            label.font = font
+            taskTitleLabel = label
+            let bounds = (taskTitle as NSString).boundingRect(
+                with: NSSize(width: 368, height: CGFloat.greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading],
+                attributes: [.font: font]
+            )
+            taskTitleHeight = max(18, ceil(bounds.height))
+        } else {
+            taskTitleLabel = nil
+            taskTitleHeight = 0
+        }
         repositoryRow = SidebarTaskInfoRepositoryRow(context: context)
         pullRequestView = SidebarPullRequestInfoView(
             status: context.pullRequestStatus,
@@ -2235,6 +2255,14 @@ private final class SidebarRepositoryInfoCard: NSView {
         pullRequestView.onChecksHover = { [weak self] source, checks, hovering in
             self?.onChecksHover?(source, checks, hovering)
         }
+        taskTitleLabel?.translatesAutoresizingMaskIntoConstraints = false
+        taskTitleLabel?.maximumNumberOfLines = 0
+        taskTitleLabel?.lineBreakMode = .byWordWrapping
+        taskTitleLabel?.isSelectable = true
+        if let taskTitleLabel {
+            addSubview(taskTitleLabel)
+        }
+
         addSubview(repositoryRow)
         addSubview(divider)
         addSubview(pullRequestView)
@@ -2243,10 +2271,9 @@ private final class SidebarRepositoryInfoCard: NSView {
         widthConstraint = widthAnchor.constraint(equalToConstant: 400)
         checksDividerWidthConstraint = checksDivider.widthAnchor.constraint(equalToConstant: 0)
         checksCardWidthConstraint = checksCard.widthAnchor.constraint(equalToConstant: 320)
-        NSLayoutConstraint.activate([
-            widthConstraint,
+        var constraints: [NSLayoutConstraint] = [
+            widthConstraint!,
             repositoryRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            repositoryRow.topAnchor.constraint(equalTo: topAnchor, constant: 14),
             repositoryRow.widthAnchor.constraint(equalToConstant: 368),
             divider.leadingAnchor.constraint(equalTo: repositoryRow.leadingAnchor),
             divider.topAnchor.constraint(equalTo: repositoryRow.bottomAnchor, constant: 10),
@@ -2263,7 +2290,19 @@ private final class SidebarRepositoryInfoCard: NSView {
             checksCard.leadingAnchor.constraint(equalTo: checksDivider.trailingAnchor),
             checksCard.topAnchor.constraint(equalTo: repositoryRow.topAnchor),
             checksCardWidthConstraint,
-        ])
+        ]
+        if let taskTitleLabel {
+            constraints += [
+                taskTitleLabel.leadingAnchor.constraint(equalTo: repositoryRow.leadingAnchor),
+                taskTitleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+                taskTitleLabel.widthAnchor.constraint(equalTo: repositoryRow.widthAnchor),
+                taskTitleLabel.heightAnchor.constraint(equalToConstant: taskTitleHeight),
+                repositoryRow.topAnchor.constraint(equalTo: taskTitleLabel.bottomAnchor, constant: 10),
+            ]
+        } else {
+            constraints.append(repositoryRow.topAnchor.constraint(equalTo: topAnchor, constant: 14))
+        }
+        NSLayoutConstraint.activate(constraints)
         applyTheme()
     }
 
@@ -2274,6 +2313,7 @@ private final class SidebarRepositoryInfoCard: NSView {
         NSSize(
             width: showsChecks ? 713 : 400,
             height: 28 + 95 + 1 + pullRequestView.intrinsicContentSize.height + 20
+                + taskTitleHeight + (taskTitleLabel == nil ? 0 : 10)
         )
     }
 
@@ -2341,6 +2381,7 @@ private final class SidebarRepositoryInfoCard: NSView {
         layer?.borderColor = NSColor.clear.cgColor
         divider.layer?.backgroundColor = AppTheme.border.cgColor
         checksDivider.layer?.backgroundColor = AppTheme.border.cgColor
+        taskTitleLabel?.textColor = AppTheme.primaryText
         repositoryRow.applyTheme()
         pullRequestView.applyTheme()
     }

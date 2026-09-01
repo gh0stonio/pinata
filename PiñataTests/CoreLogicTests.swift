@@ -1,8 +1,51 @@
 import XCTest
 import AppKit
+import GhosttyKit
+
 @testable import Pinata
 
 final class CoreLogicTests: XCTestCase {
+    @MainActor
+    func testNewTaskStartsTerminalWithAtMostOneRepository() {
+        XCTAssertTrue(WorkspaceViewController.startsTerminalImmediately(repositoryCount: 0))
+        XCTAssertTrue(WorkspaceViewController.startsTerminalImmediately(repositoryCount: 1))
+        XCTAssertFalse(WorkspaceViewController.startsTerminalImmediately(repositoryCount: 2))
+    }
+
+    @MainActor
+    func testTerminalLinkCursorOnlyUsesPointerShape() {
+        XCTAssertTrue(GhosttySurfaceView.usesPointingCursor(for: GHOSTTY_MOUSE_SHAPE_POINTER))
+        XCTAssertFalse(GhosttySurfaceView.usesPointingCursor(for: GHOSTTY_MOUSE_SHAPE_DEFAULT))
+    }
+    @MainActor
+    func testGroupedRepositoryHoverCardShowsFullTaskTitle() {
+        let title = String(repeating: "Long grouped task title ", count: 5)
+        let card = SidebarRepositoryInfoCard(
+            context: SidebarRepositoryContext(
+                repositoryID: UUID(),
+                name: "repository",
+                mode: .worktree,
+                remoteURL: nil,
+                branch: "main",
+                path: "/code/repository",
+                target: .local,
+                connectionID: nil,
+                connectionName: nil,
+                status: .disabled,
+                pullRequestStatus: .idle,
+                trackedPullRequestNumbers: []
+            ),
+            taskTitle: title
+        )
+
+        card.frame.size = card.intrinsicContentSize
+        card.layoutSubtreeIfNeeded()
+
+        let labels = descendants(of: card).compactMap { $0 as? NSTextField }
+        XCTAssertTrue(labels.contains { $0.stringValue == title })
+    }
+
+
     func testGitHubCLIProfilesParseActiveAccount() {
         let profiles = GitHubCLIProfileInspector.parse("""
         github.com
