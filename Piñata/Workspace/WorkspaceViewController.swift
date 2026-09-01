@@ -180,6 +180,7 @@ final class WorkspaceViewController: NSViewController {
     private var repositoryErrors: [TaskRepositoryScope: String] = [:]
     private var retryingRepositoryScopes = Set<TaskRepositoryScope>()
     private var automaticProvisioningFocus: [UUID: TaskRepositoryScope] = [:]
+    private var branchProvisioningScopes = Set<TaskRepositoryScope>()
     private var taskDeletionStates: [UUID: TaskDeletionState] = [:]
     private var repositoryRemovalStates: [TaskRepositoryScope: RepositoryRemovalState] = [:]
     private var taskLoadError: String?
@@ -262,6 +263,7 @@ final class WorkspaceViewController: NSViewController {
         if let restoredSession {
             for snapshot in restoredSession.terminalWorkspaces {
                 guard !snapshot.tabs.isEmpty,
+                      Self.allowsTaskTerminal(for: snapshot.scope, in: loadedTasks),
                       let scope = Self.workspaceScope(from: snapshot.scope, in: loadedTasks)
                 else { continue }
                 let target = snapshot.tabs.first?.terminal.panes.first?.target ?? .local
@@ -304,7 +306,7 @@ final class WorkspaceViewController: NSViewController {
         }
         if let storedTab = restoredSession?.recentlyClosedTerminalTab,
            storedTab.tab.terminal.isValid,
-           Self.workspaceScope(from: storedTab.scope, in: loadedTasks) != nil {
+           Self.allowsTaskTerminal(for: storedTab.scope, in: loadedTasks) {
             let target = storedTab.tab.terminal.panes.first?.target ?? .local
             let sshControlMaster = sshControlMasterPool.controlMaster(for: target)
             recentlyClosedTerminalTab = (
@@ -419,7 +421,9 @@ final class WorkspaceViewController: NSViewController {
         guard settingsController == nil, newTaskModal == nil else { return }
         guard activeTaskDeletionState == nil, activeRepositoryRemovalState == nil else { return }
         if case .task(let taskID) = activeScope {
-            guard taskErrors[taskID] == nil else { return }
+            guard taskErrors[taskID] == nil,
+                  let task = tasks.first(where: { $0.id == taskID }),
+                  task.repositories.isEmpty else { return }
             if taskWorkspaces[taskID] == nil {
                 taskWorkspaces[taskID] = TerminalWorkspace(
                     runtime: runtime,
@@ -540,22 +544,36 @@ final class WorkspaceViewController: NSViewController {
         ])
         newTaskModal = modal
         Task { @MainActor [weak self, weak modal] in
-            let branchableRepositoryIDs = await Task.detached {
-                Set(repositories.compactMap { repository in
+            let branchStatus = await Task.detached {
+                var branchableRepositoryIDs = Set<UUID>()
+                var blockedReasons = [UUID: String]()
+                for repository in repositories {
                     let connection: SSHConnection?
                     if case .ssh(let id) = repository.target {
                         connection = connections[id]
                     } else {
                         connection = nil
                     }
-                    return (try? RepositoryInspector().isWorkingTreeClean(
-                        for: repository,
-                        connection: connection
-                    )) == true ? repository.id : nil
-                })
+                    do {
+                        if try RepositoryInspector().isWorkingTreeClean(
+                            for: repository,
+                            connection: connection
+                        ) {
+                            branchableRepositoryIDs.insert(repository.id)
+                        } else {
+                            blockedReasons[repository.id] = "commit or stash uncommitted changes"
+                        }
+                    } catch {
+                        blockedReasons[repository.id] = "could not check repository status"
+                    }
+                }
+                return (branchableRepositoryIDs, blockedReasons)
             }.value
             guard self?.newTaskModal === modal else { return }
-            modal?.updateBranchableRepositoryIDs(branchableRepositoryIDs)
+            modal?.updateBranchability(
+                branchStatus.0,
+                blockedReasons: branchStatus.1
+            )
         }
         DispatchQueue.main.async {
             if focusTitle {
@@ -996,6 +1014,14 @@ final class WorkspaceViewController: NSViewController {
             return
         }
         if case .repository(let scope) = activeScope,
+           branchProvisioningScopes.contains(scope),
+           let attachment = tasks.first(where: { $0.id == scope.taskID })?
+                .repositories.first(where: { $0.repositoryID == scope.repositoryID }) {
+            setWorkspaceHeaderVisible(false)
+            installBranchProvisioning(repositoryName: attachment.name)
+            return
+        }
+        if case .repository(let scope) = activeScope,
            let task = tasks.first(where: { $0.id == scope.taskID }),
            let attachment = task.repositories.first(where: { $0.repositoryID == scope.repositoryID }),
            let report = attachment.worktreeProvisioning,
@@ -1113,6 +1139,17 @@ final class WorkspaceViewController: NSViewController {
         view.onRetry = { [weak self] in
             self?.retryWorktreeProvisioning(scope)
         }
+        view.translatesAutoresizingMaskIntoConstraints = false
+        terminalHost.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: terminalHost.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: terminalHost.trailingAnchor),
+            view.topAnchor.constraint(equalTo: terminalHost.topAnchor),
+            view.bottomAnchor.constraint(equalTo: terminalHost.bottomAnchor),
+        ])
+    }
+    private func installBranchProvisioning(repositoryName: String) {
+        let view = WorkspaceEmptyStateView(state: .creatingBranch(repositoryName))
         view.translatesAutoresizingMaskIntoConstraints = false
         terminalHost.addSubview(view)
         NSLayoutConstraint.activate([
@@ -1269,6 +1306,8 @@ final class WorkspaceViewController: NSViewController {
         case .task(let taskID):
             if let error = taskErrors[taskID] {
                 .error(title: "Task failed", detail: error)
+            } else if tasks.first(where: { $0.id == taskID })?.repositories.isEmpty == false {
+                .chooseRepository
             } else {
                 .readyToStart
             }
@@ -1319,8 +1358,15 @@ final class WorkspaceViewController: NSViewController {
         workspaceHeaderHeightConstraint.constant = visible ? AppTheme.mainHeaderHeight : 0
     }
 
-    static func startsTerminalImmediately(repositoryCount: Int) -> Bool {
-        repositoryCount <= 1
+
+    static func initialLocalRepositoryScope(for task: WorkspaceTask) -> TaskRepositoryScope? {
+        guard let repository = task.repositories.first(where: { $0.mode == .local }) else {
+            return nil
+        }
+        return TaskRepositoryScope(taskID: task.id, repositoryID: repository.repositoryID)
+    }
+    static func focusesSingleRepository(_ task: WorkspaceTask) -> Bool {
+        task.repositories.count == 1
     }
 
     private func createTask(title: String, attachments: [TaskRepositoryAttachmentDraft]) {
@@ -1338,14 +1384,6 @@ final class WorkspaceViewController: NSViewController {
         dismissNewTaskModal()
         tasks.insert(task, at: 0)
         activeScope = .task(task.id)
-        if Self.startsTerminalImmediately(repositoryCount: task.repositories.count) {
-            taskWorkspaces[task.id] = TerminalWorkspace(
-                runtime: runtime,
-                connectionStatusMonitor: sshConnectionStatusMonitor,
-                title: "Terminal",
-                workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path
-            )
-        }
 
         if !task.repositories.isEmpty {
             expandedTaskIDs.insert(task.id)
@@ -1417,10 +1455,34 @@ final class WorkspaceViewController: NSViewController {
         }
 
         let repositoryDefaults = RepositoryDefaultsStore()
+        if activeScope == .task(task.id),
+           Self.focusesSingleRepository(task),
+           let scope = Self.initialLocalRepositoryScope(for: task),
+           let attachment = attachments.first(where: { $0.repository.id == scope.repositoryID }) {
+            activeScope = .repository(scope)
+            do {
+                try installRepositoryWorkspace(
+                    for: scope,
+                    name: attachment.repository.name,
+                    workingDirectory: attachment.repository.path,
+                    target: try terminalTarget(for: attachment.repository)
+                )
+                repositoryErrors.removeValue(forKey: scope)
+            } catch {
+                repositoryErrors[scope] = error.localizedDescription
+            }
+        }
         let branchPrefix = repositoryDefaults.loadTaskBranchPrefix()
         for attachment in attachments where attachment.mode == .branch {
             let scope = TaskRepositoryScope(taskID: task.id, repositoryID: attachment.repository.id)
-            guard let baseBranch = attachment.baseBranch else { continue }
+            guard let baseBranch = attachment.baseBranch else {
+                repositoryErrors[scope] = "Select a base branch."
+                continue
+            }
+            branchProvisioningScopes.insert(scope)
+            if activeScope == .task(task.id), Self.focusesSingleRepository(task) {
+                activeScope = .repository(scope)
+            }
             let connection = try? sshConnection(for: attachment.repository)
             let worktreeBasePath = repositoryDefaults.loadWorktreeBasePath()
             Task { @MainActor [weak self] in
@@ -1442,10 +1504,15 @@ final class WorkspaceViewController: NSViewController {
                     }
                 }.value
                 switch result {
-                case .success(let branch): self?.storeCreatedBranch(branch, for: scope)
+                case .success(let branch):
+                    self?.storeCreatedBranch(branch, for: scope)
                 case .failure(let error):
+                    self?.branchProvisioningScopes.remove(scope)
                     self?.repositoryErrors[scope] = error.localizedDescription
                     self?.updateTaskSidebar()
+                    if self?.activeScope == .repository(scope) {
+                        self?.installActiveWorkspace()
+                    }
                 }
             }
         }
@@ -1494,11 +1561,12 @@ final class WorkspaceViewController: NSViewController {
                 repositoryErrors[scope] = error.localizedDescription
             }
         }
-        if taskWorkspaces[task.id] == nil,
-           let firstRepository = provisionableRepositories.first?.repository {
+        if activeScope == .task(task.id),
+           Self.focusesSingleRepository(task),
+           let attachment = attachments.first(where: { $0.mode == .worktree }) {
             let scope = TaskRepositoryScope(
                 taskID: task.id,
-                repositoryID: firstRepository.id
+                repositoryID: attachment.repository.id
             )
             activeScope = .repository(scope)
             automaticProvisioningFocus[task.id] = scope
@@ -1751,6 +1819,7 @@ final class WorkspaceViewController: NSViewController {
                 taskID: task.id,
                 taskTitle: task.title,
                 branch: branch,
+                sourceBranch: attachment.baseBranch ?? repository.defaultBranch,
                 preparedReport: preparing
             )
             await MainActor.run {
@@ -2378,8 +2447,29 @@ final class WorkspaceViewController: NSViewController {
             isPinned: task.isPinned
         )
         try? taskStore.save(tasks)
-        repositoryErrors.removeValue(forKey: scope)
+        branchProvisioningScopes.remove(scope)
+        if Self.focusesSingleRepository(task),
+           (activeScope == .task(scope.taskID) || activeScope == .repository(scope)) {
+            activeScope = .repository(scope)
+        }
+        do {
+            let repositories = try repositoryStore.load()
+            guard let repository = repositories.first(where: { $0.id == scope.repositoryID }) else {
+                throw WorkspaceTaskError.repositoryUnavailable(attachment.name)
+            }
+            try installRepositoryWorkspace(
+                for: scope,
+                name: attachment.name,
+                workingDirectory: repository.path,
+                target: try terminalTarget(for: repository)
+            )
+            repositoryErrors.removeValue(forKey: scope)
+        } catch {
+            repositoryErrors[scope] = error.localizedDescription
+        }
         updateTaskSidebar()
+        scheduleSessionSave()
+        installActiveWorkspace()
     }
 
     private func storeWorktreeProvisioning(
@@ -3133,6 +3223,15 @@ final class WorkspaceViewController: NSViewController {
         }
     }
 
+    private static func allowsTaskTerminal(
+        for storedScope: StoredWorkspaceScope,
+        in tasks: [WorkspaceTask]
+    ) -> Bool {
+        guard let scope = workspaceScope(from: storedScope, in: tasks) else { return false }
+        guard case .task(let taskID) = scope else { return true }
+        return tasks.first(where: { $0.id == taskID })?.repositories.isEmpty == true
+    }
+
     private static func workspaceScope(
         from storedScope: StoredWorkspaceScope,
         in tasks: [WorkspaceTask]
@@ -3814,6 +3913,8 @@ private enum WorkspaceTaskError: LocalizedError {
 private final class WorkspaceEmptyStateView: NSStackView {
     enum State {
         case chooseTask
+        case chooseRepository
+        case creatingBranch(String)
         case readyToStart
         case deletingTask(title: String, step: String)
         case deletionFailed(title: String, detail: String)
@@ -3851,6 +3952,18 @@ private final class WorkspaceEmptyStateView: NSStackView {
             detail = "Your workspace is waiting. Choose a task from the sidebar to wake it up."
             action = .createTask
             showsProgress = false
+        case .chooseRepository:
+            artwork = WorkspaceEmptyArtworkView(kind: .worktree)
+            title = "Pick a repository to get started."
+            detail = "Select a repository from the sidebar to open its workspace."
+            action = nil
+            showsProgress = false
+        case let .creatingBranch(repositoryName):
+            artwork = WorkspaceEmptyArtworkView(kind: .worktree)
+            title = "Creating \(repositoryName) branch"
+            detail = "Fetching the selected branch and checking out the new branch."
+            action = nil
+            showsProgress = true
         case .readyToStart:
             artwork = WorkspaceEmptyArtworkView(kind: .terminal)
             title = "This task is ready for takeoff."
@@ -3890,7 +4003,7 @@ private final class WorkspaceEmptyStateView: NSStackView {
         }
 
         artwork.translatesAutoresizingMaskIntoConstraints = false
-        addArrangedSubview(artwork)
+        addView(artwork, in: .center)
         artwork.widthAnchor.constraint(equalToConstant: 184).isActive = true
         artwork.heightAnchor.constraint(equalToConstant: 122).isActive = true
         setCustomSpacing(18, after: artwork)
@@ -3898,7 +4011,7 @@ private final class WorkspaceEmptyStateView: NSStackView {
         let titleLabel = NSTextField(labelWithString: title)
         titleLabel.font = AppTheme.font(ofSize: AppTheme.typography.title, weight: 650)
         titleLabel.textColor = state.isError ? AppTheme.error : AppTheme.primaryText
-        addArrangedSubview(titleLabel)
+        addView(titleLabel, in: .center)
         setCustomSpacing(12, after: titleLabel)
 
         let detailLabel = NSTextField(wrappingLabelWithString: detail)
@@ -3906,7 +4019,7 @@ private final class WorkspaceEmptyStateView: NSStackView {
         detailLabel.textColor = AppTheme.tertiaryText
         detailLabel.alignment = .center
         detailLabel.maximumNumberOfLines = 0
-        addArrangedSubview(detailLabel)
+        addView(detailLabel, in: .center)
         detailLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 420).isActive = true
 
         if showsProgress {
@@ -3914,7 +4027,7 @@ private final class WorkspaceEmptyStateView: NSStackView {
             progress.style = .spinning
             progress.controlSize = .small
             progress.startAnimation(nil)
-            addArrangedSubview(progress)
+            addView(progress, in: .center)
             setCustomSpacing(20, after: detailLabel)
         }
 
@@ -3944,7 +4057,7 @@ private final class WorkspaceEmptyStateView: NSStackView {
                 button.action = #selector(retryDeletion)
             }
             button.target = self
-            addArrangedSubview(button)
+            addView(button, in: .center)
             setCustomSpacing(28, after: detailLabel)
         }
     }

@@ -1084,15 +1084,22 @@ struct WorktreeProvisioner {
         baseBranch: String,
         connection: SSHConnection? = nil
     ) throws -> String {
+        let runner = GitCommandRunner(connection: connection)
+        _ = try runner.run([
+            "-C", repository.path,
+            "fetch", "origin",
+            "refs/heads/\(baseBranch):refs/remotes/origin/\(baseBranch)",
+        ])
         let requestedBranch = TaskBranchName.branch(
             prefix: branchPrefix,
             taskTitle: taskTitle,
             taskID: taskID
         )
         let branch = try nextAvailableBranch(in: repository, startingAt: requestedBranch)
-        _ = try GitCommandRunner(connection: connection).run([
-            "-C", repository.path, "branch", "--no-track", branch, baseBranch,
+        _ = try runner.run([
+            "-C", repository.path, "branch", "--no-track", branch, "origin/\(baseBranch)",
         ])
+        _ = try runner.run(["-C", repository.path, "switch", branch])
         return branch
     }
 
@@ -1116,6 +1123,7 @@ struct WorktreeProvisioner {
         taskID: UUID,
         taskTitle: String,
         branch: String,
+        sourceBranch: String? = nil,
         preparedReport: WorktreeProvisioningReport? = nil
     ) -> WorktreeProvisioningReport {
         let report = preparedReport ?? preparingExistingWorktree(
@@ -1124,8 +1132,19 @@ struct WorktreeProvisioner {
             taskTitle: taskTitle,
             branch: branch
         )
+        let sourceBranch = sourceBranch ?? repository.defaultBranch
         var worktreeWasCreated = false
         do {
+            let checkedOutBranch = try runGit(
+                ["-C", repository.path, "branch", "--show-current"],
+                onOutput: { _ in }
+            ).trimmingCharacters(in: .whitespacesAndNewlines)
+            if checkedOutBranch == branch {
+                _ = try runGit(
+                    ["-C", repository.path, "switch", sourceBranch],
+                    onOutput: { _ in }
+                )
+            }
             try prepareDestinationParent(for: report.path)
             _ = try runGit(["-C", repository.path, "worktree", "add", report.path, branch], onOutput: { _ in })
             worktreeWasCreated = true

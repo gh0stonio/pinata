@@ -6,10 +6,33 @@ import GhosttyKit
 
 final class CoreLogicTests: XCTestCase {
     @MainActor
-    func testNewTaskStartsTerminalWithAtMostOneRepository() {
-        XCTAssertTrue(WorkspaceViewController.startsTerminalImmediately(repositoryCount: 0))
-        XCTAssertTrue(WorkspaceViewController.startsTerminalImmediately(repositoryCount: 1))
-        XCTAssertFalse(WorkspaceViewController.startsTerminalImmediately(repositoryCount: 2))
+    func testLocalTaskSelectsItsRepositoryImmediately() {
+        let taskID = UUID()
+        let repositoryID = UUID()
+        let localTask = WorkspaceTask(
+            id: taskID,
+            title: "Local task",
+            repositories: [.init(repositoryID: repositoryID, name: "source", mode: .local)]
+        )
+        let worktreeTask = WorkspaceTask(
+            title: "Worktree task",
+            repositories: [.init(repositoryID: UUID(), name: "source", mode: .worktree)]
+        )
+        let multiRepositoryTask = WorkspaceTask(
+            title: "Multi-repository task",
+            repositories: [
+                .init(repositoryID: UUID(), name: "app", mode: .local),
+                .init(repositoryID: UUID(), name: "api", mode: .branch),
+            ]
+        )
+
+        XCTAssertEqual(
+            WorkspaceViewController.initialLocalRepositoryScope(for: localTask),
+            TaskRepositoryScope(taskID: taskID, repositoryID: repositoryID)
+        )
+        XCTAssertNil(WorkspaceViewController.initialLocalRepositoryScope(for: worktreeTask))
+        XCTAssertTrue(WorkspaceViewController.focusesSingleRepository(localTask))
+        XCTAssertFalse(WorkspaceViewController.focusesSingleRepository(multiRepositoryTask))
     }
 
     @MainActor
@@ -1892,18 +1915,32 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertNil(attachment.baseBranch)
     }
 
-    func testBranchAttachmentCreatesBranchWithoutCheckout() throws {
+    func testBranchAttachmentRefreshesAndChecksOutBranch() throws {
         let directoryURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directoryURL) }
-        let repositoryURL = try makeGitRepository(in: directoryURL)
+        let originURL = directoryURL.appendingPathComponent("origin.git", isDirectory: true)
+        _ = try runGit(["init", "--bare", originURL.path])
+        let repositoryURL = try makeGitRepository(in: directoryURL, remoteURL: originURL.path)
+        _ = try runGit(["-C", repositoryURL.path, "push", "origin", "main"])
+        let upstreamURL = directoryURL.appendingPathComponent("upstream", isDirectory: true)
+        _ = try runGit(["clone", originURL.path, upstreamURL.path])
+        try Data("updated".utf8).write(to: upstreamURL.appendingPathComponent("README.md"))
+        _ = try runGit(["-C", upstreamURL.path, "add", "."])
+        _ = try runGit([
+            "-C", upstreamURL.path,
+            "-c", "user.name=Test", "-c", "user.email=test@example.com",
+            "-c", "commit.gpgsign=false",
+            "commit", "-m", "Update",
+        ])
+        _ = try runGit(["-C", upstreamURL.path, "push", "origin", "main"])
         let repository = RegisteredRepository(
             name: "source",
             path: repositoryURL.path,
             branches: ["main"],
             defaultBranch: "main",
             currentBranch: "main",
-            remoteURL: nil,
+            remoteURL: originURL.path,
             organization: nil
         )
 
@@ -1915,12 +1952,20 @@ final class CoreLogicTests: XCTestCase {
             baseBranch: "main"
         )
 
-        XCTAssertEqual(try runGit(["-C", repositoryURL.path, "branch", "--show-current"]), "main")
-        XCTAssertEqual(try runGit(["-C", repositoryURL.path, "branch", "--list", branch]), branch)
+        XCTAssertEqual(try runGit(["-C", repositoryURL.path, "branch", "--show-current"]), branch)
+        XCTAssertEqual(
+            try runGit(["-C", repositoryURL.path, "rev-parse", branch]),
+            try runGit(["-C", repositoryURL.path, "rev-parse", "origin/main"])
+        )
+        XCTAssertNotEqual(
+            try runGit(["-C", repositoryURL.path, "rev-parse", branch]),
+            try runGit(["-C", repositoryURL.path, "rev-parse", "main"])
+        )
         XCTAssertTrue(try runGit([
             "-C", repositoryURL.path,
             "for-each-ref", "--format=%(upstream:short)", "refs/heads/\(branch)",
         ]).isEmpty)
+        _ = try runGit(["-C", repositoryURL.path, "switch", "main"])
         try RepositoryInspector().removeWorktree(
             at: repository.path,
             branchHint: branch,
@@ -1964,6 +2009,7 @@ final class CoreLogicTests: XCTestCase {
         )
 
         XCTAssertTrue(report.succeeded)
+        XCTAssertEqual(try runGit(["-C", repositoryURL.path, "branch", "--show-current"]), "main")
         XCTAssertEqual(try runGit(["-C", report.path, "branch", "--show-current"]), branch)
     }
 

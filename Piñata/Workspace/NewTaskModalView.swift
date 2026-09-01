@@ -76,9 +76,12 @@ final class NewTaskModalView: NSView, NSTextFieldDelegate {
         window?.makeFirstResponder(titleField)
     }
 
-    func updateBranchableRepositoryIDs(_ repositoryIDs: Set<UUID>) {
+    func updateBranchability(
+        _ repositoryIDs: Set<UUID>,
+        blockedReasons: [UUID: String]
+    ) {
         repositoryRows.forEach { id, row in
-            row.setBranchable(repositoryIDs.contains(id))
+            row.setBranchable(repositoryIDs.contains(id), blockedReason: blockedReasons[id])
         }
         branchCheckIndicator.stopAnimation(nil)
         branchCheckIndicator.isHidden = true
@@ -450,6 +453,7 @@ private final class NewTaskRepositoryRow: AppHoverView {
     private let showsSeparator: Bool
     private let enabled: Bool
     private var branchable: Bool
+    private var branchBlockedReason: String?
     private var selected = false
     private var mode: TaskRepositoryAttachmentMode = .worktree
     private var baseBranch: String?
@@ -467,7 +471,8 @@ private final class NewTaskRepositoryRow: AppHoverView {
         showsSeparator: Bool,
         selected: Bool = false,
         enabled: Bool = true,
-        branchable: Bool
+        branchable: Bool,
+        branchBlockedReason: String? = nil
     ) {
         self.repository = repository
         let isRemote: Bool
@@ -477,6 +482,7 @@ private final class NewTaskRepositoryRow: AppHoverView {
         self.selected = selected
         self.enabled = enabled
         self.branchable = branchable
+        self.branchBlockedReason = branchBlockedReason
         self.baseBranch = repository.defaultBranch
         nameLabel = NSTextField(labelWithString: repository.name)
         let connectionName = connection?.name ?? (isRemote ? "SSH connection" : "Local")
@@ -534,8 +540,9 @@ private final class NewTaskRepositoryRow: AppHoverView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
 
-    func setBranchable(_ branchable: Bool) {
+    func setBranchable(_ branchable: Bool, blockedReason: String?) {
         self.branchable = branchable
+        branchBlockedReason = blockedReason
     }
 
     func applyTheme() {
@@ -578,7 +585,10 @@ private final class NewTaskRepositoryRow: AppHoverView {
         let menu = NSMenu()
         menu.addItem(menuItem(title: "Local", mode: .local, baseBranch: nil))
         menu.addItem(.separator())
-        let branchItem = NSMenuItem(title: "New branch from", action: nil, keyEquivalent: "")
+        let title = branchable
+            ? "New branch from"
+            : "New branch unavailable: \(branchBlockedReason ?? "repository status unavailable")"
+        let branchItem = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         branchItem.submenu = branchable ? branchMenu(for: .branch) : nil
         branchItem.isEnabled = branchable
         menu.addItem(branchItem)
