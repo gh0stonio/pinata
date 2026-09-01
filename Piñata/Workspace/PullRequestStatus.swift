@@ -390,6 +390,7 @@ final class PullRequestStatusStore {
     }
 
     private static let cacheLifetime: TimeInterval = 60
+    private static let failureCacheLifetime: TimeInterval = 5
     private var snapshots: [FetchKey: Snapshot] = [:]
     private var refreshTasks: [FetchKey: Task<Void, Never>] = [:]
     private var activeContexts: [FetchKey: PullRequestQueryContext] = [:]
@@ -447,7 +448,9 @@ final class PullRequestStatusStore {
             }
             if let snapshot = snapshots[key],
                snapshot.context == context,
-               Date().timeIntervalSince(snapshot.fetchedAt) < Self.cacheLifetime
+               Date().timeIntervalSince(snapshot.fetchedAt) < (snapshot.status.availability == .unavailable
+                   ? Self.failureCacheLifetime
+                   : Self.cacheLifetime)
             {
                 let hasCachedStatus = repositoryIDs.contains {
                     statuses[$0]?.availability == .loaded
@@ -645,17 +648,20 @@ private enum PullRequestQuery {
         case PullRequestCommandError.timedOut:
             return "GitHub request timed out."
         case let PullRequestCommandError.failed(message):
-            let lowercasedMessage = message.lowercased()
+            let meaningfulMessage = message
+                .split(whereSeparator: \.isNewline)
+                .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("nc:") }
+                .joined(separator: "\n")
+            let lowercasedMessage = meaningfulMessage.lowercased()
             if lowercasedMessage.contains("http 502") || lowercasedMessage.contains("bad gateway") {
                 return "GitHub API returned HTTP 502 (Bad Gateway)."
             }
             if lowercasedMessage.contains("http 504") || lowercasedMessage.contains("gateway timeout") {
                 return "GitHub API returned HTTP 504 (Gateway Timeout)."
             }
-            if lowercasedMessage.contains("not logged in") || lowercasedMessage.contains("authentication") {
-                return profile.map {
-                    "gh profile \($0) is not authenticated on this machine."
-                } ?? "gh is not authenticated on this machine."
+            if lowercasedMessage.contains("http 401") || lowercasedMessage.contains("bad credentials")
+                || lowercasedMessage.contains("not logged in") || lowercasedMessage.contains("authentication") {
+                return "Re-authenticate GitHub on the workspace."
             }
             if lowercasedMessage.contains("http 403") || lowercasedMessage.contains("forbidden")
                 || lowercasedMessage.contains("http 404")
@@ -668,7 +674,7 @@ private enum PullRequestQuery {
             if lowercasedMessage.contains("command not found") || lowercasedMessage.contains("no such file") {
                 return "gh is not installed on this machine."
             }
-            return message.split(whereSeparator: \.isNewline).first.map(String.init)
+            return meaningfulMessage.split(whereSeparator: \.isNewline).first.map(String.init)
                 ?? "GitHub PR query failed."
         default:
             return "GitHub PR data could not be read."
@@ -898,7 +904,7 @@ private enum PullRequestCommandRunner {
         try Task.checkCancellation()
         let profileSetup: String
         if let ghProfile = context.ghProfile, !ghProfile.isEmpty {
-            profileSetup = "GH_TOKEN=$(gh auth token --hostname github.com --user \(SSHCommand.shellQuote(ghProfile))) && export GH_TOKEN && "
+            profileSetup = "GH_TOKEN=$(env -u GH_TOKEN -u GITHUB_TOKEN gh auth token --hostname github.com --user \(SSHCommand.shellQuote(ghProfile))) && export GH_TOKEN && "
         } else {
             profileSetup = ""
         }
@@ -912,8 +918,7 @@ private enum PullRequestCommandRunner {
         case .ssh(let connection):
             process = SSHCommand.makeProcess(
                 connection: connection,
-                command: ["sh", "-lc", script],
-                reuseConnection: true
+                command: ["sh", "-lc", script]
             )
         }
 
