@@ -54,6 +54,7 @@ enum SettingsLayout {
     static let intensityControlWidth: CGFloat = 272
     static let fileIconColorControlWidth: CGFloat = 210
     static let filePreviewControlWidth: CGFloat = 112
+    static let repositoryGroupingControlWidth: CGFloat = 180
     static let appFontControlWidth: CGFloat = 180
     static let terminalFontControlWidth: CGFloat = 82
     static let repositoryPathControlWidth: CGFloat = rightColumnWidth

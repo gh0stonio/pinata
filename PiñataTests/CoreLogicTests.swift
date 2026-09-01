@@ -1091,7 +1091,7 @@ final class CoreLogicTests: XCTestCase {
                 moving: pinnedTwo.id,
                 relativeTo: pinnedOne.id,
                 after: false,
-                inPinnedSection: true
+                in: .pinned
             ).map(\.title),
             ["Pinned two", "Pinned one", "Regular"]
         )
@@ -1100,7 +1100,7 @@ final class CoreLogicTests: XCTestCase {
             moving: pinnedOne.id,
             relativeTo: regular.id,
             after: true,
-            inPinnedSection: false
+            in: .tasks
         )
         XCTAssertEqual(unpinned.map(\.title), ["Regular", "Pinned one", "Pinned two"])
         XCTAssertFalse(unpinned[1].isPinned)
@@ -1113,7 +1113,7 @@ final class CoreLogicTests: XCTestCase {
             moving: regular.id,
             relativeTo: nil,
             after: false,
-            inPinnedSection: true
+            in: .pinned
         )
         XCTAssertEqual(pinned.map(\.title), ["Regular"])
         XCTAssertTrue(pinned[0].isPinned)
@@ -1130,7 +1130,7 @@ final class CoreLogicTests: XCTestCase {
                 moving: UUID(),
                 relativeTo: second.id,
                 after: false,
-                inPinnedSection: false
+                in: .tasks
             ),
             tasks
         )
@@ -1140,7 +1140,80 @@ final class CoreLogicTests: XCTestCase {
                 moving: first.id,
                 relativeTo: UUID(),
                 after: false,
-                inPinnedSection: false
+                in: .tasks
+            ),
+            tasks
+        )
+    }
+
+    func testTaskSidebarSectionsGroupSingleRepositoryTasks() {
+        let repositoryID = UUID()
+        let otherRepositoryID = UUID()
+        let repository = TaskRepositoryAttachment(repositoryID: repositoryID, name: "web-ui")
+        let otherRepository = TaskRepositoryAttachment(repositoryID: otherRepositoryID, name: "api")
+
+        XCTAssertEqual(TaskSidebarSection(task: WorkspaceTask(title: "Unassigned")), .tasks)
+        XCTAssertEqual(
+            TaskSidebarSection(task: WorkspaceTask(title: "Web", repositories: [repository])),
+            .repository(repositoryID)
+        )
+        XCTAssertEqual(
+            TaskSidebarSection(task: WorkspaceTask(title: "Cross", repositories: [repository, otherRepository])),
+            .tasks
+        )
+        XCTAssertEqual(
+            TaskSidebarSection(task: WorkspaceTask(title: "Pinned", repositories: [repository], isPinned: true)),
+            .pinned
+        )
+    }
+
+    func testTaskSidebarClassicModeKeepsSingleRepositoryTasksTogether() {
+        let first = WorkspaceTask(
+            title: "Web",
+            repositories: [.init(repositoryID: UUID(), name: "web-ui")]
+        )
+        let second = WorkspaceTask(
+            title: "API",
+            repositories: [.init(repositoryID: UUID(), name: "api")]
+        )
+
+        XCTAssertEqual(
+            TaskSidebarSection(task: first, groupsSingleRepositoryTasks: false),
+            .tasks
+        )
+        XCTAssertEqual(
+            reorderTasks(
+                [first, second],
+                moving: second.id,
+                relativeTo: first.id,
+                after: false,
+                in: .tasks,
+                groupsSingleRepositoryTasks: false
+            ).map(\.id),
+            [second.id, first.id]
+        )
+    }
+
+    func testTaskReorderingRejectsRepositorySectionTransfers() {
+        let firstRepositoryID = UUID()
+        let secondRepositoryID = UUID()
+        let first = WorkspaceTask(
+            title: "First",
+            repositories: [.init(repositoryID: firstRepositoryID, name: "web-ui")]
+        )
+        let second = WorkspaceTask(
+            title: "Second",
+            repositories: [.init(repositoryID: secondRepositoryID, name: "api")]
+        )
+        let tasks = [first, second]
+
+        XCTAssertEqual(
+            reorderTasks(
+                tasks,
+                moving: first.id,
+                relativeTo: second.id,
+                after: true,
+                in: .repository(secondRepositoryID)
             ),
             tasks
         )
@@ -1251,6 +1324,7 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertEqual(settings.editorFontSize, UserSettings.defaults.editorFontSize)
         XCTAssertEqual(settings.fileIconColor, .colored)
         XCTAssertTrue(settings.filePreviewsEnabled)
+        XCTAssertTrue(settings.groupsSingleRepositoryTasks)
     }
 
     func testSettingsStoresRoundTripAndRecoverFromInvalidData() throws {
@@ -1267,7 +1341,8 @@ final class CoreLogicTests: XCTestCase {
             terminalFontSize: .extraLarge,
             editorFontSize: .small,
             fileIconColor: .monochrome,
-            filePreviewsEnabled: true
+            filePreviewsEnabled: true,
+            groupsSingleRepositoryTasks: false
         )
 
         XCTAssertEqual(settingsStore.load(), .defaults)

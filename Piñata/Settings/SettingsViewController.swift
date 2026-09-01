@@ -19,11 +19,13 @@ final class SettingsViewController: NSViewController {
     private let editorFontControl = FontStepperControl(fontName: "Editor font size")
     private let fileIconColorControl = FlatChoiceControl(labels: ["colored", "monochrome"])
     private let filePreviewControl = FlatChoiceControl(labels: ["on", "off"])
+    private let repositoryGroupingControl = FlatChoiceControl(labels: ["grouped", "task first"])
     private lazy var appearanceContent = AppearanceSettingsContentView(
         themeControl: themeControl,
         accentControl: accentControl,
         intensityControl: intensityControl,
         fileIconColorControl: fileIconColorControl,
+        repositoryGroupingControl: repositoryGroupingControl,
         appFontControl: appFontControl,
         terminalFontControl: terminalFontControl
     )
@@ -207,6 +209,7 @@ final class SettingsViewController: NSViewController {
         accentControl.onChange = { [weak self] _ in self?.settingChanged() }
         fileIconColorControl.onChange = { [weak self] _ in self?.settingChanged() }
         filePreviewControl.onChange = { [weak self] _ in self?.settingChanged() }
+        repositoryGroupingControl.onChange = { [weak self] _ in self?.settingChanged() }
     }
 
     private func selectPage(at index: Int) {
@@ -235,6 +238,7 @@ final class SettingsViewController: NSViewController {
             of: settings.fileIconColor
         ) ?? 0
         filePreviewControl.selectedIndex = settings.filePreviewsEnabled ? 0 : 1
+        repositoryGroupingControl.selectedIndex = settings.groupsSingleRepositoryTasks ? 0 : 1
     }
 
     private func dismissInputFocusIfNeeded(for event: NSEvent) {
@@ -271,7 +275,8 @@ final class SettingsViewController: NSViewController {
             terminalFontSize: TerminalFontSize.allCases[terminalFontControl.selectedIndex],
             editorFontSize: TerminalFontSize.allCases[editorFontControl.selectedIndex],
             fileIconColor: FileIconColorPreference.allCases[fileIconColorControl.selectedIndex],
-            filePreviewsEnabled: filePreviewControl.selectedIndex == 0
+            filePreviewsEnabled: filePreviewControl.selectedIndex == 0,
+            groupsSingleRepositoryTasks: repositoryGroupingControl.selectedIndex == 0
         )
         if onChange?(next) == false {
             selectCurrentValues()
@@ -771,6 +776,7 @@ private final class AppearanceSettingsContentView: NSView, SettingsPageContent {
         accentControl: AccentChoiceControl,
         intensityControl: FlatChoiceControl,
         fileIconColorControl: FlatChoiceControl,
+        repositoryGroupingControl: FlatChoiceControl,
         appFontControl: FlatChoiceControl,
         terminalFontControl: FontStepperControl
     ) {
@@ -782,6 +788,7 @@ private final class AppearanceSettingsContentView: NSView, SettingsPageContent {
             accentControl: accentControl,
             intensityControl: intensityControl,
             fileIconColorControl: fileIconColorControl,
+            repositoryGroupingControl: repositoryGroupingControl,
             appFontControl: appFontControl,
             terminalFontControl: terminalFontControl
         )
@@ -807,6 +814,7 @@ private final class AppearanceSettingsContentView: NSView, SettingsPageContent {
         accentControl: AccentChoiceControl,
         intensityControl: FlatChoiceControl,
         fileIconColorControl: FlatChoiceControl,
+        repositoryGroupingControl: FlatChoiceControl,
         appFontControl: FlatChoiceControl,
         terminalFontControl: FontStepperControl
     ) {
@@ -844,6 +852,14 @@ private final class AppearanceSettingsContentView: NSView, SettingsPageContent {
                 controlWidth: SettingsLayout.fileIconColorControlWidth
             ),
         ]
+        let sidebarRows = [
+            SettingsRowView(
+                title: "Repository grouping",
+                description: "Group single-repository tasks, or keep task-first navigation",
+                control: repositoryGroupingControl,
+                controlWidth: SettingsLayout.repositoryGroupingControlWidth
+            ),
+        ]
         let textRows = [
             SettingsRowView(
                 title: "App font size",
@@ -862,6 +878,11 @@ private final class AppearanceSettingsContentView: NSView, SettingsPageContent {
             title: "Theme",
             detail: "Colour of the chrome and how strongly the accent is used.",
             content: settingsRowStack(themeRows)
+        )
+        page.addSection(
+            title: "Sidebar",
+            detail: "How tasks are organized in the navigation sidebar.",
+            content: settingsRowStack(sidebarRows)
         )
         page.addSection(
             title: "Text",

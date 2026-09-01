@@ -7,12 +7,12 @@ private extension NSPasteboard.PasteboardType {
 
 @MainActor
 private final class SidebarTaskStackView: NSStackView {
-    var onMoveTask: ((UUID, UUID?, Bool, Bool) -> Void)?
+    var onMoveTask: ((UUID, UUID?, Bool, TaskSidebarSection) -> Void)?
 
     private struct DropTarget {
         let sourceID: UUID
         let relativeTaskID: UUID?
-        let sectionPinned: Bool
+        let section: TaskSidebarSection
         let after: Bool
         let edge: CGFloat
     }
@@ -56,7 +56,7 @@ private final class SidebarTaskStackView: NSStackView {
             target.sourceID,
             target.relativeTaskID,
             target.after,
-            target.sectionPinned
+            target.section
         )
         return true
     }
@@ -125,7 +125,7 @@ private final class SidebarTaskStackView: NSStackView {
             let sourceID = UUID(uuidString: value)
         else { return nil }
         let tasks = arrangedSubviews.compactMap { $0 as? SidebarTaskGroupView }
-        guard tasks.contains(where: { $0.taskID == sourceID }) else { return nil }
+        guard let source = tasks.first(where: { $0.taskID == sourceID }) else { return nil }
         let point = convert(sender.draggingLocation, from: nil)
         if let target = tasks.first(where: {
             $0.frame.insetBy(dx: 0, dy: -3).contains(point)
@@ -134,10 +134,11 @@ private final class SidebarTaskStackView: NSStackView {
             let edge = after
                 ? (isFlipped ? target.frame.maxY : target.frame.minY)
                 : (isFlipped ? target.frame.minY : target.frame.maxY)
+            guard canMove(source, to: target.sidebarSection) else { return nil }
             return DropTarget(
                 sourceID: sourceID,
                 relativeTaskID: target.taskID,
-                sectionPinned: target.isPinned,
+                section: target.sidebarSection,
                 after: after,
                 edge: edge
             )
@@ -146,13 +147,24 @@ private final class SidebarTaskStackView: NSStackView {
             .compactMap({ $0 as? SidebarSectionHeaderView })
             .first(where: { $0.frame.insetBy(dx: 0, dy: -6).contains(point) })
         else { return nil }
+        guard canMove(source, to: header.section) else { return nil }
         return DropTarget(
             sourceID: sourceID,
             relativeTaskID: nil,
-            sectionPinned: header.isPinnedSection,
+            section: header.section,
             after: false,
             edge: isFlipped ? header.frame.maxY : header.frame.minY
         )
+    }
+
+    private func canMove(
+        _ source: SidebarTaskGroupView,
+        to section: TaskSidebarSection
+    ) -> Bool {
+        section == .pinned
+            || (source.sidebarSection == .pinned
+                ? source.unpinnedSidebarSection == section
+                : source.sidebarSection == section)
     }
 }
 
@@ -168,7 +180,7 @@ final class PanelViewController: NSViewController {
     var onSidebarRepositoryHover: ((TaskRepositoryScope) -> Void)?
     var onShowTaskMenu: ((UUID, NSRect) -> Void)?
     var onShowRepositoryMenu: ((TaskRepositoryScope, NSRect) -> Void)?
-    var onMoveTask: ((UUID, UUID?, Bool, Bool) -> Void)?
+    var onMoveTask: ((UUID, UUID?, Bool, TaskSidebarSection) -> Void)?
 
     private weak var trackingRoot: PanelTrackingView?
     private weak var leftHeader: LeftSidebarHeaderView?
@@ -248,6 +260,7 @@ final class PanelViewController: NSViewController {
         repositoryBranches: [UUID: String] = [:],
         repositoryRemoteURLs: [UUID: String] = [:],
         pullRequestStatuses: [UUID: PullRequestRepositoryStatus] = [:],
+        groupsSingleRepositoryTasks: Bool = true,
         taskErrors: [UUID: String],
         repositoryErrors: [TaskRepositoryScope: String],
         loadError: String?
@@ -257,15 +270,23 @@ final class PanelViewController: NSViewController {
             taskStack.removeArrangedSubview($0)
             $0.removeFromSuperview()
         }
-
-        func addHeader(_ title: String, isPinnedSection: Bool) -> SidebarSectionHeaderView {
+        func addHeader(
+            _ title: String,
+            section: TaskSidebarSection,
+            repositoryTarget: RepositoryTarget? = nil,
+            connectionID: UUID? = nil,
+            connectionStatus: SSHConnectionStatus = .disabled
+        ) -> SidebarSectionHeaderView {
             let header = SidebarSectionHeaderView(
                 title: title,
-                isPinnedSection: isPinnedSection
+                section: section,
+                repositoryTarget: repositoryTarget,
+                connectionID: connectionID,
+                connectionStatus: connectionStatus
             )
             taskStack.addView(header, in: .top)
             header.widthAnchor.constraint(equalTo: taskStack.widthAnchor).isActive = true
-            taskStack.setCustomSpacing(AppTheme.sidebarTaskListTopSpacing, after: header)
+            taskStack.setCustomSpacing(4, after: header)
             return header
         }
 
@@ -285,6 +306,7 @@ final class PanelViewController: NSViewController {
                 repositoryBranches: repositoryBranches,
                 repositoryRemoteURLs: repositoryRemoteURLs,
                 pullRequestStatuses: pullRequestStatuses,
+                groupsSingleRepositoryTasks: groupsSingleRepositoryTasks,
                 connectionStatusMonitor: connectionStatusMonitor
             )
             group.onSelectTask = { [weak self] in self?.onSelectTask?(task.id) }
@@ -325,7 +347,7 @@ final class PanelViewController: NSViewController {
         }
 
         let pinnedTasks = tasks.filter(\.isPinned)
-        let pinnedHeader = addHeader("PINNED", isPinnedSection: true)
+        let pinnedHeader = addHeader("PINNED", section: .pinned)
         if pinnedTasks.isEmpty {
             _ = addMessage("No pinned tasks yet.", error: false)
         } else {
@@ -336,14 +358,59 @@ final class PanelViewController: NSViewController {
             after: taskStack.arrangedSubviews.last ?? pinnedHeader
         )
 
-        _ = addHeader("TASKS", isPinnedSection: false)
+        let unpinnedTasks = tasks.filter { !$0.isPinned }
+        let crossRepositoryTasks = unpinnedTasks.filter {
+            TaskSidebarSection(
+                task: $0,
+                groupsSingleRepositoryTasks: groupsSingleRepositoryTasks
+            ) == .tasks
+        }
+        let tasksHeader = addHeader("TASKS", section: .tasks)
         if let loadError {
             _ = addMessage(loadError, error: true)
-        }
-        if tasks.isEmpty, loadError == nil {
+        } else if crossRepositoryTasks.isEmpty {
             _ = addMessage("No tasks yet.", error: false)
         } else {
-            tasks.filter { !$0.isPinned }.forEach(addTask)
+            crossRepositoryTasks.forEach(addTask)
+        }
+        taskStack.setCustomSpacing(
+            AppTheme.sidebarSectionSpacing,
+            after: taskStack.arrangedSubviews.last ?? tasksHeader
+        )
+
+        let repositoryTaskSections = Dictionary(grouping: unpinnedTasks.filter {
+            if case .repository = TaskSidebarSection(
+                task: $0,
+                groupsSingleRepositoryTasks: groupsSingleRepositoryTasks
+            ) { return true }
+            return false
+        }) { task in
+            task.repositories[0].repositoryID
+        }
+        for (repositoryID, sectionTasks) in repositoryTaskSections.sorted(by: {
+            $0.value[0].repositories[0].name.localizedCaseInsensitiveCompare(
+                $1.value[0].repositories[0].name
+            ) == .orderedAscending
+        }) {
+            let target = repositoryTargets[repositoryID] ?? .local
+            let connectionID: UUID?
+            if case .ssh(let id) = target {
+                connectionID = id
+            } else {
+                connectionID = nil
+            }
+            let header = addHeader(
+                sectionTasks[0].repositories[0].name.uppercased(),
+                section: .repository(repositoryID),
+                repositoryTarget: target,
+                connectionID: connectionID,
+                connectionStatus: connectionID.map(connectionStatusMonitor.status(for:)) ?? .disabled
+            )
+            sectionTasks.forEach(addTask)
+            taskStack.setCustomSpacing(
+                AppTheme.sidebarSectionSpacing,
+                after: taskStack.arrangedSubviews.last ?? header
+            )
         }
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
@@ -379,6 +446,9 @@ final class PanelViewController: NSViewController {
         taskStack.arrangedSubviews
             .compactMap { $0 as? SidebarTaskGroupView }
             .forEach { $0.refreshConnectionStatuses() }
+        taskStack.arrangedSubviews
+            .compactMap { $0 as? SidebarSectionHeaderView }
+            .forEach { $0.refreshConnectionStatus(using: connectionStatusMonitor) }
     }
 
     private func installLeftPanel() {
@@ -404,8 +474,8 @@ final class PanelViewController: NSViewController {
         taskStack.alignment = .leading
         taskStack.distribution = .fill
         taskStack.spacing = 2
-        taskStack.onMoveTask = { [weak self] sourceID, targetID, after, pinned in
-            self?.onMoveTask?(sourceID, targetID, after, pinned)
+        taskStack.onMoveTask = { [weak self] sourceID, targetID, after, section in
+            self?.onMoveTask?(sourceID, targetID, after, section)
         }
         taskDocument.addSubview(taskStack)
         scrollView.documentView = taskDocument
@@ -573,7 +643,8 @@ private final class SidebarTaskGroupView: NSStackView {
     var onShowRepositoryMenu: ((UUID, NSRect) -> Void)?
 
     let taskID: UUID
-    let isPinned: Bool
+    let sidebarSection: TaskSidebarSection
+    let unpinnedSidebarSection: TaskSidebarSection
     private let taskRow: SidebarTaskRow
     private var repositoryRows: [SidebarRepositoryRow] = []
 
@@ -592,10 +663,17 @@ private final class SidebarTaskGroupView: NSStackView {
         repositoryBranches: [UUID: String],
         repositoryRemoteURLs: [UUID: String],
         pullRequestStatuses: [UUID: PullRequestRepositoryStatus],
+        groupsSingleRepositoryTasks: Bool,
         connectionStatusMonitor: SSHConnectionStatusMonitor
     ) {
         taskID = task.id
-        isPinned = task.isPinned
+        sidebarSection = TaskSidebarSection(
+            task: task,
+            groupsSingleRepositoryTasks: groupsSingleRepositoryTasks
+        )
+        unpinnedSidebarSection = groupsSingleRepositoryTasks && task.repositories.count == 1
+            ? .repository(task.repositories[0].repositoryID)
+            : .tasks
         let repositoryContexts = task.repositories.sorted(by: {
             $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
         }).map { repository in
@@ -624,7 +702,12 @@ private final class SidebarTaskGroupView: NSStackView {
                 trackedPullRequestNumbers: repository.pullRequestNumbers
             )
         }
-        let collapsedRepositoryError = expanded ? nil : task.repositories.lazy.compactMap {
+        let showsRepositoryRow = !groupsSingleRepositoryTasks || task.repositories.count != 1
+        let compactRepositoryScope = showsRepositoryRow ? nil : TaskRepositoryScope(
+            taskID: task.id,
+            repositoryID: task.repositories[0].repositoryID
+        )
+        let collapsedRepositoryError = showsRepositoryRow && expanded ? nil : task.repositories.lazy.compactMap {
             repositoryErrors[TaskRepositoryScope(
                 taskID: task.id,
                 repositoryID: $0.repositoryID
@@ -633,12 +716,16 @@ private final class SidebarTaskGroupView: NSStackView {
         taskRow = SidebarTaskRow(
             taskID: task.id,
             title: task.title,
-            hasRepositories: !task.repositories.isEmpty,
+            hasRepositories: showsRepositoryRow && !task.repositories.isEmpty,
             expanded: expanded,
-            selected: selection == .task(task.id),
+            selected: compactRepositoryScope.map { selection == .repository($0) }
+                ?? (selection == .task(task.id)),
             menuActive: menuActive,
             activity: activity,
             error: taskError ?? collapsedRepositoryError,
+            repositoryHoverContext: compactRepositoryScope == nil
+                ? nil
+                : repositoryContexts.first,
             repositoryContexts: repositoryContexts,
             connectionStatusMonitor: connectionStatusMonitor,
             createdAt: task.createdAt
@@ -650,12 +737,24 @@ private final class SidebarTaskGroupView: NSStackView {
         spacing = 2
         addArrangedSubview(taskRow)
         taskRow.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
-        taskRow.onSelect = { [weak self] in self?.onSelectTask?() }
+        taskRow.onSelect = { [weak self] in
+            if let compactRepositoryScope {
+                self?.onSelectRepository?(compactRepositoryScope.repositoryID)
+            } else {
+                self?.onSelectTask?()
+            }
+        }
         taskRow.onToggleExpansion = { [weak self] in self?.onToggleExpansion?() }
-        taskRow.onHover = { [weak self] in self?.onHoverTask?() }
+        taskRow.onHover = { [weak self] in
+            if let compactRepositoryScope {
+                self?.onHoverRepository?(compactRepositoryScope.repositoryID)
+            } else {
+                self?.onHoverTask?()
+            }
+        }
         taskRow.onShowMenu = { [weak self] in self?.onShowMenu?($0) }
 
-        if expanded {
+        if expanded && showsRepositoryRow {
             for repository in task.repositories.sorted(by: {
                 $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
             }) {
@@ -854,10 +953,11 @@ private final class SidebarTaskRow: AppHoverView {
     private let connectionStatusMonitor: SSHConnectionStatusMonitor
     private let createdAt: Date
     private var repositoryContexts: [SidebarRepositoryContext]
+    private var repositoryHoverContext: SidebarRepositoryContext?
     private var infoPopoverHovering = false
     private var infoPopover: SidebarHoverPopover?
     private var infoCard: SidebarTaskAggregateInfoCard?
-
+    private var repositoryInfoCard: SidebarRepositoryInfoCard?
     init(
         taskID: UUID,
         title: String,
@@ -867,6 +967,7 @@ private final class SidebarTaskRow: AppHoverView {
         menuActive: Bool,
         activity: String?,
         error: String?,
+        repositoryHoverContext: SidebarRepositoryContext?,
         repositoryContexts: [SidebarRepositoryContext],
         connectionStatusMonitor: SSHConnectionStatusMonitor,
         createdAt: Date
@@ -877,6 +978,7 @@ private final class SidebarTaskRow: AppHoverView {
         self.activity = activity
         self.error = error
         self.repositoryContexts = repositoryContexts
+        self.repositoryHoverContext = repositoryHoverContext
         self.connectionStatusMonitor = connectionStatusMonitor
         self.createdAt = createdAt
         titleLabel = NSTextField(labelWithString: title)
@@ -1051,7 +1153,11 @@ private final class SidebarTaskRow: AppHoverView {
             guard let connectionID = repositoryContexts[index].connectionID else { return }
             repositoryContexts[index].status = connectionStatusMonitor.status(for: connectionID)
         }
+        refreshRepositoryHoverContext()
         infoCard?.update(contexts: repositoryContexts)
+        if let repositoryHoverContext {
+            repositoryInfoCard?.update(context: repositoryHoverContext)
+        }
     }
 
     func updatePullRequestStatuses(_ statuses: [UUID: PullRequestRepositoryStatus]) {
@@ -1064,7 +1170,12 @@ private final class SidebarTaskRow: AppHoverView {
             didChange = true
         }
         if didChange {
+            refreshRepositoryHoverContext()
             infoCard?.update(contexts: repositoryContexts)
+            if let repositoryHoverContext {
+                repositoryInfoCard?.hideChecks()
+                repositoryInfoCard?.update(context: repositoryHoverContext)
+            }
             if infoPopover?.isVisible == true {
                 infoPopover?.refreshContentSize()
             }
@@ -1081,6 +1192,33 @@ private final class SidebarTaskRow: AppHoverView {
 
     private func showInfoPopover() {
         guard !menuActive, let window else { return }
+        if let repositoryHoverContext {
+            let card = repositoryInfoCard ?? {
+                let value = SidebarRepositoryInfoCard(context: repositoryHoverContext)
+                value.onChecksHover = { [weak self] source, checks, hovering in
+                    self?.handleChecksHover(from: source, checks: checks, hovering: hovering)
+                }
+                repositoryInfoCard = value
+                return value
+            }()
+            card.update(context: repositoryHoverContext)
+            let popover = infoPopover ?? {
+                let value = SidebarHoverPopover(content: card)
+                value.onHoverChanged = { [weak self] hovering in
+                    self?.infoPopoverHovering = hovering
+                    self?.updateTrailingVisibility()
+                    self?.applyTheme()
+                }
+                infoPopover = value
+                return value
+            }()
+            if !popover.isVisible {
+                card.hideChecks()
+            }
+            guard !popover.isVisible, window.isVisible else { return }
+            popover.show(relativeTo: bounds, of: self)
+            return
+        }
         let card = infoCard ?? {
             let value = SidebarTaskAggregateInfoCard(
                 title: titleLabel.stringValue,
@@ -1103,6 +1241,33 @@ private final class SidebarTaskRow: AppHoverView {
         }()
         guard !popover.isVisible, window.isVisible else { return }
         popover.show(relativeTo: bounds, of: self)
+    }
+
+    private func refreshRepositoryHoverContext() {
+        guard let repositoryID = repositoryHoverContext?.repositoryID else { return }
+        repositoryHoverContext = repositoryContexts.first {
+            $0.repositoryID == repositoryID
+        }
+    }
+
+    private func handleChecksHover(
+        from source: NSView,
+        checks: [PullRequestCheck],
+        hovering: Bool
+    ) {
+        if hovering {
+            guard !checks.isEmpty else {
+                repositoryInfoCard?.hideChecks()
+                infoPopover?.refreshContentSize()
+                return
+            }
+            repositoryInfoCard?.showChecks(from: source, checks: checks)
+            infoPopover?.refreshContentSize()
+        } else {
+            repositoryInfoCard?.scheduleHideChecks(from: source) { [weak self] in
+                self?.infoPopover?.refreshContentSize()
+            }
+        }
     }
 
     private func dismissInfoPopover() {
@@ -2584,7 +2749,7 @@ private final class SidebarChecksInfoCard: AppHoverView {
         cardHeightConstraint?.isActive = true
         NSLayoutConstraint.activate([
             titleIcon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            titleIcon.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            titleIcon.topAnchor.constraint(equalTo: topAnchor, constant: 8),
             titleIcon.widthAnchor.constraint(equalToConstant: 18),
             titleIcon.heightAnchor.constraint(equalToConstant: 18),
             titleLabel.leadingAnchor.constraint(equalTo: titleIcon.trailingAnchor, constant: 7),
@@ -2595,7 +2760,7 @@ private final class SidebarChecksInfoCard: AppHoverView {
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             scrollView.topAnchor.constraint(equalTo: titleIcon.bottomAnchor, constant: 8),
-            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
         ])
         update(checks: checks, height: height)
     }
@@ -4921,26 +5086,79 @@ private final class SidebarBrandView: NSView {
 
 @MainActor
 private final class SidebarSectionHeaderView: NSView {
-    let isPinnedSection: Bool
+    let section: TaskSidebarSection
+    private let sourceIcon = NSImageView()
+    private let connectionStatusIndicator: SSHConnectionStatusIndicator
+    private let connectionID: UUID?
     private let titleLabel: NSTextField
 
-    init(title: String, isPinnedSection: Bool) {
-        self.isPinnedSection = isPinnedSection
+    init(
+        title: String,
+        section: TaskSidebarSection,
+        repositoryTarget: RepositoryTarget? = nil,
+        connectionID: UUID? = nil,
+        connectionStatus: SSHConnectionStatus = .disabled
+    ) {
+        self.section = section
+        self.connectionID = connectionID
+        connectionStatusIndicator = SSHConnectionStatusIndicator(status: connectionStatus)
         titleLabel = NSTextField(labelWithString: title)
         super.init(frame: .zero)
         wantsLayer = true
+        let isLocalRepository: Bool?
+        if let repositoryTarget {
+            if case .local = repositoryTarget {
+                isLocalRepository = true
+            } else {
+                isLocalRepository = false
+            }
+            sourceIcon.image = NSImage(
+                systemSymbolName: isLocalRepository == true ? "laptopcomputer" : "globe",
+                accessibilityDescription: isLocalRepository == true ? "Local repository" : "Remote repository"
+            )
+        } else {
+            isLocalRepository = nil
+        }
+        let titleLeadingInset = AppTheme.workspaceInset
+        sourceIcon.symbolConfiguration = .init(pointSize: 10, weight: .medium)
+        sourceIcon.isHidden = repositoryTarget == nil
+        connectionStatusIndicator.isHidden = connectionID == nil
+        sourceIcon.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.usesSingleLineMode = true
+        addSubview(sourceIcon)
         addSubview(titleLabel)
+        addSubview(connectionStatusIndicator)
         NSLayoutConstraint.activate([
+            sourceIcon.leadingAnchor.constraint(
+                equalTo: leadingAnchor,
+                constant: titleLeadingInset
+            ),
+            sourceIcon.centerYAnchor.constraint(
+                equalTo: centerYAnchor,
+                constant: isLocalRepository == true ? -1 : 0
+            ),
+            sourceIcon.widthAnchor.constraint(equalToConstant: 12),
+            sourceIcon.heightAnchor.constraint(equalToConstant: 12),
             titleLabel.leadingAnchor.constraint(
                 equalTo: leadingAnchor,
-                constant: AppTheme.sidebarSectionTitleInset - AppTheme.sidebarItemInset
+                constant: titleLeadingInset + (repositoryTarget == nil ? 0 : 18)
             ),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
             titleLabel.topAnchor.constraint(equalTo: topAnchor),
             titleLabel.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
+        if connectionID == nil {
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor).isActive = true
+        } else {
+            connectionStatusIndicator.trailingAnchor.constraint(
+                equalTo: trailingAnchor,
+                constant: -8
+            ).isActive = true
+            connectionStatusIndicator.centerYAnchor.constraint(equalTo: centerYAnchor).isActive = true
+            titleLabel.trailingAnchor.constraint(
+                lessThanOrEqualTo: connectionStatusIndicator.leadingAnchor,
+                constant: -8
+            ).isActive = true
+        }
         applyTheme()
     }
 
@@ -4949,8 +5167,14 @@ private final class SidebarSectionHeaderView: NSView {
         fatalError("init(coder:) is unavailable")
     }
 
+    func refreshConnectionStatus(using monitor: SSHConnectionStatusMonitor) {
+        guard let connectionID else { return }
+        connectionStatusIndicator.status = monitor.status(for: connectionID)
+    }
+
     func applyTheme() {
         layer?.backgroundColor = AppTheme.chromeBackground.cgColor
+        sourceIcon.contentTintColor = AppTheme.tertiaryText.withAlphaComponent(0.6)
         titleLabel.attributedStringValue = NSAttributedString(
             string: titleLabel.stringValue,
             attributes: [

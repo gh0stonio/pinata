@@ -57,7 +57,7 @@ final class PinataApp: NSObject, NSApplicationDelegate {
             width: AppTheme.minimumWindowWidth,
             height: AppTheme.minimumWindowHeight
         )
-        let workspaceViewController = WorkspaceViewController(runtime: runtime)
+        let workspaceViewController = WorkspaceViewController(runtime: runtime, settings: settings)
         window.contentViewController = workspaceViewController
         self.workspaceViewController = workspaceViewController
         let restoredWindow = window.setFrameUsingName("PiñataMainWindow")
@@ -139,6 +139,7 @@ final class PinataApp: NSObject, NSApplicationDelegate {
             named: next.theme == .dark ? .darkAqua : .aqua
         )
         window?.backgroundColor = AppTheme.background
+        workspaceViewController?.applySettings(next)
         workspaceViewController?.applyTheme()
         return true
     }

@@ -185,6 +185,7 @@ final class WorkspaceViewController: NSViewController {
     private var taskLoadError: String?
     private var taskRegistryLoaded: Bool
     private var settingsController: SettingsViewController?
+    private var groupsSingleRepositoryTasks: Bool
     private var newTaskModal: NewTaskModalView?
     private var deleteTaskModal: DeleteTaskModalView?
     private var taskActionMenu: SidebarActionMenuView?
@@ -227,8 +228,9 @@ final class WorkspaceViewController: NSViewController {
     private var trafficLightBaselineX: [NSWindow.ButtonType: CGFloat] = [:]
     private var sessionSaveWorkItem: DispatchWorkItem?
 
-    init(runtime: GhosttyRuntime) {
+    init(runtime: GhosttyRuntime, settings: UserSettings) {
         self.runtime = runtime
+        groupsSingleRepositoryTasks = settings.groupsSingleRepositoryTasks
         taskStore = TaskRegistryStore()
         let loadedTasks: [WorkspaceTask]
         let didLoadTaskRegistry: Bool
@@ -580,6 +582,12 @@ final class WorkspaceViewController: NSViewController {
         }
     }
 
+    func applySettings(_ settings: UserSettings) {
+        guard groupsSingleRepositoryTasks != settings.groupsSingleRepositoryTasks else { return }
+        groupsSingleRepositoryTasks = settings.groupsSingleRepositoryTasks
+        updateTaskSidebar()
+    }
+
     func applyTheme() {
         view.layer?.backgroundColor = AppTheme.chromeBackground.cgColor
         workspaceCard.layer?.backgroundColor = AppTheme.background.cgColor
@@ -785,12 +793,12 @@ final class WorkspaceViewController: NSViewController {
             }
             refreshPullRequestStatuses()
         }
-        leftPanelController.onMoveTask = { [weak self] sourceID, targetID, after, pinned in
+        leftPanelController.onMoveTask = { [weak self] sourceID, targetID, after, section in
             self?.moveTask(
                 sourceID,
                 relativeTo: targetID,
                 after: after,
-                pinned: pinned
+                in: section
             )
         }
         leftPanelController.onShowTaskMenu = { [weak self] taskID, anchorRect in
@@ -2255,14 +2263,15 @@ final class WorkspaceViewController: NSViewController {
         _ sourceID: UUID,
         relativeTo targetID: UUID?,
         after: Bool,
-        pinned: Bool
+        in section: TaskSidebarSection
     ) {
         let reordered = reorderTasks(
             tasks,
             moving: sourceID,
             relativeTo: targetID,
             after: after,
-            inPinnedSection: pinned
+            in: section,
+            groupsSingleRepositoryTasks: groupsSingleRepositoryTasks
         )
         guard reordered != tasks else { return }
         do {
@@ -2387,7 +2396,7 @@ final class WorkspaceViewController: NSViewController {
             repositoryBranches: repositoryBranches,
             repositoryRemoteURLs: repositoryRemoteURLs,
             pullRequestStatuses: pullRequestStatusStore.statuses,
-
+            groupsSingleRepositoryTasks: groupsSingleRepositoryTasks,
             taskErrors: taskErrors,
             repositoryErrors: displayedRepositoryErrors,
             loadError: taskLoadError

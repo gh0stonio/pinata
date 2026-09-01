@@ -89,6 +89,23 @@ struct WorkspaceTask: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+enum TaskSidebarSection: Equatable, Sendable {
+    case pinned
+    case tasks
+    case repository(UUID)
+
+    init(task: WorkspaceTask, groupsSingleRepositoryTasks: Bool = true) {
+        if task.isPinned {
+            self = .pinned
+        } else if groupsSingleRepositoryTasks, task.repositories.count == 1,
+                  let repository = task.repositories.first {
+            self = .repository(repository.repositoryID)
+        } else {
+            self = .tasks
+        }
+    }
+}
+
 func recoverInterruptedWorktreeProvisioning(in tasks: [WorkspaceTask]) -> [WorkspaceTask] {
     tasks.map { task in
         let repositories = task.repositories.map { attachment in
@@ -121,10 +138,14 @@ func reorderTasks(
     moving sourceID: UUID,
     relativeTo targetID: UUID?,
     after: Bool,
-    inPinnedSection isPinned: Bool
+    in section: TaskSidebarSection,
+    groupsSingleRepositoryTasks: Bool = true
 ) -> [WorkspaceTask] {
     guard let sourceIndex = tasks.firstIndex(where: { $0.id == sourceID }) else { return tasks }
-    if targetID == sourceID, tasks[sourceIndex].isPinned == isPinned { return tasks }
+    if targetID == sourceID, TaskSidebarSection(
+        task: tasks[sourceIndex],
+        groupsSingleRepositoryTasks: groupsSingleRepositoryTasks
+    ) == section { return tasks }
 
     var reordered = tasks
     let current = reordered.remove(at: sourceIndex)
@@ -133,17 +154,30 @@ func reorderTasks(
         title: current.title,
         repositories: current.repositories,
         createdAt: current.createdAt,
-        isPinned: isPinned
+        isPinned: section == .pinned
     )
+    guard section == .pinned || TaskSidebarSection(
+        task: source,
+        groupsSingleRepositoryTasks: groupsSingleRepositoryTasks
+    ) == section else {
+        return tasks
+    }
     if let targetID {
         guard
             let targetIndex = reordered.firstIndex(where: { $0.id == targetID }),
-            reordered[targetIndex].isPinned == isPinned
+            TaskSidebarSection(
+                task: reordered[targetIndex],
+                groupsSingleRepositoryTasks: groupsSingleRepositoryTasks
+            ) == section
         else { return tasks }
         reordered.insert(source, at: targetIndex + (after ? 1 : 0))
     } else {
-        let sectionStart = reordered.firstIndex(where: { $0.isPinned == isPinned })
-            ?? reordered.endIndex
+        let sectionStart = reordered.firstIndex(where: {
+            TaskSidebarSection(
+                task: $0,
+                groupsSingleRepositoryTasks: groupsSingleRepositoryTasks
+            ) == section
+        }) ?? reordered.endIndex
         reordered.insert(source, at: sectionStart)
     }
     return reordered

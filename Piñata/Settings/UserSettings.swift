@@ -116,6 +116,7 @@ struct UserSettings: Codable, Equatable {
     var editorFontSize: TerminalFontSize
     var fileIconColor: FileIconColorPreference
     var filePreviewsEnabled: Bool
+    var groupsSingleRepositoryTasks: Bool
 
     static let defaults = UserSettings(
         theme: .dark,
@@ -126,6 +127,7 @@ struct UserSettings: Codable, Equatable {
         editorFontSize: .regular,
         fileIconColor: .colored,
         filePreviewsEnabled: true,
+        groupsSingleRepositoryTasks: true,
     )
 }
 
@@ -139,6 +141,7 @@ extension UserSettings {
         case editorFontSize
         case fileIconColor
         case filePreviewsEnabled
+        case groupsSingleRepositoryTasks
     }
 
     init(from decoder: Decoder) throws {
@@ -158,6 +161,8 @@ extension UserSettings {
             ?? defaults.fileIconColor
         filePreviewsEnabled = (try? values.decode(Bool.self, forKey: .filePreviewsEnabled))
             ?? defaults.filePreviewsEnabled
+        groupsSingleRepositoryTasks = (try? values.decode(Bool.self, forKey: .groupsSingleRepositoryTasks))
+            ?? defaults.groupsSingleRepositoryTasks
     }
 }
 
