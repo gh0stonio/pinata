@@ -72,6 +72,8 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
     private var lastPixelWidth: UInt32 = 0
     private var lastPixelHeight: UInt32 = 0
 
+    private var isPointerOverLink = false
+
     nonisolated(unsafe) private(set) var surface: ghostty_surface_t?
     var workingDirectory: String
     let target: TerminalTarget
@@ -80,6 +82,10 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
     var didFailToConnect: ((String) -> Void)?
     var didChangeTitle: ((String) -> Void)?
     var defaultTitle: String { URL(fileURLWithPath: UserShell.loginPath).lastPathComponent }
+
+    static func usesPointingCursor(for shape: ghostty_action_mouse_shape_e) -> Bool {
+        shape == GHOSTTY_MOUSE_SHAPE_POINTER
+    }
 
     override var acceptsFirstResponder: Bool { true }
     override var isFlipped: Bool { false }
@@ -326,6 +332,13 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
         ghostty_surface_refresh(surface)
         layer?.setNeedsDisplay()
     }
+    func setCursorShape(_ shape: ghostty_action_mouse_shape_e) {
+        let isPointerOverLink = Self.usesPointingCursor(for: shape)
+        guard self.isPointerOverLink != isPointerOverLink else { return }
+        self.isPointerOverLink = isPointerOverLink
+        window?.invalidateCursorRects(for: self)
+    }
+
 
     override func mouseDown(with event: NSEvent) {
         guard let window else { return }
@@ -378,6 +391,13 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
     override func mouseMoved(with event: NSEvent) {
         sendMousePosition(event)
     }
+    override func mouseExited(with event: NSEvent) {
+        if let surface {
+            ghostty_surface_mouse_pos(surface, -1, -1, modifiers(event))
+        }
+        setCursorShape(GHOSTTY_MOUSE_SHAPE_DEFAULT)
+    }
+
 
     override func mouseDragged(with event: NSEvent) {
         sendMousePosition(event)
@@ -387,6 +407,10 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
         guard let surface else { return }
         let point = convert(event.locationInWindow, from: nil)
         ghostty_surface_mouse_pos(surface, point.x, bounds.height - point.y, modifiers(event))
+    }
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(bounds, cursor: isPointerOverLink ? .pointingHand : .arrow)
     }
 
     override func updateTrackingAreas() {
@@ -429,6 +453,10 @@ final class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
             _ = sendKey(event, action: GHOSTTY_ACTION_RELEASE)
         }
     }
+    override func flagsChanged(with event: NSEvent) {
+        sendMousePosition(event)
+    }
+
 
     private func shouldSendPhysicalKey(_ event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)

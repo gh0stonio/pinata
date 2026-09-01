@@ -140,6 +140,20 @@ private func ghosttyRuntimeAction(
         }
         return true
     }
+    if action.tag == GHOSTTY_ACTION_MOUSE_SHAPE {
+        let shape = action.action.mouse_shape
+        if Thread.isMainThread {
+            MainActor.assumeIsolated {
+                terminal.setCursorShape(shape)
+            }
+        } else {
+            DispatchQueue.main.async {
+                terminal.setCursorShape(shape)
+            }
+        }
+        return true
+    }
+
 
     return false
 }
