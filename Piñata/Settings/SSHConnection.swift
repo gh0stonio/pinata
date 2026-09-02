@@ -883,6 +883,11 @@ enum RemoteDirectoryInspectionError: LocalizedError {
     }
 }
 
+enum FileTreeGitStatus: Equatable, Sendable {
+    case added
+    case modified
+}
+
 struct FileTreeEntry: Codable, Equatable, Sendable {
     let path: String
     let isDirectory: Bool
@@ -1027,6 +1032,20 @@ struct FileTreeInspector: Sendable {
         }
     }
 
+    func gitStatuses(at path: String, target: TerminalTarget) throws -> [String: FileTreeGitStatus] {
+        switch target {
+        case .local:
+            return try localGitStatuses(at: path)
+        case .ssh(let connection):
+            let root = SSHCommand.shellQuote(path)
+            let output = try remoteOutput(
+                script: "git -C \(root) status --porcelain=v1 -z --untracked-files=all 2>/dev/null || true",
+                connection: connection
+            )
+            return Self.parseGitStatuses(output, root: path)
+        }
+    }
+
     func directorySignatures(
         at paths: [String],
         connection: SSHConnection
@@ -1066,6 +1085,24 @@ struct FileTreeInspector: Sendable {
                 isDirectory: values?.isDirectory == true && values?.isSymbolicLink != true
             )
         })
+    }
+
+    private func localGitStatuses(at path: String) throws -> [String: FileTreeGitStatus] {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = [
+            "git", "-C", path, "status", "--porcelain=v1", "-z", "--untracked-files=all",
+        ]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return [:] }
+        return Self.parseGitStatuses(
+            String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self),
+            root: path
+        )
     }
 
     private func remoteChildren(
@@ -1176,6 +1213,56 @@ struct FileTreeInspector: Sendable {
             fieldIndex = fields.index(after: pathField)
         }
         return entries.mapValues(sort)
+    }
+
+    static func parseGitStatuses(
+        _ output: String,
+        root: String
+    ) -> [String: FileTreeGitStatus] {
+        var statuses: [String: FileTreeGitStatus] = [:]
+        var expectsRenameSource = false
+        for record in output.split(separator: "\0", omittingEmptySubsequences: true) {
+            if expectsRenameSource {
+                expectsRenameSource = false
+                continue
+            }
+            guard record.count >= 4 else { continue }
+            let index = record.startIndex
+            let worktreeStatus = record[record.index(after: index)]
+            let pathStart = record.index(index, offsetBy: 3)
+            let relativePath = String(record[pathStart...])
+            let status: FileTreeGitStatus = record.hasPrefix("??") || record[index] == "A"
+                ? .added
+                : .modified
+            insertGitStatus(
+                status,
+                at: root.hasSuffix("/") ? root + relativePath : root + "/" + relativePath,
+                root: root,
+                into: &statuses
+            )
+            expectsRenameSource = record[index] == "R" || worktreeStatus == "R"
+        }
+        return statuses
+    }
+
+    private static func insertGitStatus(
+        _ status: FileTreeGitStatus,
+        at path: String,
+        root: String,
+        into statuses: inout [String: FileTreeGitStatus]
+    ) {
+        var current = path
+        while true {
+            if statuses[current] != .modified || status == .modified {
+                statuses[current] = status
+            }
+            guard current != root else { return }
+            guard let separator = current.lastIndex(of: "/") else { return }
+            let parent = separator == current.startIndex
+                ? "/"
+                : String(current[..<separator])
+            current = parent
+        }
     }
 
     private static func sort(_ entries: [FileTreeEntry]) -> [FileTreeEntry] {

@@ -80,6 +80,8 @@ Each listing includes an explicit root marker. A valid empty directory produces 
 
 Appearance settings expose colored and monochrome file icons. This preference is backward compatible and defaults to colored for older settings data.
 
+Git status colors file and parent-directory names. When file icons are monochrome, their icons use the same status color. Colored file icons retain their semantic colors. Added and untracked files are green, while modified, deleted, and renamed files are orange. Status is loaded asynchronously and refreshed with live tree updates.
+
 ## Lifecycle and performance invariants
 
 - No filesystem or SSH monitoring while the right panel is hidden or another right-panel tab is selected.

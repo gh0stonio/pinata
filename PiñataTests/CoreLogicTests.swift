@@ -855,6 +855,19 @@ final class CoreLogicTests: XCTestCase {
                 "/srv/empty": [],
             ]
         )
+        XCTAssertEqual(
+            FileTreeInspector.parseGitStatuses(
+                " M Sources/App.swift\u{0}?? New File.swift\u{0}R  Renamed.swift\u{0}Old.swift\u{0}",
+                root: "/srv/repo"
+            ),
+            [
+                "/srv/repo": .modified,
+                "/srv/repo/Sources": .modified,
+                "/srv/repo/Sources/App.swift": .modified,
+                "/srv/repo/New File.swift": .added,
+                "/srv/repo/Renamed.swift": .modified,
+            ]
+        )
         XCTAssertEqual(SSHCommand.shellQuote("it's here"), "'it'\"'\"'s here'")
         XCTAssertTrue(
             FileTreeInspector.remoteListingScript(paths: ["/srv"])

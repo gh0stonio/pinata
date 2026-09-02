@@ -3697,7 +3697,12 @@ private final class FileTreeCellView: NSTableCellView {
         }
     }
 
-    func configure(with node: FileTreeNode, font: NSFont, retryFont: NSFont) {
+    func configure(
+        with node: FileTreeNode,
+        font: NSFont,
+        retryFont: NSFont,
+        gitStatus: FileTreeGitStatus?
+    ) {
         onActivate = nil
         onRetry = nil
         retry.isHidden = true
@@ -3718,7 +3723,15 @@ private final class FileTreeCellView: NSTableCellView {
                 isDirectory: entry.isDirectory
             )
             icon.image = FileTreeIconResolver.image(for: descriptor)
-            icon.contentTintColor = FileTreeIconResolver.tintColor(for: descriptor)
+            let statusColor: NSColor? = switch gitStatus {
+            case .added: AppTheme.success
+            case .modified: AppTheme.warning
+            case nil: nil
+            }
+            title.textColor = statusColor ?? AppTheme.secondaryText
+            icon.contentTintColor = AppTheme.usesColoredFileIcons
+                ? FileTreeIconResolver.tintColor(for: descriptor)
+                : statusColor ?? FileTreeIconResolver.tintColor(for: descriptor)
         case .loading:
             title.stringValue = "Loading…"
             title.textColor = AppTheme.tertiaryText
@@ -3798,6 +3811,9 @@ final class WorkspacePanelViewController: NSViewController, NSOutlineViewDataSou
     private var fileEntries: [String: [FileTreeEntry]] = [:]
     private lazy var fileCaches = (try? fileCacheStore.load()) ?? [:]
     private var fileErrors: [String: String] = [:]
+    private var fileGitStatuses: [String: FileTreeGitStatus] = [:]
+    private var fileGitStatusTask: Task<Void, Never>?
+    private var fileGitStatusID: UUID?
     private var expandedPaths = Set<String>()
     private var fileNodes: [String: FileTreeNode] = [:]
     private var fileLoadTasks: [String: Task<[FileTreeEntry], Error>] = [:]
@@ -3978,6 +3994,10 @@ final class WorkspacePanelViewController: NSViewController, NSOutlineViewDataSou
         persistFileCaches()
         stopFileMonitoring()
         fileLoadTasks.values.forEach { $0.cancel() }
+        fileGitStatusTask?.cancel()
+        fileGitStatusTask = nil
+        fileGitStatusID = nil
+        fileGitStatuses = [:]
         filePrefetchTask?.cancel()
         filePrefetchResumeTask?.cancel()
         fileRefreshTask?.cancel()
@@ -4021,6 +4041,7 @@ final class WorkspacePanelViewController: NSViewController, NSOutlineViewDataSou
             updateContent()
         }
         if let root {
+            refreshGitStatuses(for: root)
             if fileEntries[root.path] == nil {
                 loadChildren(of: root.path)
             } else {
@@ -4191,7 +4212,12 @@ final class WorkspacePanelViewController: NSViewController, NSOutlineViewDataSou
             withIdentifier: FileTreeCellView.identifier,
             owner: self
         ) as? FileTreeCellView ?? FileTreeCellView(frame: .zero)
-        cell.configure(with: node, font: fileTreeFont, retryFont: fileTreeRetryFont)
+        cell.configure(
+            with: node,
+            font: fileTreeFont,
+            retryFont: fileTreeRetryFont,
+            gitStatus: node.entry.flatMap { fileGitStatuses[$0.path] }
+        )
         if let entry = node.entry, entry.isDirectory {
             cell.onActivate = { [weak self, weak outlineView, weak node] event in
                 guard let self, let outlineView, let node else { return }
@@ -4850,6 +4876,7 @@ final class WorkspacePanelViewController: NSViewController, NSOutlineViewDataSou
                 self.saveCurrentFileCache()
                 self.updateFileMonitoring()
             }
+            self.refreshGitStatuses(for: root)
             if !self.pendingLiveRefreshPaths.isEmpty {
                 self.performPendingLiveRefresh()
             }
@@ -5035,6 +5062,39 @@ final class WorkspacePanelViewController: NSViewController, NSOutlineViewDataSou
             }
         }
     }
+    private func refreshGitStatuses(for root: FileRoot) {
+        fileGitStatusTask?.cancel()
+        let statusID = UUID()
+        fileGitStatusID = statusID
+        let inspection = Task.detached(priority: .utility) {
+            try FileTreeInspector().gitStatuses(at: root.path, target: root.target)
+        }
+        fileGitStatusTask = Task { [weak self] in
+            let statuses: [String: FileTreeGitStatus]
+            do {
+                statuses = try await withTaskCancellationHandler {
+                    try await inspection.value
+                } onCancel: {
+                    inspection.cancel()
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                return
+            }
+            guard let self,
+                  !Task.isCancelled,
+                  self.fileRoot == root,
+                  self.fileGitStatusID == statusID
+            else { return }
+            self.fileGitStatuses = statuses
+            self.fileGitStatusTask = nil
+            self.fileGitStatusID = nil
+            guard !self.isFileTreeLiveScrolling else { return }
+            self.fileOutline.reloadData()
+        }
+    }
+
 }
 
 @MainActor
